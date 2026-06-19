@@ -44,6 +44,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'controls.show_controls': 'Ver controles',
     'controls.show_controls_keys': 'Tecla V',
     'controls.back_to_game': '▶ Voltar a jogar',
+    'controls.close': '✕ Fechar',
 
     // Build menu
     'build.menu_title': '🏗️ Construções Mágicas',
@@ -68,6 +69,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block': 'Trocar bloco',
     'start.swap_block_keys': 'Teclas 1 a 9',
     'start.play': '▶ JOGAR',
+    'start.instructions': '❓ Ver instruções',
 
     // Start screen — name input
     'start.name_label': 'Seu nome',
@@ -281,6 +283,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'controls.show_controls': 'Show controls',
     'controls.show_controls_keys': 'V key',
     'controls.back_to_game': '▶ Back to game',
+    'controls.close': '✕ Close',
 
     // Build menu
     'build.menu_title': '🏗️ Magic Structures',
@@ -305,6 +308,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block': 'Swap block',
     'start.swap_block_keys': 'Keys 1 to 9',
     'start.play': '▶ PLAY',
+    'start.instructions': '❓ Instructions',
 
     // Start screen — name input
     'start.name_label': 'Your name',

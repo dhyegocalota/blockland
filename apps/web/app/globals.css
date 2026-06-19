@@ -82,7 +82,7 @@ canvas { display: block; }
 /* ---------- Start screen ---------- */
 #start {
   position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 18px; text-align: center;
+  align-items: center; justify-content: safe center; gap: 14px; text-align: center;
   background: radial-gradient(circle at 50% 30%, var(--sky2), var(--sky1) 60%, #4aa3e0);
   pointer-events: auto; padding: 20px; overflow-y: auto;
 }
@@ -272,10 +272,10 @@ canvas { display: block; }
 }
 #loginModal button:active { transform: translateY(4px); box-shadow: 0 2px 0 #c43d18; }
 #loginModal button:disabled { filter: grayscale(.4); opacity: .7; cursor: not-allowed; }
-#loginModal button.ghost, #logoutBtn {
+#loginModal button.ghost, #logoutBtn, #startHelpBtn {
   background: #fff; color: var(--ink); border: 4px solid #d6ecff; box-shadow: none; font-size: 15px; padding: 8px 22px;
 }
-#logoutBtn { z-index: 2; cursor: pointer; font-family: inherit; font-weight: 900; border-radius: 14px; }
+#logoutBtn, #startHelpBtn { z-index: 2; cursor: pointer; font-family: inherit; font-weight: 900; border-radius: 14px; }
 
 /* ---------- Chat ---------- */
 #chat {

@@ -455,7 +455,7 @@ export default function Game() {
             <div className="card"><b>{t('controls.structures')}</b> {t('controls.structures_keys')}</div>
             <div className="card"><b>{t('controls.show_controls')}</b> {t('controls.show_controls_keys')}</div>
           </div>
-          <button id="closeControls">{t('controls.back_to_game')}</button>
+          <button id="closeControls">{t('controls.close')}</button>
         </div>
       </div>
 
@@ -498,16 +498,13 @@ export default function Game() {
           <label>{t('customize.shirt')}<input type="color" value={look.shirt} onChange={(e) => onLookChange('shirt', e.target.value)} /></label>
           <label>{t('customize.hair')}<input type="color" value={look.hair} onChange={(e) => onLookChange('hair', e.target.value)} /></label>
         </div>
-        <div id="help">
-          <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
-          <div className="card"><b>{t('start.jump_fly')}</b> {t('start.jump_fly_keys')}</div>
-          <div className="card"><b>{t('start.look')}</b> {t('controls.look_keys')}</div>
-          <div className="card"><b>{t('start.build')}</b> {t('start.build_keys')}</div>
-          <div className="card"><b>{t('start.hit_break')}</b> {t('start.hit_break_keys')}</div>
-          <div className="card"><b>{t('controls.hunt')}</b> {t('controls.hunt_keys')}</div>
-          <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
-          <div className="card"><b>{t('start.swap_block')}</b> {t('start.swap_block_keys')}</div>
-        </div>
+        <button
+          id="startHelpBtn"
+          className="ghost"
+          onClick={() => { const c = document.getElementById('controls'); if (c) c.hidden = false; }}
+        >
+          {t('start.instructions')}
+        </button>
         <button id="playBtn">{t('start.play')}</button>
       </div>
     </>
