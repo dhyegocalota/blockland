@@ -10,11 +10,12 @@ import { BLOCKS, type BlockDef, blockById } from './engine/blocks';
 import { heightAt } from './engine/worldgen';
 import { VoxelWorld } from './engine/world';
 import { type Axis, moveAxis } from './engine/physics';
-import { blockVelocityIntoActors } from './engine/actors';
+import { blockVelocityIntoActors, cellOverlapsActor, clearFeetAbove } from './engine/actors';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 import { creatureDefFor } from './engine/creature-snapshot';
+import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './engine/textures';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud } from './coop';
 import type { EditCell, EditOp } from './protocol';
 
@@ -119,31 +120,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const node = document.getElementById(id);
     if (!node) throw new Error(`missing element #${id}`);
     return node;
-  }
-
-  // ---------- Procedural texture helpers ----------
-  function makeCanvas(): HTMLCanvasElement {
-    const c = document.createElement('canvas');
-    c.width = 16; c.height = 16;
-    return c;
-  }
-  function ctx2d(c: HTMLCanvasElement): CanvasRenderingContext2D {
-    const g = c.getContext('2d');
-    if (!g) throw new Error('2d canvas context unavailable');
-    return g;
-  }
-  function textureFromCanvas(c: HTMLCanvasElement): THREE.CanvasTexture {
-    const t = new THREE.CanvasTexture(c);
-    t.magFilter = THREE.NearestFilter;
-    t.minFilter = THREE.NearestFilter;
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }
-  function renderBlockCanvas(b: BlockDef): HTMLCanvasElement {
-    if (!b.build) throw new Error(`block ${b.id} has no texture builder`);
-    const c = makeCanvas();
-    b.build(ctx2d(c));
-    return c;
   }
 
   // ---------- Materials ----------
@@ -335,8 +311,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // Spawn at the world center, lifted above the terrain AND anything built there (no spawning inside a structure).
   const spawnPoint = (): THREE.Vector3 => {
     const sx = SIZE_X >> 1, sz = (SIZE_Z >> 1) + 4;
-    let feet = heightAt(sx, sz) + 1;
-    while (feet < SIZE_Y - 2 && (isSolid(sx, feet, sz) || isSolid(sx, feet + 1, sz))) feet++;
+    const feet = clearFeetAbove({ feet: heightAt(sx, sz) + 1, isSolid: (y) => isSolid(sx, y, sz) });
     return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + 4);
   };
   const player: Player = {
@@ -361,10 +336,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // If a synced edit lands on the local player (e.g. a structure built where they stand), lift them out.
   function unstuckPlayer(): void {
     const fx = Math.floor(player.pos.x), fz = Math.floor(player.pos.z);
-    let feet = Math.floor(player.pos.y - EYE_HEIGHT);
+    const feet = Math.floor(player.pos.y - EYE_HEIGHT);
     if (!isSolid(fx, feet, fz) && !isSolid(fx, feet + 1, fz)) return;
-    while (feet < SIZE_Y - 2 && (isSolid(fx, feet, fz) || isSolid(fx, feet + 1, fz))) feet++;
-    player.pos.y = feet + EYE_HEIGHT;
+    player.pos.y = clearFeetAbove({ feet, isSolid: (y) => isSolid(fx, y, fz) }) + EYE_HEIGHT;
     player.vel.set(0, 0, 0);
   }
   function applyRemoteEdit({ x, y, z, id }: { x: number; y: number; z: number; id: number }): void {
@@ -670,19 +644,14 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     blip(selected === FACE_ID ? 720 : 520, 0.08);
     debug('engine', 'place block', { x: px, y: py, z: pz, id: selected });
   }
-  // A voxel cell overlaps an actor standing with its feet at (fx, fy, fz).
-  function cellOverlapsActor(x: number, y: number, z: number, fx: number, fy: number, fz: number): boolean {
-    return x + 1 > fx - PLAYER_RADIUS && x < fx + PLAYER_RADIUS &&
-      z + 1 > fz - PLAYER_RADIUS && z < fz + PLAYER_RADIUS &&
-      y + 1 > fy && y < fy + PLAYER_HEIGHT;
-  }
-
   // True if the cell would land on the local player or any remote player (no building on people).
   function overlapsPlayer(x: number, y: number, z: number): boolean {
     const p = player.pos;
-    if (cellOverlapsActor(x, y, z, p.x, p.y - EYE_HEIGHT, p.z)) return true;
+    const overlaps = (feetX: number, feetY: number, feetZ: number): boolean =>
+      cellOverlapsActor({ x, y, z, feetX, feetY, feetZ, radius: PLAYER_RADIUS, height: PLAYER_HEIGHT });
+    if (overlaps(p.x, p.y - EYE_HEIGHT, p.z)) return true;
     if (!coop) return false;
-    return coop.getColliders().some((a) => cellOverlapsActor(x, y, z, a.x, a.y, a.z));
+    return coop.getColliders().some((a) => overlaps(a.x, a.y, a.z));
   }
 
   // ---------- Magic structures ----------

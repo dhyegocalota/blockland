@@ -2,6 +2,7 @@
 // positions), we cancel the part of the player's velocity that points INTO an overlapping peer.
 // This only ever removes motion, so it can never run away: players can slide along or step away
 // from each other but cannot walk through. The server stays authoritative for terrain.
+import { SIZE_Y } from './constants';
 
 export interface ActorPos {
   x: number;
@@ -53,4 +54,38 @@ export function blockVelocityIntoActors({
   }
 
   return { vx: nextVx, vz: nextVz };
+}
+
+// True when the voxel cell at (x, y, z) overlaps an actor whose feet sit at (feetX, feetY, feetZ).
+// Used to forbid placing a block (or stamping a structure) where a player stands.
+export function cellOverlapsActor({
+  x,
+  y,
+  z,
+  feetX,
+  feetY,
+  feetZ,
+  radius,
+  height,
+}: {
+  x: number;
+  y: number;
+  z: number;
+  feetX: number;
+  feetY: number;
+  feetZ: number;
+  radius: number;
+  height: number;
+}): boolean {
+  return x + 1 > feetX - radius && x < feetX + radius &&
+    z + 1 > feetZ - radius && z < feetZ + radius &&
+    y + 1 > feetY && y < feetY + height;
+}
+
+// Lift `feet` upward while the actor's two-cell column is blocked, so it ends up standing in clear
+// space. Stops just under the world top so it can never run off the column.
+export function clearFeetAbove({ feet, isSolid }: { feet: number; isSolid: (y: number) => boolean }): number {
+  let clear = feet;
+  while (clear < SIZE_Y - 2 && (isSolid(clear) || isSolid(clear + 1))) clear++;
+  return clear;
 }

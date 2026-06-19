@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { blockVelocityIntoActors } from './actors';
+import { SIZE_Y } from './constants';
+import { blockVelocityIntoActors, cellOverlapsActor, clearFeetAbove } from './actors';
 
 const base = { radius: 0.3, height: 1.7, actorRadius: 0.3 };
 // Player at origin, a peer just ahead on +x (within the 0.6 combined radius).
@@ -35,5 +36,40 @@ describe('blockVelocityIntoActors', () => {
   it('does not block at an exact overlap (lets players step apart)', () => {
     const out = blockVelocityIntoActors({ x: 0, y: 0, z: 0, vx: 4, vz: 1, ...base, actors: [{ x: 0, y: 0, z: 0 }] });
     expect(out).toEqual({ vx: 4, vz: 1 });
+  });
+});
+
+const cell = { radius: 0.3, height: 1.7 };
+
+describe('cellOverlapsActor', () => {
+  it('overlaps a cell the actor stands inside', () => {
+    expect(cellOverlapsActor({ x: 0, y: 0, z: 0, feetX: 0.5, feetY: 0, feetZ: 0.5, ...cell })).toBe(true);
+  });
+
+  it('misses a cell horizontally outside the actor radius', () => {
+    expect(cellOverlapsActor({ x: 2, y: 0, z: 0, feetX: 0.5, feetY: 0, feetZ: 0.5, ...cell })).toBe(false);
+  });
+
+  it('misses a cell above the actor head', () => {
+    expect(cellOverlapsActor({ x: 0, y: 3, z: 0, feetX: 0.5, feetY: 0, feetZ: 0.5, ...cell })).toBe(false);
+  });
+
+  it('overlaps the head cell within actor height', () => {
+    expect(cellOverlapsActor({ x: 0, y: 1, z: 0, feetX: 0.5, feetY: 0, feetZ: 0.5, ...cell })).toBe(true);
+  });
+});
+
+describe('clearFeetAbove', () => {
+  it('returns the feet height unchanged when the column is clear', () => {
+    expect(clearFeetAbove({ feet: 12, isSolid: () => false })).toBe(12);
+  });
+
+  it('lifts past stacked solids until two clear cells', () => {
+    const solidBelow = (y: number): boolean => y < 15;
+    expect(clearFeetAbove({ feet: 12, isSolid: solidBelow })).toBe(15);
+  });
+
+  it('stops just under the world top when the column is fully solid', () => {
+    expect(clearFeetAbove({ feet: 12, isSolid: () => true })).toBe(SIZE_Y - 2);
   });
 });
