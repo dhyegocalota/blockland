@@ -1,0 +1,26 @@
+# White-label tenants. Each tenant gets isolated rooms, its own branding and quotas.
+# Override at runtime with TENANTS_FILE=/path/to/tenants.toml
+
+[limits]
+max_players_per_room = 10
+tick_hz = 20
+max_conns_per_ip = 32
+move_per_sec = 40.0
+edit_per_sec = 25.0
+chat_per_sec = 2.0
+idle_secs = 45
+edit_reach = 9.0
+max_speed = 18.0
+
+[[tenant]]
+id = "teo"
+name = "Teocraft"
+primary = "#ffd23f"
+logo = "/teo-avatar.png"
+max_rooms = 8
+
+[[tenant]]
+id = "demo"
+name = "Demo World"
+primary = "#3dc6ff"
+max_rooms = 4

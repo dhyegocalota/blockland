@@ -5,3 +5,4 @@ out
 npm-debug.log*
 .playwright-mcp
 *.jpeg
+target

@@ -1,0 +1,10 @@
+target
+node_modules
+.next
+.git
+.vercel
+public
+app
+lib
+tools
+*.md
