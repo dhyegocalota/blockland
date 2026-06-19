@@ -6,7 +6,7 @@ import ServiceWorker from './ServiceWorker';
 const THEME_COLOR = '#22c55e';
 
 export const metadata: Metadata = {
-  title: 'Blocklandia',
+  title: 'Blockland',
   description: 'Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.',
   manifest: '/manifest.webmanifest',
   icons: {

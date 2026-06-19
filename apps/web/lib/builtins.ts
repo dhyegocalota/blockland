@@ -14,7 +14,7 @@ export interface Tenant {
   faceBlockName: string;
 }
 
-export const PLATFORM_NAME = 'Blocklandia';
+export const PLATFORM_NAME = 'Blockland';
 export const DEFAULT_TENANT = process.env.NEXT_PUBLIC_DEFAULT_TENANT || 'teo';
 
 export const TENANT_FIELDS: (keyof Tenant)[] = [

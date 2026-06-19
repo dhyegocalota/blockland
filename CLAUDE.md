@@ -1,4 +1,4 @@
-# Blocklandia — project rules
+# Blockland — project rules
 
 White-label platform of 3D voxel worlds for kids. Monorepo: `apps/web` (Next.js + TypeScript
 game client, `/admin`, libSQL tenant store) and `apps/server` (Rust authoritative multiplayer).

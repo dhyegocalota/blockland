@@ -1,4 +1,4 @@
-# 🧱 Blocklandia
+# 🧱 Blockland
 
 A **white-label** platform of 3D block worlds for kids: build, hunt creatures, fight
 monsters, collect stars and fly. Each customer is a **tenant** with its own branding
@@ -79,7 +79,7 @@ value of `ADMIN_KEY` — the same key is sent on every request as the `x-admin-k
 
 Tenant content is persisted with libSQL (`apps/web/lib/tenant-store.js`):
 
-- Development: a local file at `apps/web/.data/blocklandia.db` (used when `DATABASE_URL`
+- Development: a local file at `apps/web/.data/blockland.db` (used when `DATABASE_URL`
   is unset).
 - Production: a Turso/libSQL URL via `DATABASE_URL` (+ `DATABASE_AUTH_TOKEN`).
 

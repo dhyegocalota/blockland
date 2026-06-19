@@ -216,7 +216,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'creature.spider': 'Aranha',
 
     // Admin screen
-    'admin.login_title': '🔐 Blocklandia — Admin',
+    'admin.login_title': '🔐 Blockland — Admin',
     'admin.login_hint': 'Entre com a chave de admin.',
     'admin.key_placeholder': 'admin key',
     'admin.enter': 'Entrar',
@@ -500,7 +500,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'creature.spider': 'Spider',
 
     // Admin screen
-    'admin.login_title': '🔐 Blocklandia — Admin',
+    'admin.login_title': '🔐 Blockland — Admin',
     'admin.login_hint': 'Enter the admin key.',
     'admin.key_placeholder': 'admin key',
     'admin.enter': 'Enter',

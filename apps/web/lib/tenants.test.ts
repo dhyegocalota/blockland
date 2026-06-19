@@ -27,7 +27,7 @@ afterEach(() => {
 
 describe('tenantIdFromLocation', () => {
   it('prefers the ?tenant override', () => {
-    stubLocation({ hostname: 'teo.blocklandia.app', search: '?tenant=Demo' });
+    stubLocation({ hostname: 'teo.blockland.app', search: '?tenant=Demo' });
     expect(tenantIdFromLocation()).toBe('demo');
   });
 
@@ -37,7 +37,7 @@ describe('tenantIdFromLocation', () => {
   });
 
   it('resolves an app subdomain', () => {
-    stubLocation({ hostname: 'teo.blocklandia.app', search: '' });
+    stubLocation({ hostname: 'teo.blockland.app', search: '' });
     expect(tenantIdFromLocation()).toBe('teo');
   });
 

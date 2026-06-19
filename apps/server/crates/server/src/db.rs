@@ -1,13 +1,13 @@
 //! The database lives here: a local libSQL file owned by this server. Next no longer talks
 //! to libSQL directly; it proxies through the HMAC-signed internal API backed by this module.
-//! `DATABASE_PATH` (default `./data/blocklandia.db`) points at the file; later a Turso URL +
+//! `DATABASE_PATH` (default `./data/blockland.db`) points at the file; later a Turso URL +
 //! token would swap into `Builder::new_remote` without changing any call site.
 
 use libsql::{params, Builder, Connection, Database};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_DATABASE_PATH: &str = "./data/blocklandia.db";
+const DEFAULT_DATABASE_PATH: &str = "./data/blockland.db";
 const DEFAULT_TOP_LIMIT: u32 = 10;
 const MAX_TOP_LIMIT: u32 = 100;
 const ACCOUNT_ID_HEX_CHARS: usize = 24;
@@ -805,7 +805,7 @@ fn builtin_tenants() -> Vec<Tenant> {
         },
         Tenant {
             id: "demo".into(),
-            name: "Blocklandia".into(),
+            name: "Blockland".into(),
             hero: "você".into(),
             title_a: "BLOCK".into(),
             title_b: "LANDIA".into(),

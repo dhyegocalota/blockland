@@ -1,4 +1,4 @@
-// Standalone browser network client for the Blocklandia server. It owns a single WebSocket,
+// Standalone browser network client for the Blockland server. It owns a single WebSocket,
 // drives the connect/welcome/reconnect lifecycle, answers server pings, and surfaces server
 // messages through typed handlers. It is NOT wired into the game engine yet — that wiring is a
 // later phase. The socket and clock are injectable so tests can run deterministically.
