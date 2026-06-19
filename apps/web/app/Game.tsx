@@ -97,6 +97,7 @@ export default function Game() {
   const [offlineDismissed, setOfflineDismissed] = useState(false);
   const [name, setName] = useState(loadName);
   const [look, setLook] = useState<Appearance>(loadLook);
+  const [solo, setSolo] = useState(false);
   const [netState, setNetState] = useState<NetState | null>(null);
   const [ping, setPing] = useState(0);
   const [online, setOnline] = useState(1);
@@ -120,6 +121,7 @@ export default function Game() {
   const [adminOpen, setAdminOpen] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
+  const soloRef = useRef(false);
   const loginClearedRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatLineId = useRef(0);
@@ -150,6 +152,7 @@ export default function Game() {
           resolveName: () => loadName().trim() || generateGuestName(),
           resolveAppearance: () => loadLook(),
           resolveClaim: (resolvedName) => resolveClaim(active.id, resolvedName),
+          resolveOffline: () => soloRef.current,
           hud: {
             onState: (state) => setNetState(state),
             onPing: (value) => setPing(value),
@@ -236,6 +239,7 @@ export default function Game() {
   }
 
   const needsLogin = useCallback((): boolean => {
+    if (soloRef.current) return false;
     const trimmed = name.trim();
     if (!trimmed) return false;
     if (!brand) return false;
@@ -651,6 +655,14 @@ export default function Game() {
         >
           {t('start.instructions')}
         </button>
+        <div id="modeToggle">
+          <button className={solo ? '' : 'on'} onClick={() => { soloRef.current = false; setSolo(false); }}>
+            {t('start.mode_multi')}
+          </button>
+          <button className={solo ? 'on' : ''} onClick={() => { soloRef.current = true; setSolo(true); }}>
+            {t('start.mode_solo')}
+          </button>
+        </div>
         <button id="playBtn">{t('start.play')}</button>
         <Leaderboard tenant={brand.id} />
       </div>

@@ -77,6 +77,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block_keys': 'Teclas 1 a 9',
     'start.play': '▶ JOGAR',
     'start.instructions': '❓ Ver instruções',
+    'start.mode_multi': '👫 Com amigos',
+    'start.mode_solo': '🧍 Sozinho',
 
     // Start screen — name input
     'start.name_label': 'Seu nome',
@@ -359,6 +361,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block_keys': 'Keys 1 to 9',
     'start.play': '▶ PLAY',
     'start.instructions': '❓ Instructions',
+    'start.mode_multi': '👫 With friends',
+    'start.mode_solo': '🧍 Solo',
 
     // Start screen — name input
     'start.name_label': 'Your name',

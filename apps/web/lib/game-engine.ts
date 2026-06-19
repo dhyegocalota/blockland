@@ -77,6 +77,8 @@ export interface CoopBridge {
   resolveName(): string;
   resolveAppearance(): Appearance;
   resolveClaim(name: string): string;
+  // True when the player chose single-player on the start screen: never connect, simulate locally.
+  resolveOffline(): boolean;
   hud: CoopHud;
   bind(api: {
     sendChat(text: string): void;
@@ -1048,6 +1050,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (coop) return;
     if (!serverUrl) { debug('coop', 'single-player (no server url)'); return; }
     if (!bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
+    if (bridge.resolveOffline()) {
+      debug('coop', 'single-player (chosen)');
+      if (!creatures.length) populateCreatures();
+      return;
+    }
     const name = bridge.resolveName();
     const look = bridge.resolveAppearance();
     const claim = bridge.resolveClaim(name);
