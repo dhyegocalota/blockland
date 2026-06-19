@@ -1,20 +1,27 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { resolveTenant } from '../lib/tenants';
 
 export default function Game() {
+  const [brand, setBrand] = useState(null);
+
   useEffect(() => {
+    const active = resolveTenant();
+    setBrand(active);
     let cleanup;
-    import('../lib/teocraft').then((mod) => { cleanup = mod.initTeocraft(); });
+    import('../lib/game-engine').then((mod) => { cleanup = mod.initGame(active); });
     return () => { if (cleanup) cleanup(); };
   }, []);
+
+  if (!brand) return null;
 
   return (
     <>
       <div id="hud">
         <div id="topbar">
-          <img src="/teo-avatar.png" alt="Teodoro" />
-          <span className="title">Teocraft</span>
+          <img src={brand.avatar} alt={brand.hero} />
+          <span className="title">{brand.name}</span>
           <span className="stat" id="hearts">❤️❤️❤️</span>
           <span className="stat" id="stars">⭐ 0</span>
           <span className="stat record" id="record">🏆 0</span>
@@ -43,7 +50,7 @@ export default function Game() {
 
       <div id="controls" hidden>
         <div className="panel">
-          <h2>🎮 Controles do Teocraft</h2>
+          <h2>🎮 Controles</h2>
           <div className="ctrlGrid">
             <div className="card"><b>Andar</b> Setas ou W A S D</div>
             <div className="card"><b>Pular</b> Barra de espaço</div>
@@ -55,7 +62,7 @@ export default function Game() {
             <div className="card"><b>Caçar 🐷</b> Bata nos bichos</div>
             <div className="card"><b>Lutar 👾</b> Bata nos monstros</div>
             <div className="card"><b>Coletar 🎒</b> Quebre blocos</div>
-            <div className="card"><b>Bloco do Teo 😎</b> Tecla 0</div>
+            <div className="card"><b>Seu rosto 😎</b> Tecla 0</div>
             <div className="card"><b>Modo paz 🕊️</b> Tecla P (monstros calmos)</div>
             <div className="card"><b>Construções 🏗️</b> Tecla B (taça e bola!)</div>
             <div className="card"><b>Ver controles</b> Tecla V</div>
@@ -71,7 +78,7 @@ export default function Game() {
           <div className="buildGrid">
             <button className="buildCard" data-kind="trophy"><span className="emoji">🏆</span><span>Taça da Copa do Mundo</span></button>
             <button className="buildCard" data-kind="ball"><span className="emoji">⚽</span><span>Bola gigante da Copa 2026</span></button>
-            <button className="buildCard" data-kind="figure"><span className="emoji">🧑‍🦱</span><span>Figurinha do Teo craque ⚽</span></button>
+            <button className="buildCard" data-kind="figure"><span className="emoji">🧑‍🦱</span><span>Figurinha craque ⚽</span></button>
             <button className="buildCard" data-kind="cola"><span className="emoji">🥤</span><span>Refri gigante da Copa</span></button>
             <button className="buildCard" data-kind="steve"><span className="emoji">🧍</span><span>Estátua do Steve</span></button>
           </div>
@@ -80,9 +87,9 @@ export default function Game() {
       </div>
 
       <div id="start">
-        <img className="avatar" src="/teo-avatar.png" alt="Teodoro" />
-        <h1>TEO<span className="teo">CRAFT</span></h1>
-        <p>O mundo mágico do <b>Teodoro</b>! Construa castelos, cace os porquinhos, derrote os monstrinhos e junte estrelas. Coloque o seu rosto em blocos pra deixar tudo do seu jeito! 🎉</p>
+        <img className="avatar" src={brand.avatar} alt={brand.hero} />
+        <h1>{brand.titleA}<span className="teo">{brand.titleB}</span></h1>
+        <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">🏆 Recorde: 0</span>
         <div id="help">
           <div className="card"><b>Andar</b> Setas ou W A S D</div>

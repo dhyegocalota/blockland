@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'Teocraft — O Mundo do Teodoro',
-  description: 'Um Minecraft 3D feito pro Teodoro: construa, cace, lute contra monstros e junte estrelas.',
+  title: 'Blocklandia',
+  description: 'Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.',
   icons: { icon: '/teo-avatar.png' },
 };
 
