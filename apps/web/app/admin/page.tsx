@@ -28,6 +28,19 @@ interface SaveResponse {
   field?: string;
 }
 
+interface UploadResponse {
+  url: string;
+  error?: string;
+}
+
+const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'avatar' | 'face'>> = {
+  avatar: 'avatar',
+  faceTexture: 'face',
+};
+
+const UPLOAD_ACCEPT = 'image/png,image/jpeg,image/webp';
+const TENANT_ID = /^[a-z0-9-]{2,32}$/;
+
 export default function Admin() {
   const [key, setKey] = useState('');
   const [authed, setAuthed] = useState(false);
@@ -72,6 +85,26 @@ export default function Admin() {
   const set = (field: keyof Tenant) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm({ ...form, [field]: e.target.value });
 
+  async function upload(field: keyof Tenant, kind: 'avatar' | 'face', file: File) {
+    if (!TENANT_ID.test(form.id)) { setMsg(t('admin.upload_needs_id')); return; }
+    const data = new FormData();
+    data.set('tenantId', form.id);
+    data.set('kind', kind);
+    data.set('file', file);
+    setMsg(t('admin.uploading'));
+    const res = await fetch('/api/admin/uploads', { method: 'POST', headers: { 'x-admin-key': key }, body: data });
+    const result = (await res.json()) as UploadResponse;
+    if (!res.ok) { setMsg(t('admin.error', { error: String(result.error) })); return; }
+    setForm((current) => ({ ...current, [field]: result.url }));
+    setMsg(t('admin.uploaded'));
+  }
+
+  const pickFile = (field: keyof Tenant, kind: 'avatar' | 'face') => (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) upload(field, kind, file);
+    e.target.value = '';
+  };
+
   if (!authed) {
     return (
       <main style={S.wrap}>
@@ -115,6 +148,9 @@ export default function Admin() {
             {f === 'tagline'
               ? <textarea style={{ ...S.input, height: 70 }} value={form[f]} onChange={set(f)} />
               : <input style={S.input} value={form[f]} onChange={set(f)} />}
+            {UPLOAD_FIELD[f] && (
+              <input style={S.file} type="file" accept={UPLOAD_ACCEPT} onChange={pickFile(f, UPLOAD_FIELD[f]!)} />
+            )}
           </label>
         ))}
         <div style={{ display: 'flex', gap: 8 }}>
@@ -133,5 +169,6 @@ const S: Record<string, CSSProperties> = {
   btn: { background: '#3dc6ff', color: '#06121a', border: 0, borderRadius: 8, padding: '10px 18px', fontWeight: 800, cursor: 'pointer' },
   small: { background: 'transparent', color: '#9cf', border: '1px solid #345', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' },
   link: { color: '#9cf', textDecoration: 'none', padding: '6px 10px', fontSize: 14 },
+  file: { color: '#9aa', fontSize: 12 },
   row: { display: 'flex', alignItems: 'center', gap: 10, background: '#15151f', border: '1px solid #262633', borderRadius: 10, padding: 10 },
 };

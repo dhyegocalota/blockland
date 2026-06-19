@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../../lib/rust-api', () => ({
+vi.mock('../../../../lib/api', () => ({
   listTenants: vi.fn(),
   upsertTenant: vi.fn(),
 }));
 
 import { GET, POST } from './route';
-import { listTenants, upsertTenant } from '../../../../lib/rust-api';
+import { listTenants, upsertTenant } from '../../../../lib/api';
 import type { Tenant } from '../../../../lib/builtins';
 
 const listTenantsMock = vi.mocked(listTenants);

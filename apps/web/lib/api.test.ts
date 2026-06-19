@@ -10,20 +10,20 @@ const GOLDEN = {
   signature: '8400280bdd1590664580d3486483a3cf5d75a92f1e0534ea6f7a596e816051b2',
 };
 
-let api: typeof import('./rust-api');
+let api: typeof import('./api');
 
 beforeEach(async () => {
   vi.resetModules();
   process.env.INTERNAL_HMAC_SECRET = GOLDEN.secret;
   process.env.RUST_API_URL = 'http://rust.test:9090';
-  api = await import('./rust-api');
+  api = await import('./api');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('rust-api signer', () => {
+describe('api signer', () => {
   it('reproduces the golden signature for the fixed inputs', () => {
     const signature = api.sign({
       method: GOLDEN.method,
@@ -101,5 +101,60 @@ describe('typed helpers', () => {
   it('deleteTenant throws on a non-ok response', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
     await expect(api.deleteTenant('teo')).rejects.toThrow();
+  });
+});
+
+describe('uploadAsset', () => {
+  it('signs a POST to the uploads path with the raw bytes hashed', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ url: 'https://cdn/x.png' }), { status: 200 }));
+    vi.spyOn(Date, 'now').mockReturnValue(Number(GOLDEN.ts) * 1000);
+
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const result = await api.uploadAsset({
+      key: 'tenants/acme/avatar.png',
+      contentType: 'image/png',
+      bytes,
+    });
+
+    expect(result).toEqual({ url: 'https://cdn/x.png' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      'http://rust.test:9090/internal/uploads?key=tenants%2Facme%2Favatar.png&content_type=image%2Fpng',
+    );
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBe(bytes);
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['content-type']).toBe('image/png');
+    expect(headers['x-bl-ts']).toBe(GOLDEN.ts);
+    const expected = api.sign({
+      method: 'POST',
+      path: '/internal/uploads?key=tenants%2Facme%2Favatar.png&content_type=image%2Fpng',
+      ts: GOLDEN.ts,
+      nonce: headers['x-bl-nonce'],
+      body: bytes,
+    });
+    expect(headers['x-bl-sig']).toBe(expected);
+  });
+
+  it('accepts an ArrayBuffer body and hashes it identically to its Uint8Array view', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ url: 'https://cdn/y.png' }), { status: 200 }),
+    );
+    const buffer = new Uint8Array([9, 8, 7]).buffer;
+    const result = await api.uploadAsset({
+      key: 'tenants/acme/face.png',
+      contentType: 'image/png',
+      bytes: buffer,
+    });
+    expect(result).toEqual({ url: 'https://cdn/y.png' });
+  });
+
+  it('throws on a non-ok response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 415 }));
+    await expect(
+      api.uploadAsset({ key: 'tenants/acme/avatar.png', contentType: 'image/gif', bytes: new Uint8Array() }),
+    ).rejects.toThrow();
   });
 });

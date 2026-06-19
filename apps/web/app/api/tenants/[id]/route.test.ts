@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../../lib/rust-api', () => ({
+vi.mock('../../../../lib/api', () => ({
   getTenant: vi.fn(),
 }));
 
 import { GET } from './route';
-import { getTenant } from '../../../../lib/rust-api';
+import { getTenant } from '../../../../lib/api';
 
 const getTenantMock = vi.mocked(getTenant);
 
 afterEach(() => vi.clearAllMocks());
 
 describe('GET /api/tenants/[id]', () => {
-  it('returns the tenant from the rust-api proxy', async () => {
+  it('returns the tenant from the api proxy', async () => {
     const tenant = { id: 'teo', name: 'Teocraft' } as Awaited<ReturnType<typeof getTenant>>;
     getTenantMock.mockResolvedValue(tenant);
 

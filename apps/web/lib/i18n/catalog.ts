@@ -167,6 +167,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.field_face_texture': 'URL da textura do rosto',
     'admin.field_face_block_name': 'Nome do bloco-rosto',
     'admin.field_tagline': 'Frase de abertura (aceita <b>)',
+    'admin.upload_needs_id': 'Defina o ID do tenant antes de enviar imagens.',
+    'admin.uploading': 'Enviando imagem...',
+    'admin.uploaded': 'Imagem enviada!',
   },
   'en-US': {
     // HUD action buttons
@@ -330,5 +333,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.field_face_texture': 'Face texture URL',
     'admin.field_face_block_name': 'Face block name',
     'admin.field_tagline': 'Opening line (accepts <b>)',
+    'admin.upload_needs_id': 'Set the tenant ID before uploading images.',
+    'admin.uploading': 'Uploading image...',
+    'admin.uploaded': 'Image uploaded!',
   },
 };

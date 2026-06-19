@@ -13,6 +13,7 @@
 //!   POST   /internal/tenants              upsert (body = Tenant JSON), returns it
 //!   DELETE /internal/tenants/:id          delete tenant
 //!   GET    /internal/leaderboard/:tenant  top scores JSON
+//!   POST   /internal/uploads?key&content_type  upload a tenant asset, returns { "url" }
 
 mod bans;
 mod conn;
@@ -21,13 +22,15 @@ mod hub;
 mod internal_auth;
 mod persistence;
 mod room;
+mod storage;
+mod uploads;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -37,6 +40,8 @@ use serde::Deserialize;
 use db::{Db, Tenant};
 use hub::Hub;
 use internal_auth::{AuthError, AuthHeaders, InternalAuth};
+use storage::Storage;
+use uploads::MAX_UPLOAD_BYTES;
 
 #[tokio::main]
 async fn main() {
@@ -50,9 +55,11 @@ async fn main() {
     let database = Arc::new(Db::open().await.expect("open database"));
     let hub = Arc::new(Hub::load(database).await);
     let auth = Arc::new(InternalAuth::from_env());
+    let storage = storage::from_env();
     let state = AppState {
         hub: hub.clone(),
         auth,
+        storage,
     };
     let bind = std::env::var("BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());
 
@@ -72,6 +79,10 @@ async fn main() {
             get(internal_get_tenant).delete(internal_delete_tenant),
         )
         .route("/internal/leaderboard/{tenant}", get(internal_leaderboard))
+        .route(
+            "/internal/uploads",
+            post(uploads::internal_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind).await.expect("bind");
@@ -92,6 +103,7 @@ async fn main() {
 struct AppState {
     hub: Arc<Hub>,
     auth: Arc<InternalAuth>,
+    storage: Arc<dyn Storage>,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<Hub> {

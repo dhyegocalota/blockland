@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../../../lib/rust-api', () => ({
+vi.mock('../../../../../lib/api', () => ({
   deleteTenant: vi.fn(),
 }));
 
 import { DELETE } from './route';
-import { deleteTenant } from '../../../../../lib/rust-api';
+import { deleteTenant } from '../../../../../lib/api';
 
 const deleteTenantMock = vi.mocked(deleteTenant);
 

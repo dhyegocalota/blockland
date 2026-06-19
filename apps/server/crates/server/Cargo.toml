@@ -20,3 +20,8 @@ libsql = { version = "0.6", default-features = false, features = ["core"] }
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+async-trait = "0.1"
+s3 = { package = "rust-s3", version = "0.35", default-features = false, features = ["tokio-rustls-tls"] }
+
+[dev-dependencies]
+tempfile = "3"
