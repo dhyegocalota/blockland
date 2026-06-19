@@ -30,7 +30,7 @@ RUN apt-get update \
 COPY --from=build /app/target/release/server /usr/local/bin/server
 COPY tenants.toml /etc/teocraft/tenants.toml
 ENV TENANTS_FILE=/etc/teocraft/tenants.toml \
-    DATABASE_PATH=/var/lib/teocraft/blocklandia.db \
+    DATABASE_PATH=/var/lib/teocraft/blockland.db \
     BIND=0.0.0.0:8080 \
     RUST_LOG=info,server=debug
 EXPOSE 8080
