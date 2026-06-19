@@ -7,6 +7,7 @@
 
 import type * as THREE from 'three';
 import { EYE_HEIGHT, PLAYER_HEIGHT } from './engine/constants';
+import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
 import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
@@ -62,6 +63,7 @@ export interface CoopController {
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   sendChat(text: string): void;
   update(now: number): void;
+  getColliders(): ActorPos[];
   readonly ping: number;
   readonly state: NetState;
   readonly onlineCount: number;
@@ -74,6 +76,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   let selfId: number | null = null;
   let lastMoveSentAt = 0;
   let onlineCount = 0;
+  let selfPing = 0;
 
   function colorFor(id: number): string {
     return AVATAR_COLORS[id % AVATAR_COLORS.length];
@@ -147,7 +150,10 @@ export function createCoop(opts: CoopOptions): CoopController {
       onSnapshot: (msg) => {
         const seen = new Set<number>();
         for (const p of msg.players) {
-          if (p.id === selfId) continue;
+          if (p.id === selfId) {
+            selfPing = p.ping_ms;
+            continue;
+          }
           seen.add(p.id);
           const avatar = avatars.get(p.id) ?? spawnAvatar(p.id, p.name);
           avatar.interp.push({ t: performance.now(), x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
@@ -155,7 +161,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         for (const id of [...avatars.keys()]) if (!seen.has(id)) removeAvatar(id);
         onlineCount = msg.players.length;
         opts.hud.onCount(onlineCount);
-        opts.hud.onPing(net.ping);
+        opts.hud.onPing(selfPing);
       },
       onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id }),
       onChat: (msg) => opts.hud.onChat(msg.name, msg.text),
@@ -184,8 +190,15 @@ export function createCoop(opts: CoopOptions): CoopController {
         avatar.group.rotation.y = pose.yaw;
       }
     },
+    getColliders(): ActorPos[] {
+      return [...avatars.values()].map((a) => ({
+        x: a.group.position.x,
+        y: a.group.position.y,
+        z: a.group.position.z,
+      }));
+    },
     get ping(): number {
-      return net.ping;
+      return selfPing;
     },
     get state(): NetState {
       return net.state;

@@ -6,11 +6,13 @@ function isLocale(value: string): value is Locale {
 }
 
 export function currentLocale(): Locale {
+  // pt-BR is the default everywhere (server + client) so SSR and hydration agree; en-US is opt-in
+  // via `?lang=en-US`. Auto-detecting navigator.language here would diverge from the server render
+  // and break hydration.
   if (typeof window === 'undefined') return DEFAULT_LOCALE;
   const lang = new URLSearchParams(window.location.search).get('lang');
   if (lang && isLocale(lang)) return lang;
-  if (navigator.language && navigator.language.startsWith('pt')) return 'pt-BR';
-  return 'en-US';
+  return DEFAULT_LOCALE;
 }
 
 export function t(key: string, vars?: Record<string, string | number>): string {

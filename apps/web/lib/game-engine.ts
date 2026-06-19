@@ -10,6 +10,7 @@ import { BLOCKS, type BlockDef, blockById } from './engine/blocks';
 import { heightAt } from './engine/worldgen';
 import { VoxelWorld } from './engine/world';
 import { type Axis, moveAxis } from './engine/physics';
+import { blockVelocityIntoActors } from './engine/actors';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
@@ -601,6 +602,26 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Physics ----------
   const stepAxis = (axis: Axis, amount: number): void => moveAxis({ world, player, axis, amount });
 
+  // Stop the local player from walking through remote players (velocity-only, never adds motion).
+  function blockIntoPlayers(): void {
+    if (!coop) return;
+    const actors = coop.getColliders();
+    if (actors.length === 0) return;
+    const blocked = blockVelocityIntoActors({
+      x: player.pos.x,
+      y: player.pos.y - EYE_HEIGHT,
+      z: player.pos.z,
+      vx: player.vel.x,
+      vz: player.vel.z,
+      radius: PLAYER_RADIUS,
+      height: PLAYER_HEIGHT,
+      actors,
+      actorRadius: PLAYER_RADIUS,
+    });
+    player.vel.x = blocked.vx;
+    player.vel.z = blocked.vz;
+  }
+
   const keys: Record<string, boolean> = {};
   interface Joystick { active: boolean; x: number; y: number; id: number | null; cx: number; cy: number; r: number; }
   const joystick: Joystick = { active: false, x: 0, y: 0, id: null, cx: 0, cy: 0, r: 50 };
@@ -635,6 +656,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       player.vel.y += GRAVITY * dt;
       if (keys.Space && player.onGround) { player.vel.y = JUMP_SPEED; player.onGround = false; }
     }
+
+    blockIntoPlayers();
 
     player.onGround = false;
     stepAxis('x', player.vel.x * dt);
