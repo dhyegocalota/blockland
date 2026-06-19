@@ -11,3 +11,6 @@ target
 
 # Generated build artifact: the bundled offline tenant (see scripts/bundle-tenant.mjs)
 apps/web/public/tenant.json
+
+# Rust server runtime data (libSQL db, bans, world saves, uploads)
+apps/server/data/
