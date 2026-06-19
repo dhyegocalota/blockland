@@ -7,11 +7,14 @@ export default function Game() {
   const [brand, setBrand] = useState(null);
 
   useEffect(() => {
-    const active = resolveTenant();
-    setBrand(active);
     let cleanup;
-    import('../lib/game-engine').then((mod) => { cleanup = mod.initGame(active); });
-    return () => { if (cleanup) cleanup(); };
+    let alive = true;
+    resolveTenant().then((active) => {
+      if (!alive) return;
+      setBrand(active);
+      import('../lib/game-engine').then((mod) => { cleanup = mod.initGame(active); });
+    });
+    return () => { alive = false; if (cleanup) cleanup(); };
   }, []);
 
   if (!brand) return null;
@@ -88,7 +91,7 @@ export default function Game() {
 
       <div id="start">
         <img className="avatar" src={brand.avatar} alt={brand.hero} />
-        <h1>{brand.titleA}<span className="teo">{brand.titleB}</span></h1>
+        <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">🏆 Recorde: 0</span>
         <div id="help">

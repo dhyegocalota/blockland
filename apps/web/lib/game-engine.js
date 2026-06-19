@@ -63,7 +63,7 @@ export function initGame(brand) {
   const SKIN_ID = 6;
   const HAIR_ID = 2;
   const CYAN_ID = 14;
-  const TEO_ID = 10;
+  const FACE_ID = 10;
   const WATER_ID = 11;
   const GRASS_ID = 1;
   const GOLD_ID = 8;
@@ -157,11 +157,11 @@ export function initGame(brand) {
 
   // ---------- Materials ----------
   const materials = {};
-  function buildMaterials(teoTexture) {
+  function buildMaterials(faceTexture) {
     for (const b of BLOCKS) {
       if (!b) continue;
       let tex;
-      if (b.id === TEO_ID) tex = teoTexture;
+      if (b.id === FACE_ID) tex = faceTexture;
       else { const c = makeCanvas(); b.build(c); tex = textureFromCanvas(c); }
       materials[b.id] = new THREE.MeshLambertMaterial({
         map: tex,
@@ -289,8 +289,8 @@ export function initGame(brand) {
   function buildWelcomeMonument() {
     const cx = SIZE_X >> 1, cz = SIZE_Z >> 1;
     const top = heightAt(cx, cz);
-    setVoxel(cx, top + 1, cz, TEO_ID);
-    setVoxel(cx, top + 2, cz, TEO_ID);
+    setVoxel(cx, top + 1, cz, FACE_ID);
+    setVoxel(cx, top + 2, cz, FACE_ID);
     for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) setVoxel(cx + dx, top + 1, cz + dz, 8);
   }
 
@@ -664,7 +664,7 @@ export function initGame(brand) {
     if (overlapsPlayer(px, py, pz)) return;
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
-    blip(selected === TEO_ID ? 720 : 520, 0.08);
+    blip(selected === FACE_ID ? 720 : 520, 0.08);
   }
   function overlapsPlayer(x, y, z) {
     const p = player.pos;
@@ -718,7 +718,7 @@ export function initGame(brand) {
     }
     for (let dy = 3; dy <= 5; dy++) { set(-2, dy, 0, CELESTE_ID); set(2, dy, 0, CELESTE_ID); } // arms
     set(0, 7, 0, WHITE_ID);                                                                  // neck
-    set(0, 8, 0, TEO_ID);                                                                     // Teo's face
+    set(0, 8, 0, FACE_ID);                                                                     // the player face
   }
   function stampCola(cx, gy, cz) {
     const R = 4, H = 17;
@@ -767,7 +767,7 @@ export function initGame(brand) {
     if (kind === 'cola') stampCola(cx, gy, cz);
     if (kind === 'steve') stampSteve(cx, gy, cz);
     remeshRegion(cx - reach, cx + reach, cz - reach, cz + reach);
-    const messages = { trophy: '🏆 Taça da Copa construída!', ball: '⚽ Bola gigante 2026 construída!', figure: '🃏 Figurinha do Teo craque!', cola: '🥤 Refri gigante da Copa!', steve: '🧍 Estátua do Steve!' };
+    const messages = { trophy: '🏆 Taça da Copa construída!', ball: '⚽ Bola gigante 2026 construída!', figure: '🃏 Figurinha craque!', cola: '🥤 Refri gigante da Copa!', steve: '🧍 Estátua do Steve!' };
     toast(messages[kind]);
     blip(680, 0.12); setTimeout(() => blip(1020, 0.14), 110);
   }
@@ -995,7 +995,7 @@ export function initGame(brand) {
 
   // ---------- HUD ----------
   const hotbar = document.getElementById('hotbar');
-  function buildHotbar(teoUrl) {
+  function buildHotbar(faceUrl) {
     for (const b of BLOCKS) {
       if (!b) continue;
       const slot = document.createElement('div');
@@ -1003,7 +1003,7 @@ export function initGame(brand) {
       slot.dataset.id = b.id;
       const swatch = document.createElement('div');
       swatch.className = 'swatch';
-      if (b.id === TEO_ID) swatch.style.background = `center/cover url(${teoUrl})`;
+      if (b.id === FACE_ID) swatch.style.background = `center/cover url(${faceUrl})`;
       else { const c = makeCanvas(); b.build(c); swatch.style.background = `center/cover url(${c.toDataURL()})`; swatch.style.imageRendering = 'pixelated'; }
       slot.appendChild(swatch);
       const key = document.createElement('span'); key.className = 'key'; key.textContent = b.key; slot.appendChild(key);
@@ -1071,11 +1071,11 @@ export function initGame(brand) {
   }
   document.getElementById('playBtn').addEventListener('click', start, { signal });
 
-  new THREE.TextureLoader().load(FACE_URL, (teoTex) => {
+  new THREE.TextureLoader().load(FACE_URL, (faceTex) => {
     if (disposed) return;
-    teoTex.magFilter = THREE.NearestFilter;
-    teoTex.colorSpace = THREE.SRGBColorSpace;
-    buildMaterials(teoTex);
+    faceTex.magFilter = THREE.NearestFilter;
+    faceTex.colorSpace = THREE.SRGBColorSpace;
+    buildMaterials(faceTex);
     buildWelcomeMonument();
     updateChunks(true);
     processMeshQueue(isTouch ? 24 : 60);

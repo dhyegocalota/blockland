@@ -92,3 +92,64 @@ impl World {
         [cx as f32 + 0.5, y, cz as f32 + 0.5]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn height_stays_in_bounds() {
+        for x in 0..400 {
+            for z in (0..400).step_by(7) {
+                let h = height_at(x, z);
+                assert!(h >= 2 && h <= SIZE_Y - 5, "height {h} out of bounds at {x},{z}");
+            }
+        }
+    }
+
+    #[test]
+    fn height_is_deterministic() {
+        assert_eq!(height_at(123, 456), height_at(123, 456));
+    }
+
+    #[test]
+    fn base_voxel_layers() {
+        let (x, z) = (100, 100);
+        let top = height_at(x, z);
+        assert_eq!(base_voxel(x, 0, z), BEDROCK, "y=0 must be bedrock");
+        assert_eq!(base_voxel(x, top, z), 1, "surface must be grass");
+        assert_eq!(base_voxel(x, top + 1, z), AIR, "above surface must be air");
+        assert!(base_voxel(x, top - 1, z) != AIR, "below surface must be solid");
+        assert_eq!(base_voxel(x, SIZE_Y, z), AIR, "out of vertical range is air");
+    }
+
+    #[test]
+    fn edits_override_base() {
+        let mut w = World::new();
+        let (x, y, z) = (10, 5, 10);
+        let base = w.get(x, y, z);
+        let other = if base == 8 { 9 } else { 8 };
+        w.set(x, y, z, other);
+        assert_eq!(w.get(x, y, z), other);
+        assert_eq!(w.edit_count(), 1);
+        w.set(x, y, z, AIR);
+        assert!(!w.is_solid(x, y, z));
+    }
+
+    #[test]
+    fn water_is_not_solid() {
+        let mut w = World::new();
+        w.set(3, 4, 3, WATER);
+        assert!(!w.is_solid(3, 4, 3));
+        w.set(3, 4, 3, 3);
+        assert!(w.is_solid(3, 4, 3));
+    }
+
+    #[test]
+    fn spawn_inside_world() {
+        let s = World::spawn();
+        assert!(s[0] > 0.0 && s[0] < WORLD_SIZE as f32);
+        assert!(s[2] > 0.0 && s[2] < WORLD_SIZE as f32);
+        assert!(s[1] > 0.0 && s[1] < SIZE_Y as f32 + 8.0);
+    }
+}

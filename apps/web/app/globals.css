@@ -97,7 +97,7 @@ canvas { display: block; }
   font-size: clamp(38px, 9vw, 86px); font-weight: 900; color: #fff; z-index: 2; line-height: .95;
   text-shadow: 0 6px 0 #2a1a4a, 0 0 26px #ffd23f; letter-spacing: 1px;
 }
-#start h1 .teo { color: var(--gold); }
+#start h1 .accent { color: var(--gold); }
 #start p { font-size: clamp(15px, 3.5vw, 20px); color: #2a1a4a; font-weight: 800; max-width: 540px; z-index: 2; }
 #start .record-badge {
   z-index: 2; background: rgba(42,26,74,.85); color: var(--gold); font-weight: 900; font-size: 18px;

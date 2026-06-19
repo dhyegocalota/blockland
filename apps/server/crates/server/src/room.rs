@@ -405,3 +405,38 @@ fn epoch_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bucket_limits_and_refills() {
+        // capacity 3: three takes succeed, fourth fails until refilled.
+        let mut b = Bucket::new(3.0);
+        assert!(b.take());
+        assert!(b.take());
+        assert!(b.take());
+        assert!(!b.take(), "bucket should be empty");
+        b.refill(1.0); // 1s at 3/s -> +3 tokens (capped at 3)
+        assert!(b.take());
+    }
+
+    #[test]
+    fn bucket_caps_at_capacity() {
+        let mut b = Bucket::new(2.0);
+        b.refill(100.0); // huge refill must not exceed capacity
+        assert!(b.take());
+        assert!(b.take());
+        assert!(!b.take());
+    }
+
+    #[test]
+    fn sanitize_trims_and_limits() {
+        assert_eq!(sanitize_name("  Teo123  "), "Teo123");
+        assert_eq!(sanitize_name(""), "Player");
+        assert_eq!(sanitize_name("!@#$%"), "Player");
+        assert_eq!(sanitize_name("abcdefghijklmnopqrstuvwxyz").len(), 16);
+        assert_eq!(sanitize_name("<script>"), "script");
+    }
+}

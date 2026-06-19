@@ -281,21 +281,13 @@ impl Hub {
     }
 }
 
+// Fallback only when no tenants file is provided. Real tenants come from tenants.toml.
 fn default_tenants() -> Vec<TenantCfg> {
-    vec![
-        TenantCfg {
-            id: "teo".into(),
-            name: "Teocraft".into(),
-            primary: "#ffd23f".into(),
-            logo: Some("/teo-avatar.png".into()),
-            max_rooms: 8,
-        },
-        TenantCfg {
-            id: "demo".into(),
-            name: "Demo World".into(),
-            primary: "#3dc6ff".into(),
-            logo: None,
-            max_rooms: 4,
-        },
-    ]
+    vec![TenantCfg {
+        id: "demo".into(),
+        name: "Blocklandia".into(),
+        primary: "#3dc6ff".into(),
+        logo: None,
+        max_rooms: 4,
+    }]
 }

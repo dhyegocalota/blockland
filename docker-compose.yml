@@ -1,7 +1,7 @@
 services:
   game-server:
     build:
-      context: .
+      context: ./apps/server
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
@@ -10,7 +10,7 @@ services:
       BIND: 0.0.0.0:8080
       RUST_LOG: info,server=debug
     volumes:
-      - ./tenants.toml:/etc/teocraft/tenants.toml:ro
+      - ./apps/server/tenants.toml:/etc/teocraft/tenants.toml:ro
     restart: unless-stopped
     # keep an abuser/runaway from eating the host
     mem_limit: 256m

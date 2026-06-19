@@ -1,10 +1,10 @@
-// White-label config. The platform is generic ("Blocklandia"); each tenant brings its
-// own name, colors, avatar, face texture and copy. Everything Teo-specific lives in the
-// `teo` tenant — nothing about Teodoro is baked into the core anymore.
+// Built-in tenants: used to seed the database on first run and as an offline fallback
+// if the store is unreachable. Everything tenant-specific lives here as plain data.
 
 export const PLATFORM_NAME = 'Blocklandia';
+export const DEFAULT_TENANT = process.env.NEXT_PUBLIC_DEFAULT_TENANT || 'teo';
 
-export const TENANTS = {
+export const BUILTIN_TENANTS = {
   teo: {
     id: 'teo',
     name: 'Teocraft',
@@ -14,8 +14,8 @@ export const TENANTS = {
     tagline:
       'O mundo mágico do <b>Teodoro</b>! Construa castelos, cace os porquinhos, derrote os monstrinhos e junte estrelas. Coloque o seu rosto em blocos pra deixar tudo do seu jeito! 🎉',
     primary: '#ffd23f',
-    avatar: '/teo-avatar.png',
-    faceTexture: '/teo-face.png',
+    avatar: '/tenants/teo/avatar.png',
+    faceTexture: '/tenants/teo/face.png',
     faceBlockName: 'Teo!',
   },
   demo: {
@@ -27,16 +27,21 @@ export const TENANTS = {
     tagline:
       'Seu mundo de blocos! Construa, cace os bichinhos, derrote os monstrinhos e junte estrelas. Coloque o seu rosto em blocos pra deixar tudo do seu jeito! 🎉',
     primary: '#3dc6ff',
-    avatar: '/teo-avatar.png',
-    faceTexture: '/teo-face.png',
+    avatar: '/tenants/demo/avatar.png',
+    faceTexture: '/tenants/demo/face.png',
     faceBlockName: 'Eu!',
   },
 };
 
-/// Resolve the active tenant from `?tenant=` (defaults to `teo`). Server-safe.
-export function resolveTenant() {
-  if (typeof window === 'undefined') return TENANTS.teo;
-  const id = new URLSearchParams(window.location.search).get('tenant');
-  if (id && TENANTS[id]) return TENANTS[id];
-  return TENANTS.teo;
-}
+export const TENANT_FIELDS = [
+  'id',
+  'name',
+  'hero',
+  'titleA',
+  'titleB',
+  'tagline',
+  'primary',
+  'avatar',
+  'faceTexture',
+  'faceBlockName',
+];
