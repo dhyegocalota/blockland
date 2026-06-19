@@ -31,6 +31,16 @@ export default function Game() {
         </div>
       </div>
 
+      <div id="touchControls" style={{ display: 'none' }}>
+        <div id="joystick"><div id="joyKnob"></div></div>
+        <div id="touchButtons">
+          <button id="btnUp" className="tbtn">⤴️</button>
+          <button id="btnDown" className="tbtn">⤵️</button>
+          <button id="btnPlace" className="tbtn place">🧱</button>
+          <button id="btnBreak" className="tbtn break">⛏️</button>
+        </div>
+      </div>
+
       <div id="controls" hidden>
         <div className="panel">
           <h2>🎮 Controles do Teocraft</h2>
