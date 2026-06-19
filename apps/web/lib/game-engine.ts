@@ -15,7 +15,7 @@ import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 import { createCoop, MAIN_WORLD, type CoopController, type CoopHud } from './coop';
-import type { EditOp } from './protocol';
+import type { EditCell, EditOp } from './protocol';
 
 interface Creature {
   typeKey: string;
@@ -342,6 +342,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     remeshRegion(x - 1, x + 1, z - 1, z + 1);
     debug('coop', 'remote edit', { x, y, z, id });
   }
+  function applyRemoteEditBatch(edits: EditCell[]): void {
+    if (edits.length === 0) return;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const { x, y, z, id } of edits) {
+      if (!inBounds(x, y, z)) continue;
+      setVoxel(x, y, z, id);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+    if (minX <= maxX) remeshRegion(minX - 1, maxX + 1, minZ - 1, maxZ + 1);
+    debug('coop', 'remote edit batch', { count: edits.length });
+  }
   function localPose(): { x: number; y: number; z: number; yaw: number; pitch: number } {
     return { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch };
   }
@@ -587,12 +601,15 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const cz = Math.max(margin, Math.min(SIZE_Z - margin, Math.round(targetZ)));
     const gy = groundHeight(cx, cz);
     const reach = kind === 'ball' ? 9 : kind === 'cola' ? 6 : 4;
-    if (kind === 'trophy') stampTrophy({ set: setVoxel, cx, gy, cz });
-    if (kind === 'ball') stampBall({ set: setVoxel, cx, gy, cz, radius: 8 });
-    if (kind === 'figure') stampFigure({ set: setVoxel, cx, gy, cz });
-    if (kind === 'cola') stampCola({ set: setVoxel, cx, gy, cz });
-    if (kind === 'steve') stampSteve({ set: setVoxel, cx, gy, cz });
+    const cells: EditCell[] = [];
+    const collect = (x: number, y: number, z: number, id: number): void => { setVoxel(x, y, z, id); cells.push({ x, y, z, id }); };
+    if (kind === 'trophy') stampTrophy({ set: collect, cx, gy, cz });
+    if (kind === 'ball') stampBall({ set: collect, cx, gy, cz, radius: 8 });
+    if (kind === 'figure') stampFigure({ set: collect, cx, gy, cz });
+    if (kind === 'cola') stampCola({ set: collect, cx, gy, cz });
+    if (kind === 'steve') stampSteve({ set: collect, cx, gy, cz });
     remeshRegion(cx - reach, cx + reach, cz - reach, cz + reach);
+    coop?.sendEditBatch(cells);
     const messages: Record<StructureKind, string> = { trophy: t('toast.built_trophy'), ball: t('toast.built_ball'), figure: t('toast.built_figure'), cola: t('toast.built_cola'), steve: t('toast.built_steve') };
     toast(messages[kind]);
     blip(680, 0.12); setTimeout(() => blip(1020, 0.14), 110);
@@ -935,6 +952,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       name,
       hud: bridge.hud,
       applyRemoteEdit,
+      applyRemoteEditBatch,
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }

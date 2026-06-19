@@ -7,12 +7,17 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use protocol::{Brand, ClientMsg, EditOp, PlayerId, PlayerState, ServerMsg};
+use protocol::{Brand, ClientMsg, EditCell, EditOp, PlayerId, PlayerState, ServerMsg};
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 
 use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
+
+// Bulk edits (magic structures, and the world handed to a joining player) are capped so one player
+// cannot flood the room or build across the whole map.
+const MAX_BATCH_EDITS: usize = 8192;
+const BATCH_RADIUS: f32 = 48.0;
 
 pub enum RoomCmd {
     Join {
@@ -233,6 +238,16 @@ impl Room {
             spawn,
         };
         let _ = conn.try_send(welcome);
+        // Hand the joining player the world that has already been built.
+        let edits: Vec<EditCell> = self
+            .world
+            .snapshot()
+            .into_iter()
+            .map(|(x, y, z, block)| EditCell { x, y, z, id: block })
+            .collect();
+        if !edits.is_empty() {
+            let _ = conn.try_send(ServerMsg::EditBatch { edits, by: 0 });
+        }
         self.players.insert(id, player);
         self.empty_since = None;
         let _ = reply.send(Ok(id));
@@ -247,6 +262,7 @@ impl Room {
         // Edits and chat need a broadcast after the borrow ends, so stage them.
         let mut edit_out: Option<ServerMsg> = None;
         let mut chat_out: Option<ServerMsg> = None;
+        let mut batch_out: Option<ServerMsg> = None;
 
         let Some(p) = self.players.get_mut(&id) else {
             return;
@@ -337,6 +353,25 @@ impl Room {
                     text,
                 });
             }
+            ClientMsg::EditBatch { edits } => {
+                if !p.edit_b.take() || edits.len() > MAX_BATCH_EDITS {
+                    return;
+                }
+                let applied: Vec<EditCell> = edits
+                    .into_iter()
+                    .filter(|c| (0..sim::SIZE_Y).contains(&c.y) && c.id <= sim::MAX_BLOCK)
+                    .filter(|c| {
+                        (c.x as f32 + 0.5 - p.x).abs() <= BATCH_RADIUS
+                            && (c.z as f32 + 0.5 - p.z).abs() <= BATCH_RADIUS
+                    })
+                    .collect();
+                if !applied.is_empty() {
+                    batch_out = Some(ServerMsg::EditBatch {
+                        edits: applied,
+                        by: id,
+                    });
+                }
+            }
             ClientMsg::Pong { nonce } => {
                 if nonce == p.ping_nonce {
                     p.ping_ms = (now - p.ping_sent_at).as_millis().min(u32::MAX as u128) as u32;
@@ -354,6 +389,16 @@ impl Room {
             tracing::debug!(x = *x, y = *y, z = *z, id = *nid, by = %id, "edit applied");
         }
         if let Some(m) = edit_out {
+            self.broadcast(&m);
+        }
+        if let Some(ServerMsg::EditBatch { edits, .. }) = batch_out.as_ref() {
+            for c in edits {
+                self.world.set(c.x, c.y, c.z, c.id);
+            }
+            self.dirty = true;
+            tracing::debug!(count = edits.len(), by = %id, "edit batch applied");
+        }
+        if let Some(m) = batch_out {
             self.broadcast(&m);
         }
         if let Some(m) = chat_out {

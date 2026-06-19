@@ -7,11 +7,13 @@ import { debug } from './log';
 import {
   chat,
   edit,
+  editBatch,
   encodeClientMsg,
   join,
   move,
   parseServerMsg,
   pong,
+  type EditCell,
   type EditOp,
   type ServerMsg,
 } from './protocol';
@@ -28,6 +30,7 @@ export type NetState =
 type WelcomeMsg = Extract<ServerMsg, { t: 'welcome' }>;
 type SnapshotMsg = Extract<ServerMsg, { t: 'snapshot' }>;
 type EditMsg = Extract<ServerMsg, { t: 'edit' }>;
+type EditBatchMsg = Extract<ServerMsg, { t: 'edit_batch' }>;
 type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
 
 export interface NetHandlers {
@@ -35,6 +38,7 @@ export interface NetHandlers {
   onWelcome?(msg: WelcomeMsg): void;
   onSnapshot?(msg: SnapshotMsg): void;
   onEdit?(msg: EditMsg): void;
+  onEditBatch?(msg: EditBatchMsg): void;
   onChat?(msg: ChatMsg): void;
   onError?(code: string, msg: string): void;
 }
@@ -65,6 +69,7 @@ export interface NetClient {
   close(): void;
   sendMove(x: number, y: number, z: number, yaw: number, pitch: number): void;
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
+  sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
   readonly ping: number;
   readonly state: NetState;
@@ -127,6 +132,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'edit') {
       opts.handlers.onEdit?.(msg);
+      return;
+    }
+    if (msg.t === 'edit_batch') {
+      opts.handlers.onEditBatch?.(msg);
       return;
     }
     if (msg.t === 'chat') {
@@ -209,6 +218,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendEdit(op, x, y, z, id): void {
       rawSend(encodeClientMsg(edit(op, x, y, z, id)));
+    },
+    sendEditBatch(edits): void {
+      if (edits.length > 0) rawSend(encodeClientMsg(editBatch(edits)));
     },
     sendChat(text): void {
       rawSend(encodeClientMsg(chat(text)));

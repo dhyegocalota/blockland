@@ -38,6 +38,9 @@ pub enum ClientMsg {
     Chat {
         text: String,
     },
+    EditBatch {
+        edits: Vec<EditCell>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -45,6 +48,16 @@ pub enum ClientMsg {
 pub enum EditOp {
     Place,
     Break,
+}
+
+/// One absolute voxel write; `id` of 0 (air) means break. Used for bulk edits (structures) and to
+/// hand the current world to a player who just joined.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+pub struct EditCell {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub id: u8,
 }
 
 /// Messages the server sends to the client.
@@ -69,6 +82,10 @@ pub enum ServerMsg {
         y: i32,
         z: i32,
         id: u8,
+        by: u32,
+    },
+    EditBatch {
+        edits: Vec<EditCell>,
         by: u32,
     },
     Ping {
@@ -123,6 +140,7 @@ mod export {
         for decl in [
             Brand::decl(),
             EditOp::decl(),
+            EditCell::decl(),
             PlayerState::decl(),
             ClientMsg::decl(),
             ServerMsg::decl(),

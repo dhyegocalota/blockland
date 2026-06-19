@@ -111,6 +111,22 @@ describe('net client', () => {
     expect(snapshots).toEqual([{ t: 'snapshot', tick: 5, players: [] }]);
   });
 
+  it('routes edit_batch to onEditBatch and serializes sendEditBatch', () => {
+    const batches: unknown[] = [];
+    const { client } = makeClient({ handlers: { onEditBatch: (m) => batches.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const incoming = { t: 'edit_batch', edits: [{ x: 1, y: 2, z: 3, id: 4 }], by: 7 };
+    socket.receive(incoming);
+    expect(batches).toEqual([incoming]);
+
+    client.sendEditBatch([{ x: 5, y: 6, z: 7, id: 8 }]);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'edit_batch', edits: [{ x: 5, y: 6, z: 7, id: 8 }] }));
+  });
+
   it('a banned error transitions to banned and does not reconnect', () => {
     const { client } = makeClient();
     client.connect();

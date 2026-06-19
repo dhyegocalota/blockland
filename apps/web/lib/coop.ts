@@ -11,7 +11,7 @@ import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
 import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
-import type { EditOp } from './protocol';
+import type { EditCell, EditOp } from './protocol';
 
 // One persistent world per tenant (see apps/server model); the world name is fixed and global.
 export const MAIN_WORLD = 'main';
@@ -50,6 +50,7 @@ export interface CoopOptions {
   name: string;
   hud: CoopHud;
   applyRemoteEdit(args: { x: number; y: number; z: number; id: number }): void;
+  applyRemoteEditBatch(edits: EditCell[]): void;
 }
 
 interface Avatar {
@@ -61,6 +62,7 @@ interface Avatar {
 export interface CoopController {
   sendMove(pose: LocalPose, now: number): void;
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
+  sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
   update(now: number): void;
   getColliders(): ActorPos[];
@@ -164,6 +166,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onPing(selfPing);
       },
       onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id }),
+      onEditBatch: (msg) => opts.applyRemoteEditBatch(msg.edits),
       onChat: (msg) => opts.hud.onChat(msg.name, msg.text),
       onError: (code, message) => debug('coop', 'server error', { code, msg: message }),
     },
@@ -178,6 +181,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendEdit(op, x, y, z, id): void {
       net.sendEdit(op, x, y, z, id);
+    },
+    sendEditBatch(edits): void {
+      net.sendEditBatch(edits);
     },
     sendChat(text): void {
       net.sendChat(text);
