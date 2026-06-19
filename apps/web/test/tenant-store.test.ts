@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import type { Tenant } from '../lib/builtins';
 
-let store;
+let store: typeof import('../lib/tenant-store');
 
 beforeAll(async () => {
   process.env.DATABASE_URL = ':memory:';
@@ -18,7 +19,7 @@ describe('tenant-store', () => {
   it('reads a seeded tenant by id', async () => {
     const teo = await store.getTenant('teo');
     expect(teo).not.toBeNull();
-    expect(teo.name).toBe('Teocraft');
+    expect(teo?.name).toBe('Teocraft');
   });
 
   it('returns null for an unknown tenant', async () => {
@@ -26,7 +27,7 @@ describe('tenant-store', () => {
   });
 
   it('upserts, reads back, and deletes a tenant', async () => {
-    const draft = {
+    const draft: Tenant = {
       id: 'acme',
       name: 'Acme',
       hero: 'Wile',

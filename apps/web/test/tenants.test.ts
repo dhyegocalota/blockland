@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { tenantIdFromLocation } from '../lib/tenants';
 import { DEFAULT_TENANT } from '../lib/builtins';
 
-function stubLocation({ hostname, search }) {
-  globalThis.window = { location: { hostname, search } };
+function stubLocation({ hostname, search }: { hostname: string; search: string }) {
+  globalThis.window = { location: { hostname, search } } as unknown as Window & typeof globalThis;
 }
 
 afterEach(() => {
-  delete globalThis.window;
+  delete (globalThis as { window?: unknown }).window;
 });
 
 describe('tenantIdFromLocation', () => {

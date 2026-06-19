@@ -2,13 +2,13 @@
 // a Turso/libSQL URL in production via DATABASE_URL (+ DATABASE_AUTH_TOKEN).
 import 'server-only';
 import fs from 'node:fs';
-import { createClient } from '@libsql/client/node';
-import { BUILTIN_TENANTS } from './builtins';
+import { createClient, type Client, type Row } from '@libsql/client/node';
+import { BUILTIN_TENANTS, type Tenant } from './builtins';
 
-let client;
-let ready;
+let client: Client | undefined;
+let ready: Promise<void> | undefined;
 
-function db() {
+function db(): Client {
   if (client) return client;
   const url = process.env.DATABASE_URL || 'file:.data/blocklandia.db';
   if (url.startsWith('file:')) {
@@ -19,7 +19,7 @@ function db() {
   return client;
 }
 
-async function ensure() {
+async function ensure(): Promise<void> {
   if (ready) return ready;
   ready = (async () => {
     await db().execute(`
@@ -46,7 +46,7 @@ async function ensure() {
 
 // Raw upsert without `ensure()` — used by both the seed and the public API to avoid
 // re-entering `ensure()` (which would deadlock during seeding).
-async function insertRow(t) {
+async function insertRow(t: Tenant): Promise<void> {
   await db().execute({
     sql: `INSERT INTO tenants
       (id, name, hero, title_a, title_b, tagline, primary_color, avatar, face_texture, face_block_name, created_at)
@@ -62,41 +62,41 @@ async function insertRow(t) {
   });
 }
 
-function rowToTenant(r) {
+function rowToTenant(r: Row): Tenant {
   return {
-    id: r.id,
-    name: r.name,
-    hero: r.hero,
-    titleA: r.title_a,
-    titleB: r.title_b,
-    tagline: r.tagline,
-    primary: r.primary_color,
-    avatar: r.avatar,
-    faceTexture: r.face_texture,
-    faceBlockName: r.face_block_name,
+    id: String(r.id),
+    name: String(r.name),
+    hero: String(r.hero),
+    titleA: String(r.title_a),
+    titleB: String(r.title_b),
+    tagline: String(r.tagline),
+    primary: String(r.primary_color),
+    avatar: String(r.avatar),
+    faceTexture: String(r.face_texture),
+    faceBlockName: String(r.face_block_name),
   };
 }
 
-export async function listTenants() {
+export async function listTenants(): Promise<Tenant[]> {
   await ensure();
   const res = await db().execute('SELECT * FROM tenants ORDER BY created_at ASC');
   return res.rows.map(rowToTenant);
 }
 
-export async function getTenant(id) {
+export async function getTenant(id: string): Promise<Tenant | null> {
   await ensure();
   const res = await db().execute({ sql: 'SELECT * FROM tenants WHERE id = ?', args: [id] });
   if (res.rows.length === 0) return null;
   return rowToTenant(res.rows[0]);
 }
 
-export async function upsertTenant(t) {
+export async function upsertTenant(t: Tenant): Promise<Tenant | null> {
   await ensure();
   await insertRow(t);
   return getTenant(t.id);
 }
 
-export async function deleteTenant(id) {
+export async function deleteTenant(id: string): Promise<void> {
   await ensure();
   await db().execute({ sql: 'DELETE FROM tenants WHERE id = ?', args: [id] });
 }

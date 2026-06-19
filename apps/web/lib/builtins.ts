@@ -1,10 +1,23 @@
 // Built-in tenants: used to seed the database on first run and as an offline fallback
 // if the store is unreachable. Everything tenant-specific lives here as plain data.
 
+export interface Tenant {
+  id: string;
+  name: string;
+  hero: string;
+  titleA: string;
+  titleB: string;
+  tagline: string;
+  primary: string;
+  avatar: string;
+  faceTexture: string;
+  faceBlockName: string;
+}
+
 export const PLATFORM_NAME = 'Blocklandia';
 export const DEFAULT_TENANT = process.env.NEXT_PUBLIC_DEFAULT_TENANT || 'teo';
 
-export const BUILTIN_TENANTS = {
+export const BUILTIN_TENANTS: Record<string, Tenant> = {
   teo: {
     id: 'teo',
     name: 'Teocraft',
@@ -33,7 +46,7 @@ export const BUILTIN_TENANTS = {
   },
 };
 
-export const TENANT_FIELDS = [
+export const TENANT_FIELDS: (keyof Tenant)[] = [
   'id',
   'name',
   'hero',

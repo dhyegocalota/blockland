@@ -266,6 +266,8 @@ impl Room {
                     p.z = z;
                     p.yaw = yaw;
                     p.pitch = pitch;
+                } else {
+                    tracing::debug!(id = %id, dist, allowed, "move rejected by anti-cheat");
                 }
                 // Out-of-bounds / too-fast moves are dropped: the next snapshot carries
                 // the authoritative position and the client reconciles.
@@ -335,6 +337,7 @@ impl Room {
         {
             self.world.set(*x, *y, *z, *nid);
             self.dirty = true;
+            tracing::debug!(x = *x, y = *y, z = *z, id = *nid, by = %id, "edit applied");
         }
         if let Some(m) = edit_out {
             self.broadcast(&m);
@@ -360,6 +363,7 @@ impl Room {
                     code: "idle_timeout".into(),
                     msg: "You were idle for too long.".into(),
                 });
+                tracing::debug!(id = %p.id, "idle kick");
                 kicked.push(p.id);
             }
         }
@@ -433,6 +437,7 @@ impl Room {
         self.dirty = false;
         let tenant = self.key.0.clone();
         let blob = sim::encode_edits(&self.world.snapshot());
+        tracing::debug!(tenant = %tenant, edits = self.world.edit_count(), bytes = blob.len(), "world flush");
         tokio::task::spawn_blocking(move || {
             if let Err(e) = crate::persistence::save(&tenant, &blob) {
                 tracing::error!(%tenant, error = %e, "world save failed");

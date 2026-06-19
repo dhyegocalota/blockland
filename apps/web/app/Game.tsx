@@ -1,19 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { resolveTenant } from '../lib/tenants';
+import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
+import { debug } from '../lib/log';
 
 export default function Game() {
-  const [brand, setBrand] = useState(null);
+  const [brand, setBrand] = useState<Brand | null>(null);
 
   useEffect(() => {
-    let cleanup;
+    let cleanup: (() => void) | undefined;
     let alive = true;
     resolveTenant().then((active) => {
       if (!alive) return;
+      debug('tenant', 'active tenant', { id: active.id, name: active.name });
       setBrand(active);
-      import('../lib/game-engine').then((mod) => { cleanup = mod.initGame(active); });
+      import('../lib/game-engine').then((mod) => {
+        debug('engine', 'engine module loaded', { id: active.id, name: active.name });
+        cleanup = mod.initGame(active);
+      });
     });
     return () => { alive = false; if (cleanup) cleanup(); };
   }, []);

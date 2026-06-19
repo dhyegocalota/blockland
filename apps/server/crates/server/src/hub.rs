@@ -195,9 +195,11 @@ impl Hub {
     pub fn try_add_ip(&self, ip: IpAddr) -> bool {
         let mut entry = self.ip_conns.entry(ip).or_insert(0);
         if *entry >= self.limits.max_conns_per_ip {
+            tracing::debug!(%ip, count = *entry, "ip connection rejected");
             return false;
         }
         *entry += 1;
+        tracing::debug!(%ip, count = *entry, "ip connection accepted");
         true
     }
 

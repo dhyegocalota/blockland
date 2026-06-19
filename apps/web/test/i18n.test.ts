@@ -3,7 +3,7 @@ import { t } from '../lib/i18n/index';
 import { messages } from '../lib/i18n/catalog';
 
 afterEach(() => {
-  delete globalThis.window;
+  delete (globalThis as { window?: unknown }).window;
 });
 
 describe('t', () => {

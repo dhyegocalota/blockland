@@ -1,8 +1,10 @@
 // i18n message catalog. Keys are en-US dotted strings; pt-BR is the default display locale.
 // Every key MUST exist in both locales. {var} placeholders are interpolated by t().
-export const DEFAULT_LOCALE = 'pt-BR';
+export type Locale = 'pt-BR' | 'en-US';
 
-export const messages = {
+export const DEFAULT_LOCALE: Locale = 'pt-BR';
+
+export const messages: Record<Locale, Record<string, string>> = {
   'pt-BR': {
     // HUD action buttons
     'hud.controls': '❓ Controles',

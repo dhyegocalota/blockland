@@ -1,11 +1,79 @@
 import * as THREE from 'three';
-import { PLATFORM_NAME } from './tenants';
+import { PLATFORM_NAME, type Brand } from './tenants';
 import { t } from './i18n';
+import { debug } from './log';
 
-export function initGame(brand) {
+interface Block {
+  id: number;
+  name: string;
+  key: string;
+  transparent?: boolean;
+  build: ((c: HTMLCanvasElement) => void) | null;
+}
+
+interface CreatureDef {
+  kind: 'animal' | 'monster';
+  color: string;
+  size: [number, number, number];
+  hp: number;
+  speed: number;
+  reward: number;
+  emoji: string;
+  name: string;
+}
+
+interface Creature {
+  typeKey: string;
+  def: CreatureDef;
+  mesh: THREE.Group;
+  body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  hp: number;
+  dir: number;
+  timer: number;
+  bob: number;
+  flash: number;
+}
+
+interface Player {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  yaw: number;
+  pitch: number;
+  onGround: boolean;
+  fly: boolean;
+  hearts: number;
+  stars: number;
+  bag: number;
+  hurtCooldown: number;
+}
+
+interface Poof {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  life: number;
+}
+
+interface VoxelHit {
+  hit: [number, number, number];
+  place: [number, number, number];
+}
+
+type Axis = 'x' | 'y' | 'z';
+type Biome = 'desert' | 'plains' | 'forest' | 'snow';
+type StructureKind = 'trophy' | 'ball' | 'figure' | 'cola' | 'steve';
+
+interface GameWindow extends Window {
+  __blGameBooted?: boolean;
+  __blGameCleanup?: (() => void) | undefined;
+  webkitAudioContext?: typeof AudioContext;
+}
+
+export function initGame(brand: Brand): (() => void) | undefined {
   if (typeof window === 'undefined') return undefined;
-  if (window.__blGameBooted) return window.__blGameCleanup;
-  window.__blGameBooted = true;
+  const win = window as unknown as GameWindow;
+  if (win.__blGameBooted) return win.__blGameCleanup;
+  win.__blGameBooted = true;
+  const bootStart = performance.now();
   const FACE_URL = brand.faceTexture;
   const BEST_KEY = `bl-best-${brand.id}`;
   if (typeof document !== 'undefined') document.title = `${brand.name} — ${PLATFORM_NAME}`;
@@ -35,7 +103,7 @@ export function initGame(brand) {
 
   // ---------- Block definitions ----------
   const AIR = 0;
-  const BLOCKS = [
+  const BLOCKS: (Block | null)[] = [
     null,
     { id: 1, name: t('block.grass'), key: '1', build: (c) => paint(c, '#6bd06b', '#4fb04f', '#86e886') },
     { id: 2, name: t('block.dirt'), key: '2', build: (c) => paint(c, '#9c6b43', '#7d5232', '#b3825a') },
@@ -70,16 +138,27 @@ export function initGame(brand) {
   const GOLD_ID = 8;
   const WHITE_ID = 12;
   const BLACK_ID = 13;
-  const blockById = (id) => BLOCKS[id];
+  const blockById = (id: number): Block | null => BLOCKS[id];
+
+  function el(id: string): HTMLElement {
+    const node = document.getElementById(id);
+    if (!node) throw new Error(`missing element #${id}`);
+    return node;
+  }
 
   // ---------- Procedural texture helpers ----------
-  function makeCanvas() {
+  function makeCanvas(): HTMLCanvasElement {
     const c = document.createElement('canvas');
     c.width = 16; c.height = 16;
     return c;
   }
-  function paint(c, base, dark, light) {
+  function ctx2d(c: HTMLCanvasElement): CanvasRenderingContext2D {
     const g = c.getContext('2d');
+    if (!g) throw new Error('2d canvas context unavailable');
+    return g;
+  }
+  function paint(c: HTMLCanvasElement, base: string, dark: string, light: string): void {
+    const g = ctx2d(c);
     g.fillStyle = base; g.fillRect(0, 0, 16, 16);
     for (let i = 0; i < 46; i++) {
       const x = Math.floor(Math.random() * 16);
@@ -88,41 +167,41 @@ export function initGame(brand) {
       g.fillRect(x, y, 1, 1);
     }
   }
-  function woodTexture(c) {
-    const g = c.getContext('2d');
+  function woodTexture(c: HTMLCanvasElement): void {
+    const g = ctx2d(c);
     g.fillStyle = '#9c6b3f'; g.fillRect(0, 0, 16, 16);
     g.fillStyle = '#7a4f2b';
     for (let x = 1; x < 16; x += 4) g.fillRect(x, 0, 2, 16);
     g.fillStyle = '#b3855a';
     for (let x = 3; x < 16; x += 4) g.fillRect(x, 0, 1, 16);
   }
-  function brickTexture(c) {
-    const g = c.getContext('2d');
+  function brickTexture(c: HTMLCanvasElement): void {
+    const g = ctx2d(c);
     g.fillStyle = '#c0563f'; g.fillRect(0, 0, 16, 16);
     g.fillStyle = '#e8e0d0';
     g.fillRect(0, 7, 16, 1); g.fillRect(0, 15, 16, 1);
     g.fillRect(7, 0, 1, 8); g.fillRect(0, 8, 1, 8); g.fillRect(15, 8, 1, 8);
   }
-  function goldTexture(c) {
-    const g = c.getContext('2d');
+  function goldTexture(c: HTMLCanvasElement): void {
+    const g = ctx2d(c);
     g.fillStyle = '#ffd23f'; g.fillRect(0, 0, 16, 16);
     g.fillStyle = '#ffe98a';
     for (let i = 0; i < 22; i++) g.fillRect(Math.floor(Math.random() * 16), Math.floor(Math.random() * 16), 2, 2);
     g.fillStyle = '#caa018';
     g.fillRect(2, 2, 2, 2); g.fillRect(11, 9, 2, 2); g.fillRect(7, 12, 2, 2);
   }
-  function rainbowTexture(c) {
-    const g = c.getContext('2d');
+  function rainbowTexture(c: HTMLCanvasElement): void {
+    const g = ctx2d(c);
     const colors = ['#ff5d5d', '#ffae3d', '#ffe93d', '#5dff7a', '#3dc6ff', '#9b6bff'];
     colors.forEach((col, i) => { g.fillStyle = col; g.fillRect(0, i * 3 - 1, 16, 3); });
   }
-  function diamondTexture(c) {
-    const g = c.getContext('2d');
+  function diamondTexture(c: HTMLCanvasElement): void {
+    const g = ctx2d(c);
     g.fillStyle = '#54cfd6'; g.fillRect(0, 0, 16, 16);                       // aqua base
     g.fillStyle = '#8fe9ee'; g.fillRect(0, 0, 16, 1); g.fillRect(0, 0, 1, 16); // bevel highlight
     g.fillStyle = '#2f9aa6'; g.fillRect(0, 15, 16, 1); g.fillRect(15, 0, 1, 16); // bevel shadow
     g.fillStyle = '#3fb3bd'; g.fillRect(2, 2, 12, 12);                       // inset face
-    const gem = (x, y) => {
+    const gem = (x: number, y: number): void => {
       g.fillStyle = '#2b8a96'; g.fillRect(x, y, 4, 4);                       // facet edge
       g.fillStyle = '#aef2f6'; g.fillRect(x + 1, y, 2, 1); g.fillRect(x, y + 1, 1, 2);
       g.fillStyle = '#1f6f7a'; g.fillRect(x + 3, y + 2, 1, 2); g.fillRect(x + 2, y + 3, 2, 1);
@@ -131,8 +210,8 @@ export function initGame(brand) {
     gem(3, 3); gem(9, 3); gem(3, 9); gem(9, 9);
     g.fillStyle = '#eafeff'; g.fillRect(7, 7, 2, 2);                         // center shine
   }
-  function avaritiaTexture(c) {
-    const g = c.getContext('2d');
+  function avaritiaTexture(c: HTMLCanvasElement): void {
+    const g = ctx2d(c);
     for (let y = 0; y < 16; y++) {                                          // deep cosmic gradient
       const t = y / 15;
       g.fillStyle = `rgb(${18 + (t * 26) | 0}, ${5 + (t * 6) | 0}, ${38 + (t * 34) | 0})`;
@@ -148,22 +227,28 @@ export function initGame(brand) {
       g.fillRect(Math.floor(Math.random() * 16), Math.floor(Math.random() * 16), s, s);
     }
   }
-  function textureFromCanvas(c) {
+  function textureFromCanvas(c: HTMLCanvasElement): THREE.CanvasTexture {
     const t = new THREE.CanvasTexture(c);
     t.magFilter = THREE.NearestFilter;
     t.minFilter = THREE.NearestFilter;
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
+  function renderBlockCanvas(b: Block): HTMLCanvasElement {
+    if (!b.build) throw new Error(`block ${b.id} has no texture builder`);
+    const c = makeCanvas();
+    b.build(c);
+    return c;
+  }
 
   // ---------- Materials ----------
-  const materials = {};
-  function buildMaterials(faceTexture) {
+  const materials: Record<number, THREE.MeshLambertMaterial> = {};
+  function buildMaterials(faceTexture: THREE.Texture): void {
     for (const b of BLOCKS) {
       if (!b) continue;
-      let tex;
+      let tex: THREE.Texture;
       if (b.id === FACE_ID) tex = faceTexture;
-      else { const c = makeCanvas(); b.build(c); tex = textureFromCanvas(c); }
+      else { tex = textureFromCanvas(renderBlockCanvas(b)); }
       materials[b.id] = new THREE.MeshLambertMaterial({
         map: tex,
         transparent: !!b.transparent,
@@ -175,18 +260,18 @@ export function initGame(brand) {
 
   // ---------- Voxel storage (sparse: only visited chunks use memory -> endless world) ----------
   const CHUNK_VOLUME = CHUNK * CHUNK * SIZE_Y;
-  const chunkData = new Map();
-  const genChunks = new Set();
-  const chunkKey = (cx, cz) => cx * chunksZ + cz;
-  const inBounds = (x, y, z) => x >= 0 && x < SIZE_X && y >= 0 && y < SIZE_Y && z >= 0 && z < SIZE_Z;
-  const localIdx = (lx, y, lz) => lx + lz * CHUNK + y * CHUNK * CHUNK;
-  function rawGet(x, y, z) {
+  const chunkData = new Map<number, Uint8Array>();
+  const genChunks = new Set<number>();
+  const chunkKey = (cx: number, cz: number): number => cx * chunksZ + cz;
+  const inBounds = (x: number, y: number, z: number): boolean => x >= 0 && x < SIZE_X && y >= 0 && y < SIZE_Y && z >= 0 && z < SIZE_Z;
+  const localIdx = (lx: number, y: number, lz: number): number => lx + lz * CHUNK + y * CHUNK * CHUNK;
+  function rawGet(x: number, y: number, z: number): number {
     if (!inBounds(x, y, z)) return AIR;
     const arr = chunkData.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
     if (!arr) return AIR;
     return arr[localIdx(x % CHUNK, y, z % CHUNK)];
   }
-  function rawSet(x, y, z, id) {
+  function rawSet(x: number, y: number, z: number, id: number): void {
     if (!inBounds(x, y, z)) return;
     const cx = Math.floor(x / CHUNK), cz = Math.floor(z / CHUNK);
     const key = chunkKey(cx, cz);
@@ -196,47 +281,47 @@ export function initGame(brand) {
   }
 
   const WATER_LEVEL = GROUND - 1;
-  function ensureGen(cx, cz) {
+  function ensureGen(cx: number, cz: number): void {
     if (cx < 0 || cz < 0 || cx >= chunksX || cz >= chunksZ) return;
     const key = chunkKey(cx, cz);
     if (genChunks.has(key)) return;
     genChunks.add(key);
     generateChunk(cx, cz);
   }
-  function getVoxel(x, y, z) {
+  function getVoxel(x: number, y: number, z: number): number {
     if (y < 0 || y >= SIZE_Y || x < 0 || x >= SIZE_X || z < 0 || z >= SIZE_Z) return AIR;
     ensureGen(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
     return rawGet(x, y, z);
   }
-  function setVoxel(x, y, z, id) {
+  function setVoxel(x: number, y: number, z: number, id: number): void {
     if (!inBounds(x, y, z)) return;
     ensureGen(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
     rawSet(x, y, z, id);
   }
-  const isSolid = (x, y, z) => { const v = getVoxel(x, y, z); return v !== AIR && v !== WATER_ID; };
+  const isSolid = (x: number, y: number, z: number): boolean => { const v = getVoxel(x, y, z); return v !== AIR && v !== WATER_ID; };
 
   // ---------- Procedural world (biomes + varied terrain) ----------
-  function heightAt(x, z) {
+  function heightAt(x: number, z: number): number {
     const h = Math.sin(x * 0.05) * 1.4 + Math.cos(z * 0.045) * 1.4
       + Math.sin((x + z) * 0.02) * 2.6
       + Math.sin(x * 0.013) * Math.cos(z * 0.017) * 4.2;
     return Math.max(2, Math.min(SIZE_Y - 5, GROUND + Math.round(h)));
   }
-  function biomeAt(x, z) {
+  function biomeAt(x: number, z: number): Biome {
     const v = Math.sin(x * 0.0125) * 1.2 + Math.cos(z * 0.011) * 1.2 + Math.sin((x - z) * 0.006) * 1.4;
     if (v < -1.1) return 'desert';
     if (v < 0.2) return 'plains';
     if (v < 1.3) return 'forest';
     return 'snow';
   }
-  function surfaceBlock(biome, top) {
+  function surfaceBlock(biome: Biome, top: number): number {
     if (top <= WATER_LEVEL + 1) return 6;                       // sandy shore
     if (top >= GROUND + 7) return top >= GROUND + 9 ? 12 : 3;   // mountain rock + snowy peak
     if (biome === 'desert') return 6;
     if (biome === 'snow') return 12;
     return 1;
   }
-  function placeTree(x, top, z, x0, z0, biome) {
+  function placeTree(x: number, top: number, z: number, x0: number, z0: number, biome: Biome): void {
     const trunk = 3 + Math.floor(Math.random() * 3);
     for (let t = 1; t <= trunk; t++) rawSet(x, top + t, z, 4);
     const leaf = biome === 'snow' ? 12 : 5;
@@ -250,7 +335,7 @@ export function initGame(brand) {
           if (rawGet(lx, cy + dy, lz) === AIR) rawSet(lx, cy + dy, lz, leaf);
         }
   }
-  function generateChunk(cx, cz) {
+  function generateChunk(cx: number, cz: number): void {
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
     for (let x = x0; x < x0 + CHUNK && x < SIZE_X; x++)
       for (let z = z0; z < z0 + CHUNK && z < SIZE_Z; z++) {
@@ -267,7 +352,7 @@ export function initGame(brand) {
       }
     decorateChunk(cx, cz);
   }
-  function decorateChunk(cx, cz) {
+  function decorateChunk(cx: number, cz: number): void {
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
     for (let i = 0; i < 30; i++) {
       const x = x0 + 2 + Math.floor(Math.random() * (CHUNK - 4));
@@ -296,7 +381,9 @@ export function initGame(brand) {
   }
 
   // ---------- Meshing (face-culled, merged per block type) ----------
-  const FACES = [
+  interface Face { dir: number[]; corners: number[][]; }
+  interface MeshBucket { pos: number[]; norm: number[]; uv: number[]; idxs: number[]; }
+  const FACES: Face[] = [
     { dir: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
     { dir: [-1, 0, 0], corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]] },
     { dir: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
@@ -307,12 +394,13 @@ export function initGame(brand) {
   const UV = [[0, 0], [0, 1], [1, 1], [1, 0]];
 
   const worldGroup = new THREE.Group();
-  const chunkMeshes = new Map();
-  function meshChunk(cxh, czh) {
+  const chunkMeshes = new Map<string, THREE.Mesh[]>();
+  let firstChunkStreamed = false;
+  function meshChunk(cxh: number, czh: number): void {
     const key = `${cxh},${czh}`;
     const old = chunkMeshes.get(key);
     if (old) old.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
-    const buckets = {};
+    const buckets: Record<number, MeshBucket> = {};
     for (const b of BLOCKS) { if (b) buckets[b.id] = { pos: [], norm: [], uv: [], idxs: [] }; }
 
     const x0 = cxh * CHUNK, x1 = Math.min(SIZE_X, x0 + CHUNK);
@@ -323,7 +411,7 @@ export function initGame(brand) {
           const id = getVoxel(x, y, z);
           if (id === AIR) continue;
           const bucket = buckets[id];
-          const opaque = !blockById(id).transparent;
+          const opaque = !blockById(id)?.transparent;
           for (const f of FACES) {
             const neighbor = getVoxel(x + f.dir[0], y + f.dir[1], z + f.dir[2]);
             const neighborTransparent = neighbor === AIR || blockById(neighbor)?.transparent;
@@ -339,7 +427,7 @@ export function initGame(brand) {
           }
         }
 
-    const meshes = [];
+    const meshes: THREE.Mesh[] = [];
     for (const b of BLOCKS) {
       if (!b) continue;
       const data = buckets[b.id];
@@ -354,12 +442,16 @@ export function initGame(brand) {
       meshes.push(mesh);
     }
     chunkMeshes.set(key, meshes);
+    if (firstChunkStreamed) return;
+    firstChunkStreamed = true;
+    debug('engine', 'first chunk streamed', { cx: cxh, cz: czh, meshes: meshes.length });
   }
   const LOAD_R = isTouch ? 4 : 6;
-  let lastPlayerChunkX = null, lastPlayerChunkZ = null;
-  const meshQueue = [];
-  const queuedKeys = new Set();
-  function updateChunks(force) {
+  let lastPlayerChunkX: number | null = null, lastPlayerChunkZ: number | null = null;
+  interface QueuedChunk { cx: number; cz: number; key: number; }
+  const meshQueue: QueuedChunk[] = [];
+  const queuedKeys = new Set<number>();
+  function updateChunks(force?: boolean): void {
     const pcx = Math.floor(player.pos.x / CHUNK), pcz = Math.floor(player.pos.z / CHUNK);
     if (!force && pcx === lastPlayerChunkX && pcz === lastPlayerChunkZ) return;
     lastPlayerChunkX = pcx; lastPlayerChunkZ = pcz;
@@ -368,31 +460,34 @@ export function initGame(brand) {
         const cx = pcx + dx, cz = pcz + dz;
         if (cx < 0 || cz < 0 || cx >= chunksX || cz >= chunksZ) continue;
         const key = chunkKey(cx, cz);
-        if (chunkMeshes.has(key) || queuedKeys.has(key)) continue;
+        if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key) || queuedKeys.has(key)) continue;
         queuedKeys.add(key);
         meshQueue.push({ cx, cz, key });
       }
     meshQueue.sort((a, b) => ((a.cx - pcx) ** 2 + (a.cz - pcz) ** 2) - ((b.cx - pcx) ** 2 + (b.cz - pcz) ** 2));
     for (const [key, meshes] of chunkMeshes) {
-      const cx = Math.floor(key / chunksZ), cz = key % chunksZ;
+      const cx = Math.floor(Number(key) / chunksZ), cz = Number(key) % chunksZ;
       if (Math.abs(cx - pcx) > LOAD_R + 1 || Math.abs(cz - pcz) > LOAD_R + 1) {
         meshes.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
         chunkMeshes.delete(key);
       }
     }
   }
-  function processMeshQueue(budget) {
+  function processMeshQueue(budget: number): void {
     let done = 0;
+    const lastCx = Number(lastPlayerChunkX), lastCz = Number(lastPlayerChunkZ);
     while (done < budget && meshQueue.length) {
-      const { cx, cz, key } = meshQueue.shift();
+      const next = meshQueue.shift();
+      if (!next) break;
+      const { cx, cz, key } = next;
       queuedKeys.delete(key);
-      if (chunkMeshes.has(key)) continue;
-      if (Math.abs(cx - lastPlayerChunkX) > LOAD_R + 1 || Math.abs(cz - lastPlayerChunkZ) > LOAD_R + 1) continue;
+      if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key)) continue;
+      if (Math.abs(cx - lastCx) > LOAD_R + 1 || Math.abs(cz - lastCz) > LOAD_R + 1) continue;
       meshChunk(cx, cz);
       done++;
     }
   }
-  function remeshRegion(minX, maxX, minZ, maxZ) {
+  function remeshRegion(minX: number, maxX: number, minZ: number, maxZ: number): void {
     const cx0 = Math.max(0, Math.floor(minX / CHUNK)), cx1 = Math.min(chunksX - 1, Math.floor(maxX / CHUNK));
     const cz0 = Math.max(0, Math.floor(minZ / CHUNK)), cz1 = Math.min(chunksZ - 1, Math.floor(maxZ / CHUNK));
     for (let cz = cz0; cz <= cz1; cz++)
@@ -438,8 +533,8 @@ export function initGame(brand) {
 
   // ---------- Player state ----------
   const MAX_HEARTS = 3;
-  const spawnPoint = () => new THREE.Vector3(SIZE_X / 2, heightAt(SIZE_X >> 1, SIZE_Z >> 1) + 4, SIZE_Z / 2 + 4);
-  const player = {
+  const spawnPoint = (): THREE.Vector3 => new THREE.Vector3(SIZE_X / 2, heightAt(SIZE_X >> 1, SIZE_Z >> 1) + 4, SIZE_Z / 2 + 4);
+  const player: Player = {
     pos: spawnPoint(),
     vel: new THREE.Vector3(),
     yaw: Math.PI, pitch: -0.2,
@@ -450,25 +545,25 @@ export function initGame(brand) {
   let peaceful = true;
 
   // ---------- Creatures (animals to hunt, monsters to fight) ----------
-  const CREATURES = {
+  const CREATURES: Record<string, CreatureDef> = {
     pig: { kind: 'animal', color: '#ff9bbf', size: [0.8, 0.7, 1.0], hp: 2, speed: 2.2, reward: 2, emoji: '🐷', name: t('creature.pig') },
     chicken: { kind: 'animal', color: '#fffbe0', size: [0.6, 0.7, 0.6], hp: 1, speed: 2.6, reward: 1, emoji: '🐔', name: t('creature.chicken') },
     cow: { kind: 'animal', color: '#d8c5a8', size: [0.9, 0.9, 1.2], hp: 3, speed: 1.8, reward: 3, emoji: '🐮', name: t('creature.cow') },
     slime: { kind: 'monster', color: '#5bd86a', size: [0.8, 0.8, 0.8], hp: 2, speed: 2.4, reward: 3, emoji: '👾', name: t('creature.slime') },
     spider: { kind: 'monster', color: '#5a4a6a', size: [1.1, 0.6, 1.1], hp: 3, speed: 3.0, reward: 5, emoji: '🕷️', name: t('creature.spider') },
   };
-  const creatures = [];
+  const creatures: Creature[] = [];
   const creatureGroup = new THREE.Group();
   scene.add(creatureGroup);
 
-  function groundHeight(x, z) {
+  function groundHeight(x: number, z: number): number {
     const gx = Math.floor(x), gz = Math.floor(z);
     for (let y = SIZE_Y - 1; y >= 0; y--) if (isSolid(gx, y, gz)) return y + 1;
     return 0;
   }
-  function makeFaceMaterial(color) {
+  function makeFaceMaterial(color: string): THREE.MeshLambertMaterial {
     const c = makeCanvas();
-    const g = c.getContext('2d');
+    const g = ctx2d(c);
     g.fillStyle = color; g.fillRect(0, 0, 16, 16);
     g.fillStyle = '#1a1330';
     g.fillRect(4, 6, 2, 3); g.fillRect(10, 6, 2, 3);
@@ -477,8 +572,9 @@ export function initGame(brand) {
     return new THREE.MeshLambertMaterial({ map: textureFromCanvas(c) });
   }
   const SPAWN_RANGE = 80;
-  function spawnCreature(typeKey) {
+  function spawnCreature(typeKey: string): void {
     const def = CREATURES[typeKey];
+    if (!def) throw new Error(`unknown creature ${typeKey}`);
     const cx = SIZE_X / 2, cz = SIZE_Z / 2;
     const x = Math.max(2, Math.min(SIZE_X - 2, cx + (Math.random() - 0.5) * 2 * SPAWN_RANGE));
     const z = Math.max(2, Math.min(SIZE_Z - 2, cz + (Math.random() - 0.5) * 2 * SPAWN_RANGE));
@@ -494,14 +590,14 @@ export function initGame(brand) {
       timer: 0, bob: Math.random() * Math.PI * 2, flash: 0,
     });
   }
-  function populateCreatures() {
+  function populateCreatures(): void {
     for (let i = 0; i < 3; i++) spawnCreature('pig');
     for (let i = 0; i < 2; i++) spawnCreature('chicken');
     for (let i = 0; i < 2; i++) spawnCreature('cow');
     for (let i = 0; i < 2; i++) spawnCreature('slime');
     spawnCreature('spider');
   }
-  function updateCreatures(dt) {
+  function updateCreatures(dt: number): void {
     player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
     for (const cr of creatures) {
       cr.timer -= dt;
@@ -529,28 +625,28 @@ export function initGame(brand) {
       if (hostile && dist < 1.0 && verticalGap < 1.6 && player.hurtCooldown === 0) hurtPlayer();
     }
   }
-  function hurtPlayer() {
+  function hurtPlayer(): void {
     player.hearts -= 1;
     player.hurtCooldown = 1.2;
     blip(140, 0.18);
-    const heartsEl = document.getElementById('hearts');
+    const heartsEl = el('hearts');
     heartsEl.classList.add('hit');
     setTimeout(() => heartsEl.classList.remove('hit'), 300);
     updateStats();
     if (player.hearts <= 0) napAndRespawn();
   }
-  function napAndRespawn() {
+  function napAndRespawn(): void {
     toast(t('toast.nap'));
     player.hearts = MAX_HEARTS;
     player.pos.copy(spawnPoint());
     player.vel.set(0, 0, 0);
     updateStats();
   }
-  function raycastCreature() {
+  function raycastCreature(): { creature: Creature; t: number } | null {
     const origin = camera.position.clone();
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
-    let best = null, bestT = REACH;
+    let best: Creature | null = null, bestT = REACH;
     for (const cr of creatures) {
       const oc = new THREE.Vector3().subVectors(cr.mesh.position, origin);
       const tca = oc.dot(dir);
@@ -562,16 +658,17 @@ export function initGame(brand) {
     }
     return best ? { creature: best, t: bestT } : null;
   }
-  function hitCreature(cr) {
+  function hitCreature(cr: Creature): void {
     cr.hp -= 1;
     cr.flash = 0.18;
     blip(cr.def.kind === 'monster' ? 300 : 880, 0.08);
     const knock = new THREE.Vector3().subVectors(cr.mesh.position, player.pos).setY(0).normalize().multiplyScalar(1.2);
     cr.mesh.position.add(knock);
+    debug('engine', 'hit creature', { kind: cr.typeKey, hp: cr.hp, x: Math.round(cr.mesh.position.x), z: Math.round(cr.mesh.position.z) });
     if (cr.hp > 0) return;
     defeatCreature(cr);
   }
-  function defeatCreature(cr) {
+  function defeatCreature(cr: Creature): void {
     spawnPoof(cr.mesh.position, cr.def.color);
     player.stars += cr.def.reward;
     player.bag += 1;
@@ -585,8 +682,8 @@ export function initGame(brand) {
   }
 
   // ---------- Poof particles ----------
-  const poofs = [];
-  function spawnPoof(pos, color) {
+  const poofs: Poof[] = [];
+  function spawnPoof(pos: THREE.Vector3, color: string): void {
     for (let i = 0; i < 8; i++) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), new THREE.MeshBasicMaterial({ color }));
       m.position.copy(pos);
@@ -594,7 +691,7 @@ export function initGame(brand) {
       poofs.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 4, Math.random() * 4 + 1, (Math.random() - 0.5) * 4), life: 0.7 });
     }
   }
-  function updatePoofs(dt) {
+  function updatePoofs(dt: number): void {
     for (let i = poofs.length - 1; i >= 0; i--) {
       const p = poofs[i];
       p.life -= dt;
@@ -606,21 +703,21 @@ export function initGame(brand) {
   }
 
   // ---------- Scoreboard ----------
-  function bestScore() {
+  function bestScore(): number {
     const stored = localStorage.getItem(BEST_KEY);
     return stored ? Number(stored) : 0;
   }
-  function updateStats() {
-    document.getElementById('hearts').textContent = '❤️'.repeat(player.hearts) + '🖤'.repeat(MAX_HEARTS - player.hearts);
-    document.getElementById('stars').textContent = `⭐ ${player.stars}`;
-    document.getElementById('bag').textContent = `🎒 ${player.bag}`;
+  function updateStats(): void {
+    el('hearts').textContent = '❤️'.repeat(player.hearts) + '🖤'.repeat(MAX_HEARTS - player.hearts);
+    el('stars').textContent = `⭐ ${player.stars}`;
+    el('bag').textContent = `🎒 ${player.bag}`;
     const best = Math.max(player.stars, bestScore());
     localStorage.setItem(BEST_KEY, String(best));
-    document.getElementById('record').textContent = `🏆 ${best}`;
+    el('record').textContent = `🏆 ${best}`;
   }
 
   // ---------- Voxel raycast (DDA) ----------
-  function raycastVoxel(maxDist = REACH) {
+  function raycastVoxel(maxDist = REACH): VoxelHit | null {
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
     const origin = camera.position.clone();
@@ -643,21 +740,23 @@ export function initGame(brand) {
   }
 
   // ---------- Build / break ----------
-  function primaryAction() {
+  function primaryAction(): void {
     const block = raycastVoxel();
     const creatureHit = raycastCreature();
     const blockDist = block ? new THREE.Vector3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
     if (creatureHit && creatureHit.t <= blockDist) { hitCreature(creatureHit.creature); return; }
     if (block) breakBlock(block);
   }
-  function breakBlock(r) {
+  function breakBlock(r: VoxelHit): void {
+    const removed = getVoxel(r.hit[0], r.hit[1], r.hit[2]);
     setVoxel(r.hit[0], r.hit[1], r.hit[2], AIR);
     remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
     player.bag += 1;
     updateStats();
     blip(220, 0.08);
+    debug('engine', 'break block', { x: r.hit[0], y: r.hit[1], z: r.hit[2], id: removed });
   }
-  function placeBlock() {
+  function placeBlock(): void {
     const r = raycastVoxel();
     if (!r) return;
     const [px, py, pz] = r.place;
@@ -666,8 +765,9 @@ export function initGame(brand) {
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
     blip(selected === FACE_ID ? 720 : 520, 0.08);
+    debug('engine', 'place block', { x: px, y: py, z: pz, id: selected });
   }
-  function overlapsPlayer(x, y, z) {
+  function overlapsPlayer(x: number, y: number, z: number): boolean {
     const p = player.pos;
     return x + 1 > p.x - PLAYER_RADIUS && x < p.x + PLAYER_RADIUS &&
       z + 1 > p.z - PLAYER_RADIUS && z < p.z + PLAYER_RADIUS &&
@@ -675,24 +775,24 @@ export function initGame(brand) {
   }
 
   // ---------- Magic structures ----------
-  function fillSquare(cx, cz, y, half, id) {
+  function fillSquare(cx: number, cz: number, y: number, half: number, id: number): void {
     for (let dx = -half; dx <= half; dx++)
       for (let dz = -half; dz <= half; dz++) setVoxel(cx + dx, y, cz + dz, id);
   }
-  function stampTrophy(cx, gy, cz) {
+  function stampTrophy(cx: number, gy: number, cz: number): void {
     fillSquare(cx, cz, gy, 2, GOLD_ID);
     fillSquare(cx, cz, gy + 1, 2, GRASS_ID);
     fillSquare(cx, cz, gy + 2, 1, GOLD_ID);
     for (let y = gy + 3; y <= gy + 6; y++) setVoxel(cx, y, cz, GOLD_ID);
     stampSphere(cx, gy + 9, cz, 3, () => GOLD_ID);
   }
-  function ballPatchCenters() {
+  function ballPatchCenters(): number[][] {
     const centers = [[0, 1, 0], [0, -1, 0]];
     for (let k = 0; k < 5; k++) { const a = (k * 2 * Math.PI) / 5; centers.push([Math.cos(a) * 0.72, 0.5, Math.sin(a) * 0.72]); }
     for (let k = 0; k < 5; k++) { const a = ((k + 0.5) * 2 * Math.PI) / 5; centers.push([Math.cos(a) * 0.72, -0.5, Math.sin(a) * 0.72]); }
     return centers.map((c) => { const l = Math.hypot(...c); return [c[0] / l, c[1] / l, c[2] / l]; });
   }
-  function stampBall(cx, gy, cz, radius) {
+  function stampBall(cx: number, gy: number, cz: number, radius: number): void {
     const centers = ballPatchCenters();
     const cy = gy + radius;
     stampSphere(cx, cy, cz, radius, (dx, dy, dz) => {
@@ -702,7 +802,7 @@ export function initGame(brand) {
       return black ? BLACK_ID : WHITE_ID;
     });
   }
-  function stampSphere(cx, cy, cz, radius, pick) {
+  function stampSphere(cx: number, cy: number, cz: number, radius: number, pick: (dx: number, dy: number, dz: number) => number): void {
     for (let dx = -radius; dx <= radius; dx++)
       for (let dy = -radius; dy <= radius; dy++)
         for (let dz = -radius; dz <= radius; dz++) {
@@ -710,8 +810,8 @@ export function initGame(brand) {
           setVoxel(cx + dx, cy + dy, cz + dz, pick(dx, dy, dz));
         }
   }
-  function stampFigure(cx, gy, cz) {
-    const set = (dx, dy, dz, id) => setVoxel(cx + dx, gy + dy, cz + dz, id);
+  function stampFigure(cx: number, gy: number, cz: number): void {
+    const set = (dx: number, dy: number, dz: number, id: number): void => setVoxel(cx + dx, gy + dy, cz + dz, id);
     for (let dy = 0; dy <= 2; dy++) { set(-1, dy, 0, WHITE_ID); set(1, dy, 0, WHITE_ID); } // legs/socks
     set(-1, 0, 0, BLACK_ID); set(1, 0, 0, BLACK_ID);                                       // boots
     for (let dy = 3; dy <= 6; dy++) {                                                        // Argentina striped jersey
@@ -721,7 +821,7 @@ export function initGame(brand) {
     set(0, 7, 0, WHITE_ID);                                                                  // neck
     set(0, 8, 0, FACE_ID);                                                                     // the player face
   }
-  function stampCola(cx, gy, cz) {
+  function stampCola(cx: number, gy: number, cz: number): void {
     const R = 4, H = 17;
     for (let dy = 0; dy < H; dy++) {
       let id = RED_ID;
@@ -736,8 +836,8 @@ export function initGame(brand) {
     }
     setVoxel(cx, gy + H, cz, 3);                      // little pull-tab knob
   }
-  function stampSteve(cx, gy, cz) {
-    const set = (dx, dy, dz, id) => setVoxel(cx + dx, gy + dy, cz + dz, id);
+  function stampSteve(cx: number, gy: number, cz: number): void {
+    const set = (dx: number, dy: number, dz: number, id: number): void => setVoxel(cx + dx, gy + dy, cz + dz, id);
     for (let dz = 0; dz <= 1; dz++) {
       for (let dy = 0; dy <= 3; dy++) { set(-1, dy, dz, BLUE_ID); set(1, dy, dz, BLUE_ID); } // jeans legs
       set(-1, 0, dz, BEDROCK_ID); set(1, 0, dz, BEDROCK_ID);                                   // shoes
@@ -748,10 +848,10 @@ export function initGame(brand) {
     for (let dx = -1; dx <= 1; dx++) for (let dz = 0; dz <= 1; dz++) set(dx, 10, dz, HAIR_ID);  // brown hair
     set(-1, 9, 1, HAIR_ID); set(1, 9, 1, HAIR_ID);                                              // hair back sides
   }
-  function buildStructure(kind) {
+  function buildStructure(kind: StructureKind): void {
     const margin = 12;
     const aim = raycastVoxel(90);
-    let targetX, targetZ;
+    let targetX: number, targetZ: number;
     if (aim) {
       targetX = aim.hit[0]; targetZ = aim.hit[2];
     } else {
@@ -768,13 +868,14 @@ export function initGame(brand) {
     if (kind === 'cola') stampCola(cx, gy, cz);
     if (kind === 'steve') stampSteve(cx, gy, cz);
     remeshRegion(cx - reach, cx + reach, cz - reach, cz + reach);
-    const messages = { trophy: t('toast.built_trophy'), ball: t('toast.built_ball'), figure: t('toast.built_figure'), cola: t('toast.built_cola'), steve: t('toast.built_steve') };
+    const messages: Record<StructureKind, string> = { trophy: t('toast.built_trophy'), ball: t('toast.built_ball'), figure: t('toast.built_figure'), cola: t('toast.built_cola'), steve: t('toast.built_steve') };
     toast(messages[kind]);
     blip(680, 0.12); setTimeout(() => blip(1020, 0.14), 110);
+    debug('engine', 'structure built', { kind, x: cx, y: gy, z: cz });
   }
 
   // ---------- Physics ----------
-  function collide() {
+  function collide(): boolean {
     const p = player.pos;
     const minX = Math.floor(p.x - PLAYER_RADIUS), maxX = Math.floor(p.x + PLAYER_RADIUS);
     const minZ = Math.floor(p.z - PLAYER_RADIUS), maxZ = Math.floor(p.z + PLAYER_RADIUS);
@@ -786,7 +887,7 @@ export function initGame(brand) {
           if (isSolid(x, y, z)) return true;
     return false;
   }
-  function moveAxis(axis, amount) {
+  function moveAxis(axis: Axis, amount: number): void {
     const before = player.pos[axis];
     player.pos[axis] += amount;
     if (!collide()) return;
@@ -802,12 +903,13 @@ export function initGame(brand) {
     else player.vel[axis] = 0;
   }
 
-  const keys = {};
-  const joystick = { active: false, x: 0, y: 0, id: null, cx: 0, cy: 0, r: 50 };
+  const keys: Record<string, boolean> = {};
+  interface Joystick { active: boolean; x: number; y: number; id: number | null; cx: number; cy: number; r: number; }
+  const joystick: Joystick = { active: false, x: 0, y: 0, id: null, cx: 0, cy: 0, r: 50 };
   addEventListener('keydown', (e) => { keys[e.code] = true; handleHotkey(e); }, { signal });
   addEventListener('keyup', (e) => { keys[e.code] = false; }, { signal });
 
-  function update(dt) {
+  function update(dt: number): void {
     const flat = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
     const right = new THREE.Vector3(flat.z, 0, -flat.x);
     const forward = player.fly
@@ -856,7 +958,13 @@ export function initGame(brand) {
   }
 
   // ---------- Input ----------
-  canvas.addEventListener('click', () => { if (started && !isTouch) canvas.requestPointerLock(); }, { signal });
+  function lockPointer(): void {
+    if (!started || isTouch) return;
+    Promise.resolve(canvas.requestPointerLock()).catch((err: unknown) => {
+      debug('engine', 'pointer-lock denied', { reason: String(err) });
+    });
+  }
+  canvas.addEventListener('click', () => { if (started && !isTouch) lockPointer(); }, { signal });
   addEventListener('mousemove', (e) => {
     if (document.pointerLockElement !== canvas) return;
     player.yaw -= e.movementX * 0.0022;
@@ -871,9 +979,9 @@ export function initGame(brand) {
   addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
 
   if (isTouch) setupTouchControls();
-  function setupTouchControls() {
+  function setupTouchControls(): void {
     document.body.classList.add('is-touch');
-    let lookId = null, lx = 0, ly = 0;
+    let lookId: number | null = null, lx = 0, ly = 0;
     canvas.addEventListener('touchstart', (e) => {
       const t = e.changedTouches[0];
       if (lookId === null) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; }
@@ -887,14 +995,14 @@ export function initGame(brand) {
         lx = t.clientX; ly = t.clientY;
       }
     }, { passive: true, signal });
-    const endLook = (e) => { for (const t of e.changedTouches) if (t.identifier === lookId) lookId = null; };
+    const endLook = (e: TouchEvent): void => { for (const t of e.changedTouches) if (t.identifier === lookId) lookId = null; };
     canvas.addEventListener('touchend', endLook, { signal });
     canvas.addEventListener('touchcancel', endLook, { signal });
 
-    const joyEl = document.getElementById('joystick');
-    const knob = document.getElementById('joyKnob');
-    const setKnob = (dx, dy) => { knob.style.transform = `translate(${dx}px, ${dy}px)`; };
-    const moveJoy = (t) => {
+    const joyEl = el('joystick');
+    const knob = el('joyKnob');
+    const setKnob = (dx: number, dy: number): void => { knob.style.transform = `translate(${dx}px, ${dy}px)`; };
+    const moveJoy = (t: Touch): void => {
       let dx = t.clientX - joystick.cx, dy = t.clientY - joystick.cy;
       const len = Math.hypot(dx, dy) || 1;
       const clamped = Math.min(len, joystick.r);
@@ -914,7 +1022,7 @@ export function initGame(brand) {
       for (const t of e.changedTouches) if (t.identifier === joystick.id) moveJoy(t);
       e.preventDefault();
     }, { passive: false, signal });
-    const endJoy = (e) => {
+    const endJoy = (e: TouchEvent): void => {
       for (const t of e.changedTouches) if (t.identifier === joystick.id) {
         joystick.active = false; joystick.id = null; joystick.x = 0; joystick.y = 0; setKnob(0, 0);
       }
@@ -922,23 +1030,23 @@ export function initGame(brand) {
     joyEl.addEventListener('touchend', endJoy, { signal });
     joyEl.addEventListener('touchcancel', endJoy, { signal });
 
-    const holdKey = (id, code) => {
-      const el = document.getElementById(id);
-      el.addEventListener('touchstart', (e) => { keys[code] = true; e.preventDefault(); }, { passive: false, signal });
-      const up = () => { keys[code] = false; };
-      el.addEventListener('touchend', up, { signal });
-      el.addEventListener('touchcancel', up, { signal });
+    const holdKey = (id: string, code: string): void => {
+      const node = el(id);
+      node.addEventListener('touchstart', (e) => { keys[code] = true; e.preventDefault(); }, { passive: false, signal });
+      const up = (): void => { keys[code] = false; };
+      node.addEventListener('touchend', up, { signal });
+      node.addEventListener('touchcancel', up, { signal });
     };
     holdKey('btnUp', 'Space');
     holdKey('btnDown', 'ShiftLeft');
-    const tapBtn = (id, fn) => {
-      document.getElementById(id).addEventListener('touchstart', (e) => { fn(); e.preventDefault(); }, { passive: false, signal });
+    const tapBtn = (id: string, fn: () => void): void => {
+      el(id).addEventListener('touchstart', (e) => { fn(); e.preventDefault(); }, { passive: false, signal });
     };
     tapBtn('btnBreak', primaryAction);
     tapBtn('btnPlace', placeBlock);
   }
 
-  function handleHotkey(e) {
+  function handleHotkey(e: KeyboardEvent): void {
     const b = BLOCKS.find((bl) => bl && bl.key === e.key);
     if (b) selectSlot(b.id);
     if (e.code === 'KeyF') toggleFly();
@@ -949,44 +1057,54 @@ export function initGame(brand) {
 
   // ---------- Controls modal ----------
   let paused = false;
-  const controlsEl = document.getElementById('controls');
-  function showControls() {
+  const controlsEl = el('controls');
+  function showControls(): void {
     paused = true;
     controlsEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   }
-  function hideControls() {
+  function hideControls(): void {
     paused = false;
     controlsEl.hidden = true;
-    if (started && !isTouch) canvas.requestPointerLock();
+    if (started && !isTouch) lockPointer();
   }
-  function toggleControls() { controlsEl.hidden ? showControls() : hideControls(); }
-  document.getElementById('helpBtn').addEventListener('click', (e) => { e.stopPropagation(); showControls(); }, { signal });
-  document.getElementById('closeControls').addEventListener('click', (e) => { e.stopPropagation(); hideControls(); }, { signal });
+  function toggleControls(): void { controlsEl.hidden ? showControls() : hideControls(); }
+  el('helpBtn').addEventListener('click', (e) => { e.stopPropagation(); showControls(); }, { signal });
+  el('closeControls').addEventListener('click', (e) => { e.stopPropagation(); hideControls(); }, { signal });
 
   // ---------- Build menu ----------
-  const buildMenuEl = document.getElementById('buildMenu');
-  function showBuildMenu() {
+  const buildMenuEl = el('buildMenu');
+  function showBuildMenu(): void {
     paused = true;
     buildMenuEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   }
-  function hideBuildMenu() {
+  function hideBuildMenu(): void {
     paused = false;
     buildMenuEl.hidden = true;
-    if (started && !isTouch) canvas.requestPointerLock();
+    if (started && !isTouch) lockPointer();
   }
-  function toggleBuildMenu() { buildMenuEl.hidden ? showBuildMenu() : hideBuildMenu(); }
-  document.getElementById('buildBtn').addEventListener('click', (e) => { e.stopPropagation(); showBuildMenu(); }, { signal });
-  document.getElementById('closeBuild').addEventListener('click', (e) => { e.stopPropagation(); hideBuildMenu(); }, { signal });
-  buildMenuEl.querySelectorAll('.buildCard').forEach((btn) => {
-    btn.addEventListener('click', (e) => { e.stopPropagation(); buildStructure(btn.dataset.kind); hideBuildMenu(); }, { signal });
+  function toggleBuildMenu(): void { buildMenuEl.hidden ? showBuildMenu() : hideBuildMenu(); }
+  el('buildBtn').addEventListener('click', (e) => { e.stopPropagation(); showBuildMenu(); }, { signal });
+  el('closeBuild').addEventListener('click', (e) => { e.stopPropagation(); hideBuildMenu(); }, { signal });
+  buildMenuEl.querySelectorAll<HTMLElement>('.buildCard').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const kind = btn.dataset.kind;
+      if (!kind) throw new Error('build card missing data-kind');
+      buildStructure(kind as StructureKind);
+      hideBuildMenu();
+    }, { signal });
   });
 
   // ---------- Sound ----------
-  let audio;
-  function blip(freq, dur) {
-    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+  let audio: AudioContext | undefined;
+  function blip(freq: number, dur: number): void {
+    if (!audio) {
+      const Ctor = window.AudioContext || win.webkitAudioContext;
+      if (!Ctor) throw new Error('AudioContext unsupported');
+      audio = new Ctor();
+    }
     const o = audio.createOscillator(), g = audio.createGain();
     o.type = 'square'; o.frequency.value = freq;
     g.gain.value = 0.06; o.connect(g); g.connect(audio.destination);
@@ -995,17 +1113,17 @@ export function initGame(brand) {
   }
 
   // ---------- HUD ----------
-  const hotbar = document.getElementById('hotbar');
-  function buildHotbar(faceUrl) {
+  const hotbar = el('hotbar');
+  function buildHotbar(faceUrl: string): void {
     for (const b of BLOCKS) {
       if (!b) continue;
       const slot = document.createElement('div');
       slot.className = 'slot';
-      slot.dataset.id = b.id;
+      slot.dataset.id = String(b.id);
       const swatch = document.createElement('div');
       swatch.className = 'swatch';
       if (b.id === FACE_ID) swatch.style.background = `center/cover url(${faceUrl})`;
-      else { const c = makeCanvas(); b.build(c); swatch.style.background = `center/cover url(${c.toDataURL()})`; swatch.style.imageRendering = 'pixelated'; }
+      else { swatch.style.background = `center/cover url(${renderBlockCanvas(b).toDataURL()})`; swatch.style.imageRendering = 'pixelated'; }
       slot.appendChild(swatch);
       const key = document.createElement('span'); key.className = 'key'; key.textContent = b.key; slot.appendChild(key);
       const name = document.createElement('span'); name.className = 'name'; name.textContent = b.name; slot.appendChild(name);
@@ -1013,32 +1131,36 @@ export function initGame(brand) {
       hotbar.appendChild(slot);
     }
   }
-  function selectSlot(id) {
+  function selectSlot(id: number): void {
     selected = id;
-    [...hotbar.children].forEach((s) => s.classList.toggle('active', +s.dataset.id === id));
-    toast(t('toast.block_selected', { name: blockById(id).name }));
+    [...hotbar.children].forEach((s) => s.classList.toggle('active', Number((s as HTMLElement).dataset.id) === id));
+    const block = blockById(id);
+    if (!block) throw new Error(`unknown block ${id}`);
+    toast(t('toast.block_selected', { name: block.name }));
   }
 
-  const toastEl = document.getElementById('toast');
-  let toastTimer;
-  function toast(msg) {
+  const toastEl = el('toast');
+  let toastTimer: ReturnType<typeof setTimeout>;
+  function toast(msg: string): void {
     toastEl.textContent = msg; toastEl.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1200);
   }
 
-  function toggleFly() {
+  function toggleFly(): void {
     player.fly = !player.fly;
-    document.getElementById('flyBtn').classList.toggle('on', player.fly);
+    el('flyBtn').classList.toggle('on', player.fly);
     toast(player.fly ? t('toast.flying') : t('toast.walking'));
+    debug('engine', 'fly toggled', { fly: player.fly });
   }
-  document.getElementById('flyBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFly(); }, { signal });
+  el('flyBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFly(); }, { signal });
 
-  const modeBtn = document.getElementById('modeBtn');
-  function togglePeace() {
+  const modeBtn = el('modeBtn');
+  function togglePeace(): void {
     peaceful = !peaceful;
     modeBtn.classList.toggle('on', peaceful);
     modeBtn.textContent = peaceful ? t('hud.peace_on') : t('hud.peace_off');
     toast(peaceful ? t('toast.peace_on') : t('toast.peace_off'));
+    debug('engine', 'peace toggled', { peaceful });
   }
   modeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePeace(); }, { signal });
   modeBtn.classList.toggle('on', peaceful);
@@ -1053,7 +1175,7 @@ export function initGame(brand) {
   // ---------- Loop ----------
   let started = false;
   let last = performance.now();
-  function loop(now) {
+  function loop(now: number): void {
     if (disposed) return;
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
@@ -1062,15 +1184,19 @@ export function initGame(brand) {
     rafId = requestAnimationFrame(loop);
   }
 
-  function start() {
+  function start(): void {
     started = true;
-    document.getElementById('start').style.display = 'none';
-    ['#topbar', '#hotbar', '#actionRow', '#crosshair'].forEach((s) => { document.querySelector(s).style.opacity = 1; });
-    if (isTouch) document.getElementById('touchControls').style.display = 'block';
-    if (!isTouch) canvas.requestPointerLock();
+    el('start').style.display = 'none';
+    ['#topbar', '#hotbar', '#actionRow', '#crosshair'].forEach((s) => {
+      const node = document.querySelector<HTMLElement>(s);
+      if (!node) throw new Error(`missing element ${s}`);
+      node.style.opacity = '1';
+    });
+    if (isTouch) el('touchControls').style.display = 'block';
+    if (!isTouch) lockPointer();
     blip(660, 0.12); setTimeout(() => blip(880, 0.14), 120);
   }
-  document.getElementById('playBtn').addEventListener('click', start, { signal });
+  el('playBtn').addEventListener('click', start, { signal });
 
   new THREE.TextureLoader().load(FACE_URL, (faceTex) => {
     if (disposed) return;
@@ -1084,20 +1210,27 @@ export function initGame(brand) {
     buildHotbar(FACE_URL);
     selectSlot(1);
     updateStats();
-    document.getElementById('startRecord').textContent = t('start.record_score', { score: bestScore() });
+    el('startRecord').textContent = t('start.record_score', { score: bestScore() });
     last = performance.now();
     rafId = requestAnimationFrame(loop);
+    debug('engine', 'boot complete', {
+      tenant: brand.id,
+      worldX: SIZE_X, worldZ: SIZE_Z, worldY: SIZE_Y,
+      chunks: chunkMeshes.size,
+      creatures: creatures.length,
+      ms: Math.round(performance.now() - bootStart),
+    });
   });
 
-  const cleanup = () => {
+  const cleanup = (): void => {
     disposed = true;
     cancelAnimationFrame(rafId);
     abort.abort();
     renderer.dispose();
     if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-    window.__blGameBooted = false;
-    window.__blGameCleanup = undefined;
+    win.__blGameBooted = false;
+    win.__blGameCleanup = undefined;
   };
-  window.__blGameCleanup = cleanup;
+  win.__blGameCleanup = cleanup;
   return cleanup;
 }

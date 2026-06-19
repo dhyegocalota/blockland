@@ -4,11 +4,11 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['test/**/*.test.js'],
+    include: ['test/**/*.test.ts'],
   },
   resolve: {
     alias: {
-      'server-only': fileURLToPath(new URL('./test/server-only-stub.js', import.meta.url)),
+      'server-only': fileURLToPath(new URL('./test/server-only-stub.ts', import.meta.url)),
     },
   },
 });

@@ -28,6 +28,7 @@ pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
         let _ = s.send(Message::Close(None)).await;
         return;
     }
+    tracing::debug!(%ip, "connection accepted");
     run(socket, &hub).await;
     hub.remove_ip(ip);
 }
@@ -48,18 +49,21 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
         name,
     }) = join
     else {
+        tracing::debug!(reason = "expected_join", "handshake rejected");
         let _ = sink
             .send(text_msg(err_json("expected_join", "Invalid handshake.")))
             .await;
         let _ = sink.send(Message::Close(None)).await;
         return;
     };
+    tracing::debug!(%tenant, %name, "join received");
 
     // One persistent world per tenant: ignore any client-provided world name.
     let world = "main";
     let room_tx = match Hub::get_or_create_room(hub, &tenant, world) {
         Ok(tx) => tx,
         Err(code) => {
+            tracing::debug!(reason = %code, "handshake rejected");
             let _ = sink
                 .send(text_msg(err_json(&code, "Could not join the room.")))
                 .await;
@@ -134,6 +138,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
         }
     }
 
+    tracing::debug!(id = %pid, "player leaving");
     let _ = room_tx.send(RoomCmd::Leave { id: pid }).await;
     writer.abort();
 }

@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEvent } from 'react';
 import { t } from '../../lib/i18n';
+import type { Tenant } from '../../lib/builtins';
 
-const EMPTY = {
+const EMPTY: Tenant = {
   id: '', name: '', hero: '', titleA: '', titleB: '',
   tagline: '', primary: '#ffd23f', avatar: '', faceTexture: '', faceBlockName: '',
 };
 
-const FIELDS = [
+const FIELDS: [keyof Tenant, string][] = [
   ['id', 'admin.field_id'],
   ['name', 'admin.field_name'],
   ['hero', 'admin.field_hero'],
@@ -21,11 +22,17 @@ const FIELDS = [
   ['tagline', 'admin.field_tagline'],
 ];
 
+interface SaveResponse {
+  name: string;
+  error?: string;
+  field?: string;
+}
+
 export default function Admin() {
   const [key, setKey] = useState('');
   const [authed, setAuthed] = useState(false);
-  const [tenants, setTenants] = useState([]);
-  const [form, setForm] = useState(EMPTY);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [form, setForm] = useState<Tenant>(EMPTY);
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
@@ -36,33 +43,34 @@ export default function Admin() {
   async function load(k = key) {
     const res = await fetch('/api/admin/tenants', { headers: { 'x-admin-key': k } });
     if (res.status === 401) { setMsg(t('admin.invalid_key')); setAuthed(false); return; }
-    setTenants(await res.json());
+    setTenants((await res.json()) as Tenant[]);
     setAuthed(true);
     setMsg('');
     localStorage.setItem('bl-admin-key', k);
   }
 
-  async function save(e) {
+  async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const res = await fetch('/api/admin/tenants', {
       method: 'POST',
       headers: { 'x-admin-key': key, 'content-type': 'application/json' },
       body: JSON.stringify(form),
     });
-    const data = await res.json();
+    const data = (await res.json()) as SaveResponse;
     if (!res.ok) { setMsg(t('admin.error', { error: `${data.error}${data.field ? ' (' + data.field + ')' : ''}` })); return; }
     setMsg(t('admin.saved', { name: data.name }));
     setForm(EMPTY);
     load();
   }
 
-  async function remove(id) {
+  async function remove(id: string) {
     if (!confirm(t('admin.confirm_delete', { id }))) return;
     await fetch(`/api/admin/tenants/${id}`, { method: 'DELETE', headers: { 'x-admin-key': key } });
     load();
   }
 
-  const set = (f) => (e) => setForm({ ...form, [f]: e.target.value });
+  const set = (field: keyof Tenant) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm({ ...form, [field]: e.target.value });
 
   if (!authed) {
     return (
@@ -118,7 +126,7 @@ export default function Admin() {
   );
 }
 
-const S = {
+const S: Record<string, CSSProperties> = {
   wrap: { minHeight: '100vh', background: '#0e0e16', color: '#e8e8f0', fontFamily: 'system-ui, sans-serif', padding: 28, overflowY: 'auto' },
   h1: { fontWeight: 800, marginBottom: 12 },
   input: { background: '#1a1a26', border: '1px solid #333', borderRadius: 8, color: '#fff', padding: '10px 12px', fontSize: 14 },
