@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
+import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
 import type { CoopBridge, DebugSnapshot } from '../lib/game-engine';
 import type { Appearance } from '../lib/coop';
 import type { NetState } from '../lib/net';
@@ -34,6 +35,13 @@ const BANNER_KEYS: Record<NetState, string | null> = {
 };
 
 const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed'];
+
+const AUTH_ERROR_KEYS: Record<string, string> = {
+  claim_required: 'auth.claim_required',
+  reclaimed: 'auth.reclaimed',
+};
+
+type LoginStep = 'email' | 'code';
 
 function generateGuestName(): string {
   return `Guest${Math.floor(1000 + Math.random() * 9000)}`;
@@ -70,8 +78,16 @@ export default function Game() {
   const [chatDraft, setChatDraft] = useState('');
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugData, setDebugData] = useState<DebugSnapshot | null>(null);
+  const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginCode, setLoginCode] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [authToast, setAuthToast] = useState<string | null>(null);
+  const [loggedIn, setLoggedIn] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
+  const loginClearedRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatLineId = useRef(0);
 
@@ -93,11 +109,16 @@ export default function Game() {
         const bridge: CoopBridge = {
           resolveName: () => loadName().trim() || generateGuestName(),
           resolveAppearance: () => loadLook(),
+          resolveClaim: (resolvedName) => resolveClaim(active.id, resolvedName),
           hud: {
             onState: (state) => setNetState(state),
             onPing: (value) => setPing(value),
             onChat: (from, text) => pushChatLine(from, text),
             onCount: (count) => setOnline(count),
+            onError: (code) => {
+              const key = AUTH_ERROR_KEYS[code];
+              if (key) setAuthToast(t(key));
+            },
           },
           bind: (api) => { gameApiRef.current = api; },
         };
@@ -160,6 +181,113 @@ export default function Game() {
     if (typeof window !== 'undefined') window.localStorage.setItem(LOOK_KEYS[part], value);
   }
 
+  const needsLogin = useCallback((): boolean => {
+    const trimmed = name.trim();
+    if (!trimmed) return false;
+    if (!brand) return false;
+    return resolveClaim(brand.id, trimmed) === '';
+  }, [brand, name]);
+
+  // Gate the engine's Play button: a named player with no valid session must log in first. We block
+  // the engine's own click listener in the capture phase and open the login step instead. Once the
+  // claim is stored we re-fire Play with the gate cleared so the engine boots normally.
+  useEffect(() => {
+    if (!brand) return;
+    const playBtn = document.getElementById('playBtn');
+    if (!playBtn) return;
+    function gate(event: MouseEvent): void {
+      if (loginClearedRef.current) return;
+      if (!needsLogin()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setLoginError(null);
+      setLoginCode('');
+      setLoginStep('email');
+    }
+    playBtn.addEventListener('click', gate, { capture: true });
+    return () => playBtn.removeEventListener('click', gate, { capture: true });
+  }, [brand, needsLogin]);
+
+  useEffect(() => {
+    if (!brand) return;
+    const session = loadSession();
+    setLoggedIn(!!session && session.tenant === brand.id);
+  }, [brand, loginStep]);
+
+  useEffect(() => {
+    if (!authToast) return;
+    const timer = setTimeout(() => setAuthToast(null), CHAT_FADE_MS);
+    return () => clearTimeout(timer);
+  }, [authToast]);
+
+  const finishLogin = useCallback(() => {
+    loginClearedRef.current = true;
+    setLoginStep(null);
+    setLoggedIn(true);
+    document.getElementById('playBtn')?.click();
+  }, []);
+
+  const requestCode = useCallback(async () => {
+    if (!brand) return;
+    setLoginBusy(true);
+    setLoginError(null);
+    try {
+      const res = await fetch('/api/auth/request', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tenant: brand.id, name: name.trim(), email: loginEmail.trim() }),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        setLoginError(t(data.error === 'not_owner' ? 'login.error_not_owner' : 'login.error_invalid'));
+        return;
+      }
+      setLoginStep('code');
+    } catch {
+      setLoginError(t('login.error_generic'));
+    } finally {
+      setLoginBusy(false);
+    }
+  }, [brand, name, loginEmail]);
+
+  const verifyCode = useCallback(async () => {
+    if (!brand) return;
+    setLoginBusy(true);
+    setLoginError(null);
+    try {
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tenant: brand.id, name: name.trim(), code: loginCode.trim() }),
+      });
+      const data = (await res.json()) as { ok: boolean; tenant?: string; name?: string; claim?: string };
+      if (!data.ok || !data.tenant || !data.name || !data.claim) {
+        setLoginError(t('login.error_code'));
+        return;
+      }
+      saveSession({ tenant: data.tenant, name: data.name, claim: data.claim });
+      finishLogin();
+    } catch {
+      setLoginError(t('login.error_generic'));
+    } finally {
+      setLoginBusy(false);
+    }
+  }, [brand, name, loginCode, finishLogin]);
+
+  const logout = useCallback(async () => {
+    const session = loadSession();
+    if (session) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(session),
+      }).catch(() => undefined);
+    }
+    clearSession();
+    loginClearedRef.current = false;
+    setLoggedIn(false);
+  }, []);
+
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
   if (!brand) return null;
 
@@ -192,6 +320,56 @@ export default function Game() {
 
       {bannerKey && (
         <div id="netBanner" className={severe ? 'severe' : undefined} role="status">{t(bannerKey)}</div>
+      )}
+
+      {authToast && (
+        <div id="authToast" className="severe" role="status">{authToast}</div>
+      )}
+
+      {loginStep && (
+        <div id="loginModal" role="dialog" aria-modal="true">
+          <div className="panel">
+            {loginStep === 'email' && (
+              <>
+                <h2>{t('login.email_title')}</h2>
+                <p>{t('login.email_hint', { name: name.trim() })}</p>
+                <input
+                  id="loginEmail"
+                  type="email"
+                  value={loginEmail}
+                  placeholder={t('login.email_placeholder')}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.code === 'Enter') { e.preventDefault(); requestCode(); } }}
+                />
+                {loginError && <p className="loginError">{loginError}</p>}
+                <button id="loginSend" disabled={loginBusy || !loginEmail.trim()} onClick={requestCode}>
+                  {loginBusy ? t('login.sending') : t('login.send_code')}
+                </button>
+                <button id="loginCancel" className="ghost" onClick={() => setLoginStep(null)}>{t('login.cancel')}</button>
+              </>
+            )}
+            {loginStep === 'code' && (
+              <>
+                <h2>{t('login.code_title')}</h2>
+                <p>{t('login.code_hint', { email: loginEmail.trim() })}</p>
+                <input
+                  id="loginCode"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={loginCode}
+                  placeholder={t('login.code_placeholder')}
+                  onChange={(e) => setLoginCode(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={(e) => { if (e.code === 'Enter') { e.preventDefault(); verifyCode(); } }}
+                />
+                {loginError && <p className="loginError">{loginError}</p>}
+                <button id="loginVerify" disabled={loginBusy || loginCode.trim().length < 6} onClick={verifyCode}>
+                  {loginBusy ? t('login.verifying') : t('login.verify')}
+                </button>
+                <button id="loginCancel" className="ghost" onClick={() => setLoginStep(null)}>{t('login.cancel')}</button>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {offline && !offlineDismissed && (
@@ -311,6 +489,9 @@ export default function Game() {
             onChange={(e) => onNameChange(e.target.value)}
           />
         </label>
+        {loggedIn && (
+          <button id="logoutBtn" className="ghost" onClick={logout}>{t('login.logout')}</button>
+        )}
         <div id="lookField">
           <span className="lookTitle">{t('customize.title')}</span>
           <label>{t('customize.skin')}<input type="color" value={look.skin} onChange={(e) => onLookChange('skin', e.target.value)} /></label>

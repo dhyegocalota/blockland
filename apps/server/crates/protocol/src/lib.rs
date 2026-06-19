@@ -20,6 +20,7 @@ pub enum ClientMsg {
         skin: String,
         shirt: String,
         hair: String,
+        claim: String,
     },
     Move {
         x: f32,

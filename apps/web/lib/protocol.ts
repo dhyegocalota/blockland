@@ -13,6 +13,7 @@ export const join = (params: {
   skin: string;
   shirt: string;
   hair: string;
+  claim: string;
 }): ClientMsg => ({ t: 'join', ...params });
 
 export const move = (x: number, y: number, z: number, yaw: number, pitch: number): ClientMsg => ({

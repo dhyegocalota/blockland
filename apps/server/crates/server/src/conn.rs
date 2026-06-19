@@ -63,6 +63,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         skin,
         shirt,
         hair,
+        claim,
     }) = join
     else {
         tracing::debug!(reason = "expected_join", "handshake rejected");
@@ -93,6 +94,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     if room_tx
         .send(RoomCmd::Join {
             name,
+            claim,
             look: Appearance { skin, shirt, hair },
             ip,
             conn: conn_tx,

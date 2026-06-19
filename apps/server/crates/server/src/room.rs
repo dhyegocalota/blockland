@@ -31,6 +31,7 @@ pub struct Appearance {
 pub enum RoomCmd {
     Join {
         name: String,
+        claim: String,
         look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<ServerMsg>,
@@ -76,6 +77,10 @@ impl Bucket {
 struct Player {
     id: PlayerId,
     name: String,
+    // The trimmed username this player claimed (empty for an anonymous guest) and the live session
+    // token that proves it. Together they let the tick loop kick a player whose claim was taken over.
+    claim_name: String,
+    claim: String,
     skin: String,
     shirt: String,
     hair: String,
@@ -190,11 +195,12 @@ impl Room {
         match cmd {
             RoomCmd::Join {
                 name,
+                claim,
                 look,
                 ip,
                 conn,
                 reply,
-            } => self.on_join(name, look, ip, conn, reply),
+            } => self.on_join(name, claim, look, ip, conn, reply),
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
             RoomCmd::Leave { id } => {
                 if self.players.remove(&id).is_some() {
@@ -207,6 +213,7 @@ impl Room {
     fn on_join(
         &mut self,
         name: String,
+        claim: String,
         look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<ServerMsg>,
@@ -220,6 +227,16 @@ impl Room {
             let _ = reply.send(Err("room_full".into()));
             return;
         }
+        // Identity: an empty name is an anonymous guest (the server names them). A non-empty name
+        // must present the live claim for (tenant, name); otherwise the handshake is rejected.
+        let chosen = name.trim().to_string();
+        let held = self.hub.claims.get(&self.key.0, &chosen);
+        let claim_valid = !claim.is_empty() && held.as_deref() == Some(claim.as_str());
+        if !chosen.is_empty() && !claim_valid {
+            tracing::debug!(tenant = %self.key.0, name = %chosen, "join rejected: claim required");
+            let _ = reply.send(Err("claim_required".into()));
+            return;
+        }
         let id = self.hub.alloc_id();
         let spawn = World::spawn();
         let limits = &self.hub.limits;
@@ -227,6 +244,8 @@ impl Room {
         let player = Player {
             id,
             name: sanitize_name(&name),
+            claim_name: chosen,
+            claim,
             skin: sanitize_color(&look.skin, "#f2c18b"),
             shirt: sanitize_color(&look.shirt, "#ff5d2e"),
             hair: sanitize_color(&look.hair, "#3a2a1a"),
@@ -444,6 +463,19 @@ impl Room {
                     msg: "Your access has been revoked.".into(),
                 });
                 tracing::debug!(id = %p.id, ip = %p.ip, "banned kick");
+                kicked.push(p.id);
+                continue;
+            }
+            // Kick-on-reclaim: a named player whose claim is no longer the live one (someone re-claimed
+            // the username) is dropped. Guests (no claim name) are never affected.
+            let still_holds = self.hub.claims.get(&self.key.0, &p.claim_name).as_deref()
+                == Some(p.claim.as_str());
+            if !p.claim_name.is_empty() && !still_holds {
+                let _ = p.conn.try_send(ServerMsg::Error {
+                    code: "reclaimed".into(),
+                    msg: "Your username was taken over from another device.".into(),
+                });
+                tracing::debug!(id = %p.id, name = %p.claim_name, "reclaimed kick");
                 kicked.push(p.id);
                 continue;
             }

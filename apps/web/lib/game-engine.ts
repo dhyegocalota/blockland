@@ -74,6 +74,7 @@ export interface DebugSnapshot {
 export interface CoopBridge {
   resolveName(): string;
   resolveAppearance(): Appearance;
+  resolveClaim(name: string): string;
   hud: CoopHud;
   bind(api: { sendChat(text: string): void; debugSnapshot(): DebugSnapshot }): void;
 }
@@ -976,6 +977,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (!bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
     const name = bridge.resolveName();
     const look = bridge.resolveAppearance();
+    const claim = bridge.resolveClaim(name);
     coop = createCoop({
       three: THREE,
       scene,
@@ -986,6 +988,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       skin: look.skin,
       shirt: look.shirt,
       hair: look.hair,
+      claim,
       hud: bridge.hud,
       applyRemoteEdit,
       applyRemoteEditBatch,

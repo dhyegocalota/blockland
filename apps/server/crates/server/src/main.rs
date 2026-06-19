@@ -14,7 +14,11 @@
 //!   DELETE /internal/tenants/:id          delete tenant
 //!   GET    /internal/leaderboard/:tenant  top scores JSON
 //!   POST   /internal/uploads?key&content_type  upload a tenant asset, returns { "url" }
+//!   POST   /internal/auth/request        start a login: { tenant, name, email } -> { ok, token, code, name, email }
+//!   POST   /internal/auth/verify         finish a login: { token } or { tenant, name, code } -> { ok, tenant, name, claim }
+//!   POST   /internal/auth/logout         end a session: { tenant, name, claim } -> { ok }
 
+mod auth;
 mod bans;
 mod conn;
 mod db;
@@ -79,6 +83,9 @@ async fn main() {
             get(internal_get_tenant).delete(internal_delete_tenant),
         )
         .route("/internal/leaderboard/{tenant}", get(internal_leaderboard))
+        .route("/internal/auth/request", post(internal_auth_request))
+        .route("/internal/auth/verify", post(internal_auth_verify))
+        .route("/internal/auth/logout", post(internal_auth_logout))
         .route(
             "/internal/uploads",
             post(uploads::internal_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
@@ -315,6 +322,121 @@ async fn internal_leaderboard(
         .await
     {
         Ok(scores) => Json(scores).into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AuthRequestReq {
+    tenant: String,
+    name: String,
+    email: String,
+}
+
+async fn internal_auth_request(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "POST", &original_uri.0, &headers, &body) {
+        return resp;
+    }
+    let Ok(req) = serde_json::from_slice::<AuthRequestReq>(&body) else {
+        return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
+    };
+    match auth::request(&state.hub.db, &req.tenant, &req.name, &req.email).await {
+        Ok(auth::RequestResult::Ok {
+            token,
+            code,
+            name,
+            email,
+        }) => Json(serde_json::json!({
+            "ok": true, "token": token, "code": code, "name": name, "email": email
+        }))
+        .into_response(),
+        Ok(auth::RequestResult::NotOwner) => {
+            Json(serde_json::json!({ "ok": false, "error": "not_owner" })).into_response()
+        }
+        Ok(auth::RequestResult::Invalid) => {
+            Json(serde_json::json!({ "ok": false, "error": "invalid" })).into_response()
+        }
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AuthVerifyReq {
+    token: Option<String>,
+    tenant: Option<String>,
+    name: Option<String>,
+    code: Option<String>,
+}
+
+async fn internal_auth_verify(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "POST", &original_uri.0, &headers, &body) {
+        return resp;
+    }
+    let Ok(req) = serde_json::from_slice::<AuthVerifyReq>(&body) else {
+        return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
+    };
+    let by_code = match (&req.tenant, &req.name, &req.code) {
+        (Some(tenant), Some(name), Some(code)) => {
+            Some((tenant.as_str(), name.as_str(), code.as_str()))
+        }
+        _ => None,
+    };
+    let result = auth::verify(
+        &state.hub.db,
+        &state.hub.claims,
+        req.token.as_deref(),
+        by_code,
+    )
+    .await;
+    match result {
+        Ok(Some(verified)) => Json(serde_json::json!({
+            "ok": true, "tenant": verified.tenant, "name": verified.name, "claim": verified.claim
+        }))
+        .into_response(),
+        Ok(None) => Json(serde_json::json!({ "ok": false })).into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AuthLogoutReq {
+    tenant: String,
+    name: String,
+    claim: String,
+}
+
+async fn internal_auth_logout(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "POST", &original_uri.0, &headers, &body) {
+        return resp;
+    }
+    let Ok(req) = serde_json::from_slice::<AuthLogoutReq>(&body) else {
+        return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
+    };
+    let result = auth::logout(
+        &state.hub.db,
+        &state.hub.claims,
+        &req.tenant,
+        &req.name,
+        &req.claim,
+    )
+    .await;
+    match result {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => internal_error(e),
     }
 }

@@ -45,6 +45,7 @@ export interface CoopHud {
   onPing(ping: number): void;
   onChat(name: string, text: string): void;
   onCount(online: number): void;
+  onError(code: string): void;
 }
 
 export interface CoopOptions {
@@ -57,6 +58,7 @@ export interface CoopOptions {
   skin: string;
   shirt: string;
   hair: string;
+  claim: string;
   hud: CoopHud;
   applyRemoteEdit(args: { x: number; y: number; z: number; id: number }): void;
   applyRemoteEditBatch(edits: EditCell[]): void;
@@ -240,6 +242,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     skin: opts.skin,
     shirt: opts.shirt,
     hair: opts.hair,
+    claim: opts.claim,
     handlers: {
       onState: (state) => opts.hud.onState(state),
       onWelcome: (msg) => {
@@ -268,7 +271,10 @@ export function createCoop(opts: CoopOptions): CoopController {
         showBubble(msg.from, msg.text);
         opts.hud.onChat(msg.name, msg.text);
       },
-      onError: (code, message) => debug('coop', 'server error', { code, msg: message }),
+      onError: (code, message) => {
+        debug('coop', 'server error', { code, msg: message });
+        opts.hud.onError(code);
+      },
     },
   });
   net.connect();

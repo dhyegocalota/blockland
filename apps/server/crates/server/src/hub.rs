@@ -16,6 +16,35 @@ use crate::room::{Room, RoomCmd};
 
 pub type RoomKey = (String, String);
 
+/// In-memory mirror of the active claim per (tenant, name): the single live session token that may
+/// use that username in that tenant. Warmed from the db on startup, then the source of truth the
+/// room checks every join/tick. An empty token is never a valid claim.
+#[derive(Default)]
+pub struct Claims {
+    active: DashMap<(String, String), String>,
+}
+
+impl Claims {
+    pub fn set(&self, tenant: &str, name: &str, token: &str) {
+        self.active
+            .insert((tenant.to_string(), name.to_string()), token.to_string());
+    }
+
+    pub fn get(&self, tenant: &str, name: &str) -> Option<String> {
+        self.active
+            .get(&(tenant.to_string(), name.to_string()))
+            .map(|t| t.value().clone())
+    }
+
+    /// Forget the claim only if `token` is the one currently held (a stale token must not evict a
+    /// re-claimed session).
+    pub fn remove(&self, tenant: &str, name: &str, token: &str) {
+        let key = (tenant.to_string(), name.to_string());
+        self.active
+            .remove_if(&key, |_, current| current.as_str() == token);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TenantCfg {
     pub id: String,
@@ -146,6 +175,7 @@ pub struct Hub {
     pub admin_token: String,
     pub bans: Arc<Bans>,
     pub db: Arc<Db>,
+    pub claims: Claims,
 }
 
 impl Hub {
@@ -166,6 +196,18 @@ impl Hub {
             .map(|t| (t.id.clone(), tenant_to_cfg(t)))
             .collect::<HashMap<_, _>>();
         tracing::info!(tenants = map.len(), "hub loaded");
+
+        let claims = Claims::default();
+        let warmed = db.all_claims().await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "failed to load claims from db");
+            Vec::new()
+        });
+        let claim_count = warmed.len();
+        for (tenant, name, token) in warmed {
+            claims.set(&tenant, &name, &token);
+        }
+        tracing::info!(claims = claim_count, "claims warmed");
+
         Self {
             tenants: map,
             limits,
@@ -176,6 +218,7 @@ impl Hub {
             admin_token,
             bans: Arc::new(Bans::load()),
             db,
+            claims,
         }
     }
 
@@ -297,5 +340,36 @@ fn tenant_to_cfg(tenant: Tenant) -> TenantCfg {
         name: tenant.name,
         primary: tenant.primary,
         logo: Some(tenant.avatar),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claims_set_get_and_isolate_by_tenant() {
+        let claims = Claims::default();
+        claims.set("teo", "Ann", "tokA");
+        assert_eq!(claims.get("teo", "Ann").as_deref(), Some("tokA"));
+        assert!(claims.get("demo", "Ann").is_none());
+    }
+
+    #[test]
+    fn claims_set_replaces_previous_holder() {
+        let claims = Claims::default();
+        claims.set("teo", "Ann", "tokA");
+        claims.set("teo", "Ann", "tokB");
+        assert_eq!(claims.get("teo", "Ann").as_deref(), Some("tokB"));
+    }
+
+    #[test]
+    fn claims_remove_only_matches_current_token() {
+        let claims = Claims::default();
+        claims.set("teo", "Ann", "tokB");
+        claims.remove("teo", "Ann", "tokA");
+        assert_eq!(claims.get("teo", "Ann").as_deref(), Some("tokB"));
+        claims.remove("teo", "Ann", "tokB");
+        assert!(claims.get("teo", "Ann").is_none());
     }
 }

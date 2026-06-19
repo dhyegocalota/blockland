@@ -73,6 +73,33 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.name_label': 'Seu nome',
     'start.name_placeholder': 'Digite seu nome',
 
+    // Login / username claim
+    'login.email_title': 'Entre com seu nome',
+    'login.email_hint': 'O nome "{name}" é seu? Confirme seu e-mail para entrar.',
+    'login.email_placeholder': 'seu@email.com',
+    'login.send_code': 'Enviar código',
+    'login.sending': 'Enviando...',
+    'login.code_title': 'Verifique seu e-mail',
+    'login.code_hint': 'Enviamos um código de 6 dígitos para {email}.',
+    'login.code_placeholder': '000000',
+    'login.verify': 'Entrar',
+    'login.verifying': 'Entrando...',
+    'login.cancel': 'Cancelar',
+    'login.logout': 'Sair',
+    'login.error_not_owner': 'Esse nome já é de outra pessoa. Escolha outro.',
+    'login.error_invalid': 'Nome ou e-mail inválido.',
+    'login.error_code': 'Código inválido ou expirado.',
+    'login.error_generic': 'Algo deu errado. Tente de novo.',
+
+    // Claim page (magic link)
+    'claim.verifying': 'Entrando...',
+    'claim.ok': 'Pronto! Redirecionando...',
+    'claim.failed': 'Link inválido ou expirado.',
+
+    // Auth errors from the server on join
+    'auth.claim_required': '🔒 Esse nome precisa de login. Entre para jogar com ele.',
+    'auth.reclaimed': '👋 Você entrou em outro lugar com esse nome.',
+
     // Character customizer
     'customize.title': '🎨 Monte seu boneco',
     'customize.skin': 'Pele',
@@ -282,6 +309,33 @@ export const messages: Record<Locale, Record<string, string>> = {
     // Start screen — name input
     'start.name_label': 'Your name',
     'start.name_placeholder': 'Type your name',
+
+    // Login / username claim
+    'login.email_title': 'Log in with your name',
+    'login.email_hint': 'Is "{name}" your name? Confirm your email to log in.',
+    'login.email_placeholder': 'you@email.com',
+    'login.send_code': 'Send code',
+    'login.sending': 'Sending...',
+    'login.code_title': 'Check your email',
+    'login.code_hint': 'We sent a 6-digit code to {email}.',
+    'login.code_placeholder': '000000',
+    'login.verify': 'Log in',
+    'login.verifying': 'Logging in...',
+    'login.cancel': 'Cancel',
+    'login.logout': 'Log out',
+    'login.error_not_owner': 'That name belongs to someone else. Pick another.',
+    'login.error_invalid': 'Invalid name or email.',
+    'login.error_code': 'Invalid or expired code.',
+    'login.error_generic': 'Something went wrong. Try again.',
+
+    // Claim page (magic link)
+    'claim.verifying': 'Logging in...',
+    'claim.ok': 'Done! Redirecting...',
+    'claim.failed': 'Invalid or expired link.',
+
+    // Auth errors from the server on join
+    'auth.claim_required': '🔒 That name needs a login. Log in to play as it.',
+    'auth.reclaimed': '👋 You logged in somewhere else with this name.',
 
     // Character customizer
     'customize.title': '🎨 Build your character',

@@ -66,6 +66,7 @@ export interface NetOptions {
   skin: string;
   shirt: string;
   hair: string;
+  claim: string;
   handlers: NetHandlers;
   socketFactory?: (url: string) => WebSocketLike;
   now?: () => number;
@@ -207,6 +208,7 @@ export function createNet(opts: NetOptions): NetClient {
         skin: opts.skin,
         shirt: opts.shirt,
         hair: opts.hair,
+        claim: opts.claim,
       })));
     };
     next.onmessage = (event) => handleMessage(event.data);

@@ -4,7 +4,7 @@ import { chat, edit, encodeClientMsg, join, move, parseServerMsg, pong } from '.
 describe('protocol factories', () => {
   it('builds a join message', () => {
     const look = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
-    expect(join({ tenant: 'teo', world: 'main', name: 'Bot', ...look })).toEqual({ t: 'join', tenant: 'teo', world: 'main', name: 'Bot', ...look });
+    expect(join({ tenant: 'teo', world: 'main', name: 'Bot', claim: 'tok', ...look })).toEqual({ t: 'join', tenant: 'teo', world: 'main', name: 'Bot', claim: 'tok', ...look });
   });
 
   it('builds a move message', () => {

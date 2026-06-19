@@ -61,6 +61,7 @@ function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
     skin: '#f2c18b',
     shirt: '#ff5d2e',
     hair: '#3a2a1a',
+    claim: 'claim-tok',
     handlers: {
       onState: (s) => states.push(s),
       onSnapshot: (m) => snapshots.push(m),
@@ -96,7 +97,7 @@ describe('net client', () => {
 
     const socket = MockWebSocket.instances[0];
     socket.open();
-    expect(socket.sent[0]).toBe(JSON.stringify({ t: 'join', tenant: 'teo', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' }));
+    expect(socket.sent[0]).toBe(JSON.stringify({ t: 'join', tenant: 'teo', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok' }));
 
     socket.receive(welcome);
     expect(client.state).toBe('online');

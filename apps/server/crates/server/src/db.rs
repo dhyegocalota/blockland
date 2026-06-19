@@ -38,16 +38,19 @@ pub struct ScoreEntry {
     pub score: i64,
 }
 
-/// A username is owned by exactly one email. Only the owner (proven by a magic link) may use it.
+/// A username is owned by one email WITHIN A TENANT (identity is per tenant, not global). Only the
+/// owner (proven by a magic link) may use that name in that tenant.
 #[derive(Debug, Clone)]
 pub struct Account {
+    pub tenant: String,
     pub name: String,
     pub email: String,
 }
 
-/// A pending login: a clicked-link `token` and a typed `code` both unlock the same (name, email).
+/// A pending login: a clicked-link `token` and a typed `code` both unlock the same (tenant, name, email).
 #[derive(Debug, Clone)]
 pub struct MagicLink {
+    pub tenant: String,
     pub name: String,
     pub email: String,
 }
@@ -75,6 +78,19 @@ impl Db {
         };
         db.ensure().await?;
         Ok(db)
+    }
+
+    /// An ephemeral in-memory db with the schema applied; used by tests across the crate.
+    #[cfg(test)]
+    pub(crate) async fn memory() -> Self {
+        let database = Builder::new_local(":memory:").build().await.unwrap();
+        let conn = database.connect().unwrap();
+        let db = Self {
+            _database: database,
+            conn,
+        };
+        db.ensure().await.unwrap();
+        db
     }
 
     async fn ensure(&self) -> Result<(), libsql::Error> {
@@ -111,9 +127,11 @@ impl Db {
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS accounts (
-                    name TEXT PRIMARY KEY,
+                    tenant TEXT NOT NULL,
+                    name TEXT NOT NULL,
                     email TEXT NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (tenant, name)
                 )",
                 (),
             )
@@ -123,6 +141,7 @@ impl Db {
                 "CREATE TABLE IF NOT EXISTS magic_links (
                     token TEXT PRIMARY KEY,
                     code TEXT NOT NULL,
+                    tenant TEXT NOT NULL,
                     name TEXT NOT NULL,
                     email TEXT NOT NULL,
                     expires_at INTEGER NOT NULL
@@ -133,10 +152,12 @@ impl Db {
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS claims (
-                    name TEXT PRIMARY KEY,
+                    tenant TEXT NOT NULL,
+                    name TEXT NOT NULL,
                     token TEXT NOT NULL,
                     email TEXT NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (tenant, name)
                 )",
                 (),
             )
@@ -277,13 +298,21 @@ impl Db {
 
     // ---------- Identity: accounts, magic links, claims ----------
 
-    pub async fn get_account(&self, name: &str) -> Result<Option<Account>, libsql::Error> {
+    pub async fn get_account(
+        &self,
+        tenant: &str,
+        name: &str,
+    ) -> Result<Option<Account>, libsql::Error> {
         let mut rows = self
             .conn
-            .query("SELECT email FROM accounts WHERE name = ?1", params![name])
+            .query(
+                "SELECT email FROM accounts WHERE tenant = ?1 AND name = ?2",
+                params![tenant, name],
+            )
             .await?;
         match rows.next().await? {
             Some(row) => Ok(Some(Account {
+                tenant: tenant.to_string(),
                 name: name.to_string(),
                 email: row.get::<String>(0)?,
             })),
@@ -295,41 +324,43 @@ impl Db {
         &self,
         token: &str,
         code: &str,
+        tenant: &str,
         name: &str,
         email: &str,
         ttl_ms: i64,
     ) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "INSERT INTO magic_links (token, code, name, email, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![token, code, name, email, now_ms() + ttl_ms],
+                "INSERT INTO magic_links (token, code, tenant, name, email, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![token, code, tenant, name, email, now_ms() + ttl_ms],
             )
             .await?;
         Ok(())
     }
 
-    /// Consume the link matching `token` (or `name`+`code`); returns the (name, email) it unlocks
-    /// and removes it so it can be used only once. Expired links never match.
+    /// Consume the link matching `token` (or `tenant`+`name`+`code`); returns the identity it
+    /// unlocks and removes it so it can be used only once. Expired links never match.
     pub async fn consume_magic_link(
         &self,
         token: Option<&str>,
-        code: Option<(&str, &str)>,
+        code: Option<(&str, &str, &str)>,
     ) -> Result<Option<MagicLink>, libsql::Error> {
         let mut rows = match (token, code) {
             (Some(tok), _) => {
                 self.conn
                     .query(
-                        "SELECT token, name, email FROM magic_links WHERE token = ?1 AND expires_at > ?2",
+                        "SELECT token, tenant, name, email FROM magic_links WHERE token = ?1 AND expires_at > ?2",
                         params![tok, now_ms()],
                     )
                     .await?
             }
-            (None, Some((name, c))) => {
+            (None, Some((tenant, name, c))) => {
                 self.conn
                     .query(
-                        "SELECT token, name, email FROM magic_links WHERE name = ?1 AND code = ?2 AND expires_at > ?3",
-                        params![name, c, now_ms()],
+                        "SELECT token, tenant, name, email FROM magic_links
+                         WHERE tenant = ?1 AND name = ?2 AND code = ?3 AND expires_at > ?4",
+                        params![tenant, name, c, now_ms()],
                     )
                     .await?
             }
@@ -340,8 +371,9 @@ impl Db {
         };
         let found_token = row.get::<String>(0)?;
         let link = MagicLink {
-            name: row.get::<String>(1)?,
-            email: row.get::<String>(2)?,
+            tenant: row.get::<String>(1)?,
+            name: row.get::<String>(2)?,
+            email: row.get::<String>(3)?,
         };
         self.conn
             .execute(
@@ -352,54 +384,69 @@ impl Db {
         Ok(Some(link))
     }
 
-    pub async fn upsert_account(&self, name: &str, email: &str) -> Result<(), libsql::Error> {
+    pub async fn upsert_account(
+        &self,
+        tenant: &str,
+        name: &str,
+        email: &str,
+    ) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "INSERT INTO accounts (name, email, created_at) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(name) DO UPDATE SET email = excluded.email",
-                params![name, email, now_ms()],
+                "INSERT INTO accounts (tenant, name, email, created_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(tenant, name) DO UPDATE SET email = excluded.email",
+                params![tenant, name, email, now_ms()],
             )
             .await?;
         Ok(())
     }
 
-    /// Make `token` the active claim for `name` (replacing any previous one).
+    /// Make `token` the active claim for (tenant, name), replacing any previous one.
     pub async fn set_claim(
         &self,
+        tenant: &str,
         name: &str,
         email: &str,
         token: &str,
     ) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "INSERT INTO claims (name, token, email, created_at) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(name) DO UPDATE SET token = excluded.token, email = excluded.email",
-                params![name, token, email, now_ms()],
+                "INSERT INTO claims (tenant, name, token, email, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(tenant, name) DO UPDATE SET token = excluded.token, email = excluded.email",
+                params![tenant, name, token, email, now_ms()],
             )
             .await?;
         Ok(())
     }
 
-    /// Drop the active claim for `name`, but only if `token` is the one currently held (logout).
-    pub async fn clear_claim(&self, name: &str, token: &str) -> Result<(), libsql::Error> {
+    /// Drop the active claim for (tenant, name), only if `token` is the one currently held (logout).
+    pub async fn clear_claim(
+        &self,
+        tenant: &str,
+        name: &str,
+        token: &str,
+    ) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "DELETE FROM claims WHERE name = ?1 AND token = ?2",
-                params![name, token],
+                "DELETE FROM claims WHERE tenant = ?1 AND name = ?2 AND token = ?3",
+                params![tenant, name, token],
             )
             .await?;
         Ok(())
     }
 
-    /// All active claims, used to warm the in-memory claim map on startup.
-    pub async fn all_claims(&self) -> Result<Vec<(String, String)>, libsql::Error> {
+    /// All active claims as (tenant, name, token), used to warm the in-memory claim map on startup.
+    pub async fn all_claims(&self) -> Result<Vec<(String, String, String)>, libsql::Error> {
         let mut rows = self
             .conn
-            .query("SELECT name, token FROM claims", ())
+            .query("SELECT tenant, name, token FROM claims", ())
             .await?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            out.push((row.get::<String>(0)?, row.get::<String>(1)?));
+            out.push((
+                row.get::<String>(0)?,
+                row.get::<String>(1)?,
+                row.get::<String>(2)?,
+            ));
         }
         Ok(out)
     }
@@ -471,14 +518,7 @@ mod tests {
     use super::*;
 
     async fn memory_db() -> Db {
-        let database = Builder::new_local(":memory:").build().await.unwrap();
-        let conn = database.connect().unwrap();
-        let db = Db {
-            _database: database,
-            conn,
-        };
-        db.ensure().await.unwrap();
-        db
+        Db::memory().await
     }
 
     #[tokio::test]
@@ -558,45 +598,48 @@ mod tests {
     #[tokio::test]
     async fn magic_link_unlocks_once_by_code_or_token() {
         let db = memory_db().await;
-        assert!(db.get_account("teo").await.unwrap().is_none());
-        db.create_magic_link("tok1", "123456", "teo", "a@b.com", 60_000)
+        assert!(db.get_account("teo", "Ann").await.unwrap().is_none());
+        db.create_magic_link("tok1", "123456", "teo", "Ann", "a@b.com", 60_000)
             .await
             .unwrap();
         assert!(db
-            .consume_magic_link(None, Some(("teo", "000000")))
+            .consume_magic_link(None, Some(("teo", "Ann", "000000")))
             .await
             .unwrap()
             .is_none());
         let link = db
-            .consume_magic_link(None, Some(("teo", "123456")))
+            .consume_magic_link(None, Some(("teo", "Ann", "123456")))
             .await
             .unwrap()
             .unwrap();
         assert_eq!(link.email, "a@b.com");
+        assert_eq!(link.tenant, "teo");
         assert!(db
             .consume_magic_link(Some("tok1"), None)
             .await
             .unwrap()
             .is_none());
-        db.upsert_account("teo", "a@b.com").await.unwrap();
+        db.upsert_account("teo", "Ann", "a@b.com").await.unwrap();
         assert_eq!(
-            db.get_account("teo").await.unwrap().unwrap().email,
+            db.get_account("teo", "Ann").await.unwrap().unwrap().email,
             "a@b.com"
         );
+        // Same name in another tenant is a separate, still-unclaimed account.
+        assert!(db.get_account("demo", "Ann").await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn claims_replace_and_clear_by_token() {
         let db = memory_db().await;
-        db.set_claim("teo", "a@b.com", "tokA").await.unwrap();
-        db.set_claim("teo", "a@b.com", "tokB").await.unwrap();
+        db.set_claim("teo", "Ann", "a@b.com", "tokA").await.unwrap();
+        db.set_claim("teo", "Ann", "a@b.com", "tokB").await.unwrap();
         assert_eq!(
             db.all_claims().await.unwrap(),
-            vec![("teo".to_string(), "tokB".to_string())]
+            vec![("teo".to_string(), "Ann".to_string(), "tokB".to_string())]
         );
-        db.clear_claim("teo", "tokA").await.unwrap();
+        db.clear_claim("teo", "Ann", "tokA").await.unwrap();
         assert_eq!(db.all_claims().await.unwrap().len(), 1);
-        db.clear_claim("teo", "tokB").await.unwrap();
+        db.clear_claim("teo", "Ann", "tokB").await.unwrap();
         assert!(db.all_claims().await.unwrap().is_empty());
     }
 
