@@ -20,6 +20,8 @@ import {
 
 // Cells per EditBatch frame; keeps each WebSocket message well under the server's text-size cap.
 const BATCH_CHUNK = 256;
+// WebSocket.OPEN, by value — `WebSocket` is not a global in the Node test/CI environment.
+const WS_OPEN = 1;
 
 export type NetState =
   | 'connecting'
@@ -117,7 +119,7 @@ export function createNet(opts: NetOptions): NetClient {
 
   function rawSend(data: string): void {
     if (socket === null) return;
-    if (socket.readyState !== WebSocket.OPEN) return;
+    if (socket.readyState !== WS_OPEN) return;
     socket.send(data);
   }
 

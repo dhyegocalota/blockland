@@ -4,7 +4,7 @@ import { createNet, type NetState, type WebSocketLike } from './net';
 class MockWebSocket implements WebSocketLike {
   static instances: MockWebSocket[] = [];
 
-  readyState: number = WebSocket.CONNECTING;
+  readyState: number = 0;
   sent: string[] = [];
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -20,12 +20,12 @@ class MockWebSocket implements WebSocketLike {
   }
 
   close(): void {
-    this.readyState = WebSocket.CLOSED;
+    this.readyState = 3;
     this.onclose?.({});
   }
 
   open(): void {
-    this.readyState = WebSocket.OPEN;
+    this.readyState = 1;
     this.onopen?.({});
   }
 
@@ -34,7 +34,7 @@ class MockWebSocket implements WebSocketLike {
   }
 
   serverClose(): void {
-    this.readyState = WebSocket.CLOSED;
+    this.readyState = 3;
     this.onclose?.({});
   }
 }
