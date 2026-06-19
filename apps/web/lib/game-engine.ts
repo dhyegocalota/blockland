@@ -14,7 +14,8 @@ import { blockVelocityIntoActors } from './engine/actors';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
-import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopHud } from './coop';
+import { creatureDefFor } from './engine/creature-snapshot';
+import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud } from './coop';
 import type { EditCell, EditOp } from './protocol';
 
 interface Creature {
@@ -351,6 +352,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   // ---------- Co-op (remote players) — only when a server URL is configured ----------
   const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
+  // In co-op the server owns every creature: motion, hp and death are decided on the server tick and
+  // come back in the snapshot. We render those (coop.getCreatures) and never run the local simulation.
+  // Local creatures stay only for true single-player (no server / no HUD bridge).
+  const coopEnabled = !!serverUrl && !!bridge;
   // If a synced edit lands on the local player (e.g. a structure built where they stand), lift them out.
   function unstuckPlayer(): void {
     const fx = Math.floor(player.pos.x), fz = Math.floor(player.pos.z);
@@ -548,6 +553,32 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     setTimeout(() => { if (!disposed) spawnCreature(cr.typeKey); }, 4000);
   }
 
+  // Co-op: the server owns creatures, so an attack is a request. We aim the crosshair at a snapshot
+  // creature (same sphere test as the local raycast) and ask the server to apply the hit; death,
+  // reward and despawn all come back authoritatively in the next snapshot.
+  function raycastServerCreature(): { creature: CoopCreature; t: number } | null {
+    if (!coop) return null;
+    const origin = camera.position.clone();
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    let best: CoopCreature | null = null, bestT = REACH;
+    for (const cr of coop.getCreatures()) {
+      const oc = new THREE.Vector3(cr.x - origin.x, cr.y - origin.y, cr.z - origin.z);
+      const tca = oc.dot(dir);
+      if (tca < 0) continue;
+      const d2 = oc.lengthSq() - tca * tca;
+      if (d2 > cr.radius * cr.radius) continue;
+      if (tca < bestT) { bestT = tca; best = cr; }
+    }
+    return best ? { creature: best, t: bestT } : null;
+  }
+  function hitServerCreature(cr: CoopCreature): void {
+    coop?.sendHit(cr.id);
+    const def = creatureDefFor(cr.kind);
+    blip(def.kind === 'monster' ? 300 : 880, 0.08);
+    debug('engine', 'hit request', { id: cr.id, kind: cr.kind });
+  }
+
   // ---------- Poof particles ----------
   const poofs: Poof[] = [];
   function spawnPoof(pos: THREE.Vector3, color: string): void {
@@ -593,8 +624,14 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Build / break ----------
   function primaryAction(): void {
     const block = raycastVoxel();
-    const creatureHit = raycastCreature();
     const blockDist = block ? new THREE.Vector3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
+    if (coop) {
+      const serverHit = raycastServerCreature();
+      if (serverHit && serverHit.t <= blockDist) { hitServerCreature(serverHit.creature); return; }
+      if (block) breakBlock(block);
+      return;
+    }
+    const creatureHit = raycastCreature();
     if (creatureHit && creatureHit.t <= blockDist) { hitCreature(creatureHit.creature); return; }
     if (block) breakBlock(block);
   }
@@ -988,7 +1025,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
     if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
-    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); updateCreatures(dt); updatePoofs(dt); }
+    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (!coop) updateCreatures(dt); updatePoofs(dt); }
     if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
     renderer.render(scene, camera);
     rafId = requestAnimationFrame(loop);
@@ -1014,6 +1051,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const name = bridge.resolveName();
     const look = bridge.resolveAppearance();
     const claim = bridge.resolveClaim(name);
+    // The authoritative score arrives in every snapshot; paint it into the engine-owned topbar
+    // (stars + record) before forwarding to the React HUD.
+    const hud: CoopHud = {
+      ...bridge.hud,
+      onScore: (score) => {
+        player.stars = score;
+        updateStats();
+        bridge.hud.onScore(score);
+      },
+    };
     coop = createCoop({
       three: THREE,
       scene,
@@ -1025,7 +1072,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       shirt: look.shirt,
       hair: look.hair,
       claim,
-      hud: bridge.hud,
+      hud,
       applyRemoteEdit,
       applyRemoteEditBatch,
       applyRoomState,
@@ -1042,7 +1089,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     buildWelcomeMonument();
     updateChunks(true);
     processMeshQueue(isTouch ? 24 : 60);
-    populateCreatures();
+    if (!coopEnabled) populateCreatures();
     buildHotbar(FACE_URL);
     selectSlot(1);
     updateStats();

@@ -18,4 +18,8 @@ describe('t', () => {
   it('falls back to the key when the message is missing', () => {
     expect(t('does.not.exist')).toBe('does.not.exist');
   });
+
+  it('renders the kill feed line with the attacker name and localized creature', () => {
+    expect(t('feed.kill', { name: 'Maria', detail: t('creature.spider') })).toBe('Maria derrotou um Aranha');
+  });
 });

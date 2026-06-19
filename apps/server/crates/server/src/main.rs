@@ -24,6 +24,7 @@
 mod auth;
 mod bans;
 mod conn;
+mod creatures;
 mod db;
 mod hub;
 mod internal_auth;

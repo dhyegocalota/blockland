@@ -199,6 +199,17 @@ describe('net client', () => {
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'chat', text: 'hello' }));
   });
 
+  it('sendHit serializes the attacked creature id', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    client.sendHit(7);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'hit', id: 7 }));
+  });
+
   it('routes a timeline event to onEvent', () => {
     const events: unknown[] = [];
     const { client } = makeClient({ handlers: { onEvent: (m) => events.push(m) } });

@@ -42,6 +42,10 @@ pub enum ClientMsg {
     Chat {
         text: String,
     },
+    /// Attack the creature with this id; the server validates range and applies the damage.
+    Hit {
+        id: u32,
+    },
     EditBatch {
         edits: Vec<EditCell>,
     },
@@ -90,6 +94,7 @@ pub enum ServerMsg {
         #[ts(type = "number")]
         tick: u64,
         players: Vec<PlayerState>,
+        creatures: Vec<CreatureState>,
     },
     Edit {
         x: i32,
@@ -143,6 +148,21 @@ pub struct PlayerState {
     pub yaw: f32,
     pub pitch: f32,
     pub ping_ms: u32,
+    pub score: u32,
+}
+
+/// A server-simulated creature every client renders identically. `hp` of 0 never appears (it is
+/// removed on death); `kind` is a slug like "pig"/"slime" the client maps to a model.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CreatureState {
+    pub id: u32,
+    pub kind: String,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub yaw: f32,
+    pub hp: u8,
+    pub max_hp: u8,
 }
 
 /// White-label branding handed to the client on join.
@@ -170,6 +190,7 @@ mod export {
             EditOp::decl(),
             EditCell::decl(),
             PlayerState::decl(),
+            CreatureState::decl(),
             ClientMsg::decl(),
             ServerMsg::decl(),
         ] {

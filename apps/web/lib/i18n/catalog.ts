@@ -138,6 +138,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.joined': '{name} entrou',
     'feed.left': '{name} saiu',
     'feed.renamed': '{old} agora é {name}',
+    'feed.kill': '{name} derrotou um {detail}',
 
     // Change name (logged-in rename)
     'rename.button': '✏️ Mudar nome',
@@ -419,6 +420,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.joined': '{name} joined',
     'feed.left': '{name} left',
     'feed.renamed': '{old} is now {name}',
+    'feed.kill': '{name} beat a {detail}',
 
     // Change name (logged-in rename)
     'rename.button': '✏️ Change name',

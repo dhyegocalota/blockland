@@ -4,7 +4,7 @@
 
 import type { ClientMsg, EditCell, EditOp, ServerMsg } from './protocol.gen';
 
-export type { Brand, ClientMsg, EditCell, EditOp, PlayerState, ServerMsg } from './protocol.gen';
+export type { Brand, ClientMsg, CreatureState, EditCell, EditOp, PlayerState, ServerMsg } from './protocol.gen';
 
 export const join = (params: {
   tenant: string;
@@ -35,6 +35,8 @@ export const edit = (op: EditOp, x: number, y: number, z: number, id: number): C
 });
 
 export const pong = (nonce: number): ClientMsg => ({ t: 'pong', nonce });
+
+export const hit = (id: number): ClientMsg => ({ t: 'hit', id });
 
 export const chat = (text: string): ClientMsg => ({ t: 'chat', text });
 

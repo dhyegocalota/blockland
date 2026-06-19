@@ -13,6 +13,8 @@ import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
 import type { EditCell, EditOp } from './protocol';
 import type { FeedEvent, RosterMember } from './feed';
+import { creatureDefFor, creatureNameKey } from './engine/creature-snapshot';
+import { t } from './i18n';
 
 // One persistent world per tenant (see apps/server model); the world name is fixed and global.
 export const MAIN_WORLD = 'main';
@@ -57,6 +59,7 @@ export interface CoopHud {
   onCount(online: number): void;
   onRoster(players: RosterEntry[]): void;
   onEvent(event: FeedEvent): void;
+  onScore(score: number): void;
   onAdmin(admin: boolean): void;
   onRoomState(room: RoomState): void;
   onError(code: string): void;
@@ -88,15 +91,36 @@ interface Avatar {
   interp: RemoteInterpolator;
 }
 
+interface ServerCreature {
+  kind: string;
+  group: THREE.Group;
+  body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  radius: number;
+  interp: RemoteInterpolator;
+}
+
+// What the engine raycasts against to aim an attack: world position, the wire id to send in `hit`,
+// and the hit sphere radius derived from the creature's model size.
+export interface CoopCreature {
+  id: number;
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+}
+
 export interface CoopController {
   sendMove(pose: LocalPose, now: number): void;
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
+  sendHit(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
   update(now: number): void;
   getColliders(): ActorPos[];
+  getCreatures(): CoopCreature[];
   readonly ping: number;
   readonly state: NetState;
   readonly onlineCount: number;
@@ -107,10 +131,12 @@ export interface CoopController {
 export function createCoop(opts: CoopOptions): CoopController {
   const { three, scene } = opts;
   const avatars = new Map<number, Avatar>();
+  const creatures = new Map<number, ServerCreature>();
   let selfId: number | null = null;
   let lastMoveSentAt = 0;
   let onlineCount = 0;
   let selfPing = 0;
+  let selfScore = 0;
   let admin = false;
 
   function makeLabel(name: string): THREE.Sprite {
@@ -270,6 +296,53 @@ export function createCoop(opts: CoopOptions): CoopController {
     debug('coop', 'avatar removed', { id });
   }
 
+  // A creature wears the same blocky face as the local single-player model: a flat-colored cube with
+  // two eyes and a mouth drawn on, sized by its definition. The server owns motion/hp/death; here we
+  // only render the latest snapshot, interpolated like a remote player.
+  function makeCreatureFace(color: string): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const g = canvas.getContext('2d');
+    if (!g) throw new Error('2d canvas context unavailable');
+    g.fillStyle = color;
+    g.fillRect(0, 0, 16, 16);
+    g.fillStyle = '#1a1330';
+    g.fillRect(4, 6, 2, 3);
+    g.fillRect(10, 6, 2, 3);
+    g.fillRect(6, 11, 4, 1);
+    const texture = new three.CanvasTexture(canvas);
+    texture.magFilter = three.NearestFilter;
+    texture.colorSpace = three.SRGBColorSpace;
+    return texture;
+  }
+
+  function spawnCreature(id: number, kind: string): ServerCreature {
+    const def = creatureDefFor(kind);
+    const group = new three.Group();
+    const body = new three.Mesh(
+      new three.BoxGeometry(...def.size),
+      new three.MeshLambertMaterial({ map: makeCreatureFace(def.color) })
+    );
+    group.add(body);
+    scene.add(group);
+    const creature: ServerCreature = { kind, group, body, radius: Math.max(...def.size) * 0.7, interp: new RemoteInterpolator() };
+    creatures.set(id, creature);
+    debug('coop', 'creature spawned', { id, kind });
+    return creature;
+  }
+
+  function removeCreature(id: number): void {
+    const creature = creatures.get(id);
+    if (!creature) return;
+    scene.remove(creature.group);
+    creature.body.geometry.dispose();
+    creature.body.material.map?.dispose();
+    creature.body.material.dispose();
+    creatures.delete(id);
+    debug('coop', 'creature removed', { id });
+  }
+
   const net: NetClient = createNet({
     url: opts.url,
     tenant: opts.tenant,
@@ -292,6 +365,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         for (const p of msg.players) {
           if (p.id === selfId) {
             selfPing = p.ping_ms;
+            selfScore = p.score;
             continue;
           }
           seen.add(p.id);
@@ -308,10 +382,22 @@ export function createCoop(opts: CoopOptions): CoopController {
           opts.hud.onEvent({ kind: 'leave', name: avatars.get(id)!.name });
           removeAvatar(id);
         }
+        const liveCreatures = new Set<number>();
+        for (const c of msg.creatures) {
+          liveCreatures.add(c.id);
+          const existing = creatures.get(c.id);
+          const creature = existing ? existing : spawnCreature(c.id, c.kind);
+          creature.interp.push({ t: performance.now(), x: c.x, y: c.y, z: c.z, yaw: c.yaw, pitch: 0 });
+        }
+        for (const id of [...creatures.keys()]) {
+          if (liveCreatures.has(id)) continue;
+          removeCreature(id);
+        }
         onlineCount = msg.players.length;
         opts.hud.onCount(onlineCount);
         opts.hud.onRoster(msg.players.map((p) => ({ id: p.id, name: p.name, self: p.id === selfId })));
         opts.hud.onPing(selfPing);
+        opts.hud.onScore(selfScore);
       },
       onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id }),
       onEditBatch: (msg) => opts.applyRemoteEditBatch(msg.edits),
@@ -320,6 +406,10 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onChat(msg.name, msg.text);
       },
       onEvent: (msg) => {
+        if (msg.kind === 'kill') {
+          opts.hud.onEvent({ kind: 'kill', name: msg.name, detail: t(creatureNameKey(msg.detail)) });
+          return;
+        }
         if (msg.kind === 'rename') renameAvatar(msg.detail, msg.name);
         opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },
@@ -352,6 +442,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     sendChat(text): void {
       net.sendChat(text);
     },
+    sendHit(id): void {
+      net.sendHit(id);
+    },
     sendAdminSetPeace(on): void {
       net.sendAdminSetPeace(on);
     },
@@ -365,12 +458,28 @@ export function createCoop(opts: CoopOptions): CoopController {
         avatar.group.position.set(pose.x, pose.y - EYE_HEIGHT, pose.z);
         avatar.group.rotation.y = pose.yaw;
       }
+      for (const creature of creatures.values()) {
+        const pose = creature.interp.sampleAt(now);
+        if (!pose) continue;
+        creature.group.position.set(pose.x, pose.y, pose.z);
+        creature.group.rotation.y = pose.yaw;
+      }
     },
     getColliders(): ActorPos[] {
       return [...avatars.values()].map((a) => ({
         x: a.group.position.x,
         y: a.group.position.y,
         z: a.group.position.z,
+      }));
+    },
+    getCreatures(): CoopCreature[] {
+      return [...creatures.entries()].map(([id, c]) => ({
+        id,
+        kind: c.kind,
+        x: c.group.position.x,
+        y: c.group.position.y,
+        z: c.group.position.z,
+        radius: c.radius,
       }));
     },
     get ping(): number {
@@ -387,6 +496,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     close(): void {
       for (const id of [...avatars.keys()]) removeAvatar(id);
+      for (const id of [...creatures.keys()]) removeCreature(id);
       net.close();
     },
   };

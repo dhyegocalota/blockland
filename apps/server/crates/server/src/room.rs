@@ -7,11 +7,14 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use protocol::{Brand, ClientMsg, EditCell, EditOp, PlayerId, PlayerState, ServerMsg};
+use protocol::{
+    Brand, ClientMsg, CreatureState, EditCell, EditOp, PlayerId, PlayerState, ServerMsg,
+};
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 
+use crate::creatures::{Creature, CreatureKind};
 use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
 
 // Bulk edits (magic structures, and the world handed to a joining player) are capped so one player
@@ -20,6 +23,22 @@ const MAX_BATCH_EDITS: usize = 8192;
 const BATCH_RADIUS: f32 = 48.0;
 // Cells per outgoing EditBatch frame, matching the client; keeps each message under the text cap.
 const BATCH_CHUNK_SIZE: usize = 256;
+
+// --- Creatures ---
+// The live population scales with how many players are around (so everyone has creatures nearby) but
+// stays within a floor and a hard ceiling that keeps the tick cheap. As creatures die or wander off,
+// the deficit is refilled in small batches so an area with players never runs dry.
+const CREATURES_PER_PLAYER: usize = 10;
+const MIN_CREATURES: usize = 12;
+const MAX_CREATURES: usize = 48;
+const SPAWN_BATCH: usize = 4;
+// Spawn new creatures within this horizontal radius of a player, and despawn any beyond DESPAWN_RADIUS.
+const SPAWN_RADIUS: f32 = 28.0;
+const DESPAWN_RADIUS: f32 = 64.0;
+// Top the population up this often (refilling up to SPAWN_BATCH each time for fast recovery after kills).
+const SPAWN_EVERY_TICKS: u64 = 5;
+// A player must be within this distance of a creature for a Hit to land (anti-cheat melee range).
+const MELEE_RANGE: f32 = 4.0;
 
 /// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
 pub struct Appearance {
@@ -99,6 +118,7 @@ struct Player {
     yaw: f32,
     pitch: f32,
     ping_ms: u32,
+    score: u32,
     conn: mpsc::Sender<ServerMsg>,
     last_seen: Instant,
     last_move: Instant,
@@ -126,6 +146,9 @@ pub struct Room {
     // gate the in-game build menu. A sorted set keeps the broadcast list deterministic.
     peace: bool,
     blocked_structures: BTreeSet<String>,
+    // Server-authoritative creature population and the monotonic id counter that names each one.
+    creatures: Vec<Creature>,
+    next_creature_id: u32,
 }
 
 const PING_EVERY_TICKS: u64 = 40; // 2s @ 20Hz
@@ -170,6 +193,8 @@ impl Room {
             dirty: false,
             peace: false,
             blocked_structures: BTreeSet::new(),
+            creatures: Vec::new(),
+            next_creature_id: 1,
             hub,
         }
     }
@@ -335,6 +360,7 @@ impl Room {
             yaw: 0.0,
             pitch: 0.0,
             ping_ms: 0,
+            score: 0,
             conn: conn.clone(),
             last_seen: now,
             last_move: now,
@@ -422,6 +448,16 @@ impl Room {
         // borrow below. Never trust the client: ignore unless the sender is a known room admin.
         if let ClientMsg::AdminSetPeace { .. } | ClientMsg::AdminSetStructure { .. } = msg {
             self.on_admin_setting(id, msg);
+            return;
+        }
+
+        // A Hit touches both the creature population and the attacker's score, so it is handled before
+        // the single-player borrow below (which would conflict).
+        if let ClientMsg::Hit { id: creature_id } = msg {
+            if let Some(p) = self.players.get_mut(&id) {
+                p.last_seen = now;
+            }
+            self.on_hit(id, creature_id);
             return;
         }
 
@@ -542,9 +578,9 @@ impl Room {
                     p.ping_ms = (now - p.ping_sent_at).as_millis().min(u32::MAX as u128) as u32;
                 }
             }
-            ClientMsg::AdminSetPeace { .. } | ClientMsg::AdminSetStructure { .. } => {
-                /* handled before the per-player borrow above */
-            }
+            ClientMsg::AdminSetPeace { .. }
+            | ClientMsg::AdminSetStructure { .. }
+            | ClientMsg::Hit { .. } => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
         }
 
@@ -676,6 +712,9 @@ impl Room {
             }
         }
 
+        // Maintain and advance the creature population before snapshotting it.
+        self.simulate_creatures(dt);
+
         // Broadcast the world snapshot.
         let states: Vec<PlayerState> = self
             .players
@@ -692,11 +731,27 @@ impl Room {
                 yaw: p.yaw,
                 pitch: p.pitch,
                 ping_ms: p.ping_ms,
+                score: p.score,
+            })
+            .collect();
+        let creatures: Vec<CreatureState> = self
+            .creatures
+            .iter()
+            .map(|c| CreatureState {
+                id: c.id,
+                kind: c.kind.slug().to_string(),
+                x: c.pos[0],
+                y: c.pos[1],
+                z: c.pos[2],
+                yaw: c.yaw,
+                hp: c.hp,
+                max_hp: c.max_hp,
             })
             .collect();
         let snap = ServerMsg::Snapshot {
             tick: self.tick,
             players: states,
+            creatures,
         };
         self.broadcast(&snap);
 
@@ -723,6 +778,97 @@ impl Room {
         for p in self.players.values() {
             let _ = p.conn.try_send(msg.clone());
         }
+    }
+
+    /// Keep a capped creature population near active players and advance each one. Despawn creatures
+    /// no player is close to; spawn up to the cap around a random player on a slow cadence.
+    fn simulate_creatures(&mut self, dt: f32) {
+        let player_xz: Vec<[f32; 2]> = self.players.values().map(|p| [p.x, p.z]).collect();
+        if player_xz.is_empty() {
+            self.creatures.clear();
+            return;
+        }
+        self.creatures
+            .retain(|c| nearest_horizontal(c.pos, &player_xz) <= DESPAWN_RADIUS);
+        // Maintain a per-player target population so a crowded area keeps more creatures, refilling the
+        // deficit a few at a time so kills are replaced quickly without a spawn burst.
+        let target = (player_xz.len() * CREATURES_PER_PLAYER).clamp(MIN_CREATURES, MAX_CREATURES);
+        if self.tick.is_multiple_of(SPAWN_EVERY_TICKS) {
+            let deficit = target.saturating_sub(self.creatures.len());
+            for _ in 0..deficit.min(SPAWN_BATCH) {
+                self.spawn_near(&player_xz);
+            }
+        }
+        let peace = self.peace;
+        let tick = self.tick;
+        for creature in &mut self.creatures {
+            creature.advance(&player_xz, peace, dt, tick, sim::height_at);
+        }
+    }
+
+    /// Spawn one creature near a player, kind and offset derived from the creature id and tick so the
+    /// population varies without any RNG state.
+    fn spawn_near(&mut self, player_xz: &[[f32; 2]]) {
+        let id = self.next_creature_id;
+        self.next_creature_id = self.next_creature_id.wrapping_add(1);
+        let anchor = player_xz[id as usize % player_xz.len()];
+        let angle = id as f32 * 2.399_963;
+        let radius = SPAWN_RADIUS * (0.4 + ((id as f32 * 0.37).sin() * 0.5 + 0.5) * 0.6);
+        let x = anchor[0] + angle.cos() * radius;
+        let z = anchor[1] + angle.sin() * radius;
+        let kind = CreatureKind::ALL[id as usize % CreatureKind::ALL.len()];
+        self.creatures
+            .push(Creature::spawn(id, kind, x, z, sim::height_at));
+        tracing::debug!(tenant = %self.key.0, id, kind = kind.slug(), "creature spawned");
+    }
+
+    /// Validate and apply a melee Hit: the attacker must be within range of a live creature. On a kill,
+    /// award the kind reward, broadcast a live "kill" event, and persist the new total for an account.
+    fn on_hit(&mut self, attacker_id: PlayerId, creature_id: u32) {
+        let Some(attacker) = self.players.get(&attacker_id) else {
+            return;
+        };
+        let (attacker_x, attacker_z) = (attacker.x, attacker.z);
+        let Some(index) = self.creatures.iter().position(|c| c.id == creature_id) else {
+            return;
+        };
+        let creature = &self.creatures[index];
+        let dist = ((creature.pos[0] - attacker_x).powi(2)
+            + (creature.pos[2] - attacker_z).powi(2))
+        .sqrt();
+        if dist > MELEE_RANGE {
+            tracing::debug!(%attacker_id, creature_id, dist, "hit rejected: out of range");
+            return;
+        }
+        let kind = self.creatures[index].kind;
+        self.creatures[index].hp = self.creatures[index].hp.saturating_sub(1);
+        if self.creatures[index].hp > 0 {
+            return;
+        }
+        self.creatures.remove(index);
+        let reward = kind.config().reward;
+        let Some(attacker) = self.players.get_mut(&attacker_id) else {
+            return;
+        };
+        attacker.score = attacker.score.saturating_add(reward);
+        let name = attacker.name.clone();
+        let account_id = attacker.account_id.clone();
+        let new_total = attacker.score;
+        self.broadcast(&ServerMsg::Event {
+            kind: "kill".into(),
+            name,
+            detail: kind.slug().to_string(),
+        });
+        tracing::info!(tenant = %self.key.0, %attacker_id, creature = kind.slug(), reward, "creature killed");
+        if account_id.is_empty() {
+            return;
+        }
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.submit_score(&account_id, new_total as i64).await {
+                tracing::error!(error = %e, "submit_score after kill failed");
+            }
+        });
     }
 
     /// Save the world diff off the tick thread (only when it changed).
@@ -809,6 +955,14 @@ fn sanitize_color(raw: &str, default: &str) -> String {
     }
 }
 
+/// Horizontal distance from a creature position to its nearest player; `f32::MAX` when none exist.
+fn nearest_horizontal(pos: [f32; 3], players: &[[f32; 2]]) -> f32 {
+    players
+        .iter()
+        .map(|p| ((p[0] - pos[0]).powi(2) + (p[1] - pos[2]).powi(2)).sqrt())
+        .fold(f32::MAX, f32::min)
+}
+
 fn epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -853,6 +1007,7 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             ping_ms: 0,
+            score: 0,
             conn,
             last_seen: now,
             last_move: now,
@@ -971,6 +1126,124 @@ mod tests {
 
         room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: false });
         assert_eq!(drain_room_state(&mut admin_rx), None);
+    }
+
+    fn drain_kill_event(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(String, String)> {
+        let mut latest = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::Event { kind, name, detail } = msg {
+                if kind == "kill" {
+                    latest = Some((name, detail));
+                }
+            }
+        }
+        latest
+    }
+
+    #[tokio::test]
+    async fn hit_in_range_kills_and_awards_score() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        // A chicken (1 hp) right on top of the attacker at the origin.
+        room.creatures.push(Creature::spawn(
+            50,
+            CreatureKind::Chicken,
+            0.0,
+            0.0,
+            sim::height_at,
+        ));
+        room.players.get_mut(&1).unwrap().y = sim::height_at(0, 0) as f32 + 0.5;
+
+        room.on_input(1, ClientMsg::Hit { id: 50 });
+        assert!(room.creatures.is_empty(), "the creature should be dead");
+        assert_eq!(room.players.get(&1).unwrap().score, 1);
+        assert_eq!(
+            drain_kill_event(&mut rx),
+            Some(("p1".into(), "chicken".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn hit_out_of_range_is_ignored() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        room.creatures.push(Creature::spawn(
+            51,
+            CreatureKind::Chicken,
+            100.0,
+            100.0,
+            sim::height_at,
+        ));
+
+        room.on_input(1, ClientMsg::Hit { id: 51 });
+        assert_eq!(room.creatures.len(), 1, "a far creature must not be hit");
+        assert_eq!(room.players.get(&1).unwrap().score, 0);
+    }
+
+    #[tokio::test]
+    async fn multi_hp_creature_survives_one_hit() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        room.players.get_mut(&1).unwrap().y = sim::height_at(0, 0) as f32 + 0.5;
+        room.creatures.push(Creature::spawn(
+            52,
+            CreatureKind::Cow,
+            0.0,
+            0.0,
+            sim::height_at,
+        ));
+
+        room.on_input(1, ClientMsg::Hit { id: 52 });
+        assert_eq!(room.creatures.len(), 1, "a 3-hp cow survives the first hit");
+        assert_eq!(room.creatures[0].hp, 2);
+        assert_eq!(
+            room.players.get(&1).unwrap().score,
+            0,
+            "no reward until death"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_room_clears_creatures() {
+        let mut room = test_room().await;
+        room.creatures.push(Creature::spawn(
+            53,
+            CreatureKind::Pig,
+            0.0,
+            0.0,
+            sim::height_at,
+        ));
+        room.simulate_creatures(0.05);
+        assert!(room.creatures.is_empty(), "no players means no creatures");
+    }
+
+    #[tokio::test]
+    async fn creatures_keep_a_minimum_population_near_players_and_refill() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        for _ in 0..200 {
+            room.tick += 1;
+            room.simulate_creatures(0.05);
+        }
+        let ramped = room.creatures.len();
+        assert!(
+            ramped >= MIN_CREATURES,
+            "a player area must keep at least the floor population, got {ramped}"
+        );
+        assert!(
+            ramped <= MAX_CREATURES,
+            "never exceed the ceiling, got {ramped}"
+        );
+        // Wipe them (as if all were killed) and confirm the area repopulates.
+        room.creatures.clear();
+        for _ in 0..(SPAWN_EVERY_TICKS * 5) {
+            room.tick += 1;
+            room.simulate_creatures(0.05);
+        }
+        assert!(
+            !room.creatures.is_empty(),
+            "the area must refill after a wipe so players never run dry"
+        );
     }
 
     #[test]

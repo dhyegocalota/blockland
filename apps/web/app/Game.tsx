@@ -43,9 +43,11 @@ const FEED_ICONS: Record<FeedEvent['kind'], string> = {
   leave: '➖',
   chat: '💬',
   rename: '✏️',
+  kill: '⚔️',
 };
 
 function feedText(entry: FeedEntry): string {
+  if (entry.kind === 'kill' && entry.detail) return t('feed.kill', { name: entry.name, detail: entry.detail });
   if (entry.kind === 'rename' && entry.detail) return t('feed.renamed', { old: entry.detail, name: entry.name });
   if (entry.kind === 'rename') return entry.name;
   return t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name });
@@ -155,6 +157,8 @@ export default function Game() {
             onCount: (count) => setOnline(count),
             onRoster: (players) => setRoster(players),
             onEvent: (event) => pushFeedEntry(event),
+            // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
+            onScore: () => undefined,
             onAdmin: (admin) => setIsAdmin(admin),
             onRoomState: (state) => setRoom(state),
             onError: (code) => {
@@ -514,7 +518,7 @@ export default function Game() {
 
       <div id="feed">
         {feed.map((entry) => (
-          <div className={entry.kind === 'rename' ? 'feedLine system' : 'feedLine'} key={entry.id}>
+          <div className={entry.kind === 'rename' || entry.kind === 'kill' ? 'feedLine system' : 'feedLine'} key={entry.id}>
             <span className="feedIcon">{FEED_ICONS[entry.kind]}</span>
             {feedText(entry)}
           </div>

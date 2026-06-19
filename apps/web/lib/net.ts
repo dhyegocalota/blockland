@@ -11,6 +11,7 @@ import {
   edit,
   editBatch,
   encodeClientMsg,
+  hit,
   join,
   move,
   parseServerMsg,
@@ -86,6 +87,7 @@ export interface NetClient {
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
+  sendHit(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
   readonly ping: number;
@@ -259,6 +261,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendChat(text): void {
       rawSend(encodeClientMsg(chat(text)));
+    },
+    sendHit(id): void {
+      rawSend(encodeClientMsg(hit(id)));
     },
     sendAdminSetPeace(on): void {
       rawSend(encodeClientMsg(adminSetPeace(on)));
