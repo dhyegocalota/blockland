@@ -17,6 +17,18 @@ const MAX_TEXT_BYTES: usize = 4096;
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
+    if hub.bans.is_banned(ip) {
+        let mut s = socket;
+        let _ = s
+            .send(text_msg(err_json(
+                "banned",
+                "Your access has been revoked.",
+            )))
+            .await;
+        let _ = s.send(Message::Close(None)).await;
+        tracing::debug!(%ip, "banned connection rejected");
+        return;
+    }
     if !hub.try_add_ip(ip) {
         let mut s = socket;
         let _ = s
@@ -29,11 +41,11 @@ pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
         return;
     }
     tracing::debug!(%ip, "connection accepted");
-    run(socket, &hub).await;
+    run(socket, &hub, ip).await;
     hub.remove_ip(ip);
 }
 
-async fn run(socket: WebSocket, hub: &Arc<Hub>) {
+async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     let (mut sink, mut stream) = socket.split();
 
     // First message must be a Join, within a timeout.
@@ -77,6 +89,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
     if room_tx
         .send(RoomCmd::Join {
             name,
+            ip,
             conn: conn_tx,
             reply: reply_tx,
         })

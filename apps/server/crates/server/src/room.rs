@@ -3,6 +3,7 @@
 //! single source of truth; clients predict locally and reconcile from snapshots.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +17,7 @@ use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
 pub enum RoomCmd {
     Join {
         name: String,
+        ip: IpAddr,
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     },
@@ -59,6 +61,7 @@ impl Bucket {
 struct Player {
     id: PlayerId,
     name: String,
+    ip: IpAddr,
     x: f32,
     y: f32,
     z: f32,
@@ -167,7 +170,12 @@ impl Room {
 
     fn handle(&mut self, cmd: RoomCmd) {
         match cmd {
-            RoomCmd::Join { name, conn, reply } => self.on_join(name, conn, reply),
+            RoomCmd::Join {
+                name,
+                ip,
+                conn,
+                reply,
+            } => self.on_join(name, ip, conn, reply),
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
             RoomCmd::Leave { id } => {
                 if self.players.remove(&id).is_some() {
@@ -180,9 +188,14 @@ impl Room {
     fn on_join(
         &mut self,
         name: String,
+        ip: IpAddr,
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
+        if self.hub.bans.is_banned(ip) {
+            let _ = reply.send(Err("banned".into()));
+            return;
+        }
         if self.players.len() >= self.max_players {
             let _ = reply.send(Err("room_full".into()));
             return;
@@ -194,6 +207,7 @@ impl Room {
         let player = Player {
             id,
             name: sanitize_name(&name),
+            ip,
             x: spawn[0],
             y: spawn[1],
             z: spawn[2],
@@ -358,6 +372,15 @@ impl Room {
             p.move_b.refill(dt);
             p.edit_b.refill(dt);
             p.chat_b.refill(dt);
+            if self.hub.bans.is_banned(p.ip) {
+                let _ = p.conn.try_send(ServerMsg::Error {
+                    code: "banned".into(),
+                    msg: "Your access has been revoked.".into(),
+                });
+                tracing::debug!(id = %p.id, ip = %p.ip, "banned kick");
+                kicked.push(p.id);
+                continue;
+            }
             if now.duration_since(p.last_seen) > idle {
                 let _ = p.conn.try_send(ServerMsg::Error {
                     code: "idle_timeout".into(),
