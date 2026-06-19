@@ -17,10 +17,15 @@ import type { EditCell, EditOp } from './protocol';
 export const MAIN_WORLD = 'main';
 const MOVE_SEND_HZ = 15;
 const MOVE_SEND_INTERVAL_MS = 1000 / MOVE_SEND_HZ;
-const AVATAR_WIDTH = 0.6;
 const AVATAR_HEIGHT = PLAYER_HEIGHT;
-const LABEL_LIFT = 0.45;
+const MODEL_HEIGHT = 1.8; // natural height of the humanoid before scaling to AVATAR_HEIGHT
+const LABEL_LIFT = 0.5;
 const LABEL_PIXEL_SCALE = 0.012;
+const BUBBLE_LIFT = 0.95;
+const BUBBLE_PIXEL_SCALE = 0.0125;
+const BUBBLE_TTL_MS = 6000;
+const SKIN = '#f2c18b';
+const PANTS = '#2f3a8c';
 
 const AVATAR_COLORS = [
   '#ff5d2e', '#3dc6ff', '#6bd06b', '#ffd23f', '#b06bff', '#ff8ad0', '#ff8a3d', '#3fae9a',
@@ -56,6 +61,8 @@ export interface CoopOptions {
 interface Avatar {
   group: THREE.Group;
   label: THREE.Sprite;
+  bubble: THREE.Sprite | null;
+  bubbleTimer: number;
   interp: RemoteInterpolator;
 }
 
@@ -105,35 +112,121 @@ export function createCoop(opts: CoopOptions): CoopController {
     return sprite;
   }
 
+  function makeFaceTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const g = canvas.getContext('2d');
+    if (!g) throw new Error('2d canvas context unavailable');
+    g.fillStyle = SKIN;
+    g.fillRect(0, 0, 32, 32);
+    g.fillStyle = '#2a1a1a';
+    g.fillRect(8, 12, 5, 6);
+    g.fillRect(19, 12, 5, 6);
+    g.fillStyle = '#b5532e';
+    g.fillRect(11, 23, 10, 3);
+    const texture = new three.CanvasTexture(canvas);
+    texture.magFilter = three.NearestFilter;
+    texture.colorSpace = three.SRGBColorSpace;
+    return texture;
+  }
+
+  function box(w: number, h: number, d: number, color: string, x: number, y: number): THREE.Mesh {
+    const mesh = new three.Mesh(
+      new three.BoxGeometry(w, h, d),
+      new three.MeshLambertMaterial({ color })
+    );
+    mesh.position.set(x, y, 0);
+    return mesh;
+  }
+
+  // A blocky Minecraft-style character: skinned head (face on the front), colored torso, arms, legs.
   function spawnAvatar(id: number, name: string): Avatar {
     const group = new three.Group();
-    const body = new three.Mesh(
-      new three.BoxGeometry(AVATAR_WIDTH, AVATAR_HEIGHT, AVATAR_WIDTH),
-      new three.MeshLambertMaterial({ color: colorFor(id) })
-    );
-    body.position.y = AVATAR_HEIGHT / 2;
-    group.add(body);
+    const model = new three.Group();
+    const shirt = colorFor(id);
+    model.add(box(0.22, 0.7, 0.24, PANTS, -0.13, 0.35));
+    model.add(box(0.22, 0.7, 0.24, PANTS, 0.13, 0.35));
+    model.add(box(0.5, 0.6, 0.26, shirt, 0, 1.0));
+    model.add(box(0.18, 0.6, 0.2, SKIN, -0.34, 1.0));
+    model.add(box(0.18, 0.6, 0.2, SKIN, 0.34, 1.0));
+    const skin = new three.MeshLambertMaterial({ color: SKIN });
+    const faceMat = new three.MeshLambertMaterial({ map: makeFaceTexture() });
+    const head = new three.Mesh(new three.BoxGeometry(0.5, 0.5, 0.5), [skin, skin, skin, skin, faceMat, skin]);
+    head.position.set(0, 1.55, 0);
+    model.add(head);
+    model.scale.setScalar(AVATAR_HEIGHT / MODEL_HEIGHT);
+    group.add(model);
     const label = makeLabel(name);
     label.position.y = AVATAR_HEIGHT + LABEL_LIFT;
     group.add(label);
     scene.add(group);
-    const avatar: Avatar = { group, label, interp: new RemoteInterpolator() };
+    const avatar: Avatar = { group, label, bubble: null, bubbleTimer: 0, interp: new RemoteInterpolator() };
     avatars.set(id, avatar);
     debug('coop', 'avatar spawned', { id, name });
     return avatar;
   }
 
+  function makeBubble(text: string): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 80;
+    const g = canvas.getContext('2d');
+    if (!g) throw new Error('2d canvas context unavailable');
+    const clipped = text.length > 22 ? `${text.slice(0, 21)}…` : text;
+    g.fillStyle = 'rgba(26, 16, 48, 0.86)';
+    g.beginPath();
+    g.roundRect(8, 8, 240, 56, 14);
+    g.fill();
+    g.font = 'bold 26px "Baloo 2", system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#ffffff';
+    g.fillText(clipped, 128, 36);
+    const texture = new three.CanvasTexture(canvas);
+    texture.colorSpace = three.SRGBColorSpace;
+    const sprite = new three.Sprite(new three.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+    sprite.scale.set(canvas.width * BUBBLE_PIXEL_SCALE, canvas.height * BUBBLE_PIXEL_SCALE, 1);
+    sprite.position.y = AVATAR_HEIGHT + LABEL_LIFT + BUBBLE_LIFT;
+    return sprite;
+  }
+
+  function disposeBubble(avatar: Avatar): void {
+    if (!avatar.bubble) return;
+    avatar.group.remove(avatar.bubble);
+    avatar.bubble.material.map?.dispose();
+    avatar.bubble.material.dispose();
+    avatar.bubble = null;
+  }
+
+  // A chat message floats above the speaker's head for a few seconds (Minecraft-style).
+  function showBubble(id: number, text: string): void {
+    const avatar = avatars.get(id);
+    if (!avatar) return;
+    disposeBubble(avatar);
+    window.clearTimeout(avatar.bubbleTimer);
+    const bubble = makeBubble(text);
+    avatar.group.add(bubble);
+    avatar.bubble = bubble;
+    avatar.bubbleTimer = window.setTimeout(() => disposeBubble(avatar), BUBBLE_TTL_MS);
+  }
+
   function removeAvatar(id: number): void {
     const avatar = avatars.get(id);
     if (!avatar) return;
+    window.clearTimeout(avatar.bubbleTimer);
+    disposeBubble(avatar);
     scene.remove(avatar.group);
     avatar.group.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       mesh.geometry?.dispose?.();
+      const material = mesh.material;
+      for (const m of Array.isArray(material) ? material : [material]) {
+        if (!m) continue;
+        (m as THREE.MeshLambertMaterial).map?.dispose();
+        m.dispose();
+      }
     });
-    const labelMaterial = avatar.label.material;
-    labelMaterial.map?.dispose();
-    labelMaterial.dispose();
     avatars.delete(id);
     debug('coop', 'avatar removed', { id });
   }
@@ -167,7 +260,10 @@ export function createCoop(opts: CoopOptions): CoopController {
       },
       onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id }),
       onEditBatch: (msg) => opts.applyRemoteEditBatch(msg.edits),
-      onChat: (msg) => opts.hud.onChat(msg.name, msg.text),
+      onChat: (msg) => {
+        showBubble(msg.from, msg.text);
+        opts.hud.onChat(msg.name, msg.text);
+      },
       onError: (code, message) => debug('coop', 'server error', { code, msg: message }),
     },
   });

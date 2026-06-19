@@ -206,6 +206,16 @@ export default function Game() {
         )}
       </div>
 
+      <button
+        id="debugToggle"
+        className={debugOpen ? 'on' : undefined}
+        onClick={() => setDebugOpen((open) => !open)}
+        title={t('debug.title')}
+        aria-label="Debug"
+      >
+        🐞
+      </button>
+
       {debugOpen && debugData && (
         <div id="debugPanel">
           <h3>{t('debug.title')}</h3>
