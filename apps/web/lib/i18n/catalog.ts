@@ -73,6 +73,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.name_label': 'Seu nome',
     'start.name_placeholder': 'Digite seu nome',
 
+    // Character customizer
+    'customize.title': '🎨 Monte seu boneco',
+    'customize.skin': 'Pele',
+    'customize.shirt': 'Camisa',
+    'customize.hair': 'Cabelo',
+
     // Co-op connection status
     'coop.connecting': '🔌 Conectando ao mundo...',
     'coop.reconnecting': '📡 Reconectando...',
@@ -269,6 +275,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     // Start screen — name input
     'start.name_label': 'Your name',
     'start.name_placeholder': 'Type your name',
+
+    // Character customizer
+    'customize.title': '🎨 Build your character',
+    'customize.skin': 'Skin',
+    'customize.shirt': 'Shirt',
+    'customize.hair': 'Hair',
 
     // Co-op connection status
     'coop.connecting': '🔌 Connecting to the world...',

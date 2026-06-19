@@ -21,9 +21,17 @@ const BATCH_RADIUS: f32 = 48.0;
 // Cells per outgoing EditBatch frame, matching the client; keeps each message under the text cap.
 const BATCH_CHUNK_SIZE: usize = 256;
 
+/// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
+pub struct Appearance {
+    pub skin: String,
+    pub shirt: String,
+    pub hair: String,
+}
+
 pub enum RoomCmd {
     Join {
         name: String,
+        look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
@@ -68,6 +76,9 @@ impl Bucket {
 struct Player {
     id: PlayerId,
     name: String,
+    skin: String,
+    shirt: String,
+    hair: String,
     ip: IpAddr,
     x: f32,
     y: f32,
@@ -179,10 +190,11 @@ impl Room {
         match cmd {
             RoomCmd::Join {
                 name,
+                look,
                 ip,
                 conn,
                 reply,
-            } => self.on_join(name, ip, conn, reply),
+            } => self.on_join(name, look, ip, conn, reply),
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
             RoomCmd::Leave { id } => {
                 if self.players.remove(&id).is_some() {
@@ -195,6 +207,7 @@ impl Room {
     fn on_join(
         &mut self,
         name: String,
+        look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
@@ -214,6 +227,9 @@ impl Room {
         let player = Player {
             id,
             name: sanitize_name(&name),
+            skin: sanitize_color(&look.skin, "#f2c18b"),
+            shirt: sanitize_color(&look.shirt, "#ff5d2e"),
+            hair: sanitize_color(&look.hair, "#3a2a1a"),
             ip,
             x: spawn[0],
             y: spawn[1],
@@ -463,6 +479,9 @@ impl Room {
             .map(|p| PlayerState {
                 id: p.id,
                 name: p.name.clone(),
+                skin: p.skin.clone(),
+                shirt: p.shirt.clone(),
+                hair: p.hair.clone(),
                 x: p.x,
                 y: p.y,
                 z: p.z,
@@ -557,6 +576,17 @@ fn sanitize_name(raw: &str) -> String {
         "Player".into()
     } else {
         trimmed.to_string()
+    }
+}
+
+// Accept only a `#rrggbb` hex color; fall back to the given default for anything else (cosmetic).
+fn sanitize_color(raw: &str, default: &str) -> String {
+    let ok =
+        raw.len() == 7 && raw.starts_with('#') && raw[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if ok {
+        raw.to_lowercase()
+    } else {
+        default.to_string()
     }
 }
 

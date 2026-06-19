@@ -17,6 +17,9 @@ pub enum ClientMsg {
         tenant: String,
         world: String,
         name: String,
+        skin: String,
+        shirt: String,
+        hair: String,
     },
     Move {
         x: f32,
@@ -109,6 +112,9 @@ pub enum ServerMsg {
 pub struct PlayerState {
     pub id: u32,
     pub name: String,
+    pub skin: String,
+    pub shirt: String,
+    pub hair: String,
     pub x: f32,
     pub y: f32,
     pub z: f32,

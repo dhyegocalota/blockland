@@ -11,7 +11,7 @@ use protocol::{ClientMsg, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::hub::Hub;
-use crate::room::RoomCmd;
+use crate::room::{Appearance, RoomCmd};
 
 // Large enough for a chunked EditBatch (the client caps each batch to BATCH_CHUNK cells).
 const MAX_TEXT_BYTES: usize = 32 * 1024;
@@ -60,6 +60,9 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         tenant,
         world: _,
         name,
+        skin,
+        shirt,
+        hair,
     }) = join
     else {
         tracing::debug!(reason = "expected_join", "handshake rejected");
@@ -90,6 +93,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     if room_tx
         .send(RoomCmd::Join {
             name,
+            look: Appearance { skin, shirt, hair },
             ip,
             conn: conn_tx,
             reply: reply_tx,

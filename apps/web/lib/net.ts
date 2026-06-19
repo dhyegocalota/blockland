@@ -63,6 +63,9 @@ export interface NetOptions {
   tenant: string;
   world: string;
   name: string;
+  skin: string;
+  shirt: string;
+  hair: string;
   handlers: NetHandlers;
   socketFactory?: (url: string) => WebSocketLike;
   now?: () => number;
@@ -197,7 +200,14 @@ export function createNet(opts: NetOptions): NetClient {
     const next = socketFactory(opts.url);
     socket = next;
     next.onopen = () => {
-      rawSend(encodeClientMsg(join(opts.tenant, opts.world, opts.name)));
+      rawSend(encodeClientMsg(join({
+        tenant: opts.tenant,
+        world: opts.world,
+        name: opts.name,
+        skin: opts.skin,
+        shirt: opts.shirt,
+        hair: opts.hair,
+      })));
     };
     next.onmessage = (event) => handleMessage(event.data);
     next.onclose = () => handleClose();

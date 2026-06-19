@@ -24,12 +24,13 @@ const LABEL_PIXEL_SCALE = 0.012;
 const BUBBLE_LIFT = 0.95;
 const BUBBLE_PIXEL_SCALE = 0.0125;
 const BUBBLE_TTL_MS = 6000;
-const SKIN = '#f2c18b';
-const PANTS = '#2f3a8c';
+const PANTS = '#2f3a8c'; // dark trousers, common to every character
 
-const AVATAR_COLORS = [
-  '#ff5d2e', '#3dc6ff', '#6bd06b', '#ffd23f', '#b06bff', '#ff8ad0', '#ff8a3d', '#3fae9a',
-];
+export interface Appearance {
+  skin: string;
+  shirt: string;
+  hair: string;
+}
 
 export interface LocalPose {
   x: number;
@@ -53,6 +54,9 @@ export interface CoopOptions {
   tenant: string;
   world: string;
   name: string;
+  skin: string;
+  shirt: string;
+  hair: string;
   hud: CoopHud;
   applyRemoteEdit(args: { x: number; y: number; z: number; id: number }): void;
   applyRemoteEditBatch(edits: EditCell[]): void;
@@ -87,10 +91,6 @@ export function createCoop(opts: CoopOptions): CoopController {
   let onlineCount = 0;
   let selfPing = 0;
 
-  function colorFor(id: number): string {
-    return AVATAR_COLORS[id % AVATAR_COLORS.length];
-  }
-
   function makeLabel(name: string): THREE.Sprite {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -112,13 +112,13 @@ export function createCoop(opts: CoopOptions): CoopController {
     return sprite;
   }
 
-  function makeFaceTexture(): THREE.CanvasTexture {
+  function makeFaceTexture(skinColor: string): THREE.CanvasTexture {
     const canvas = document.createElement('canvas');
     canvas.width = 32;
     canvas.height = 32;
     const g = canvas.getContext('2d');
     if (!g) throw new Error('2d canvas context unavailable');
-    g.fillStyle = SKIN;
+    g.fillStyle = skinColor;
     g.fillRect(0, 0, 32, 32);
     g.fillStyle = '#2a1a1a';
     g.fillRect(8, 12, 5, 6);
@@ -141,20 +141,21 @@ export function createCoop(opts: CoopOptions): CoopController {
   }
 
   // A blocky Minecraft-style character: skinned head (face on the front), colored torso, arms, legs.
-  function spawnAvatar(id: number, name: string): Avatar {
+  function spawnAvatar(id: number, name: string, look: Appearance): Avatar {
     const group = new three.Group();
     const model = new three.Group();
-    const shirt = colorFor(id);
     model.add(box(0.22, 0.7, 0.24, PANTS, -0.13, 0.35));
     model.add(box(0.22, 0.7, 0.24, PANTS, 0.13, 0.35));
-    model.add(box(0.5, 0.6, 0.26, shirt, 0, 1.0));
-    model.add(box(0.18, 0.6, 0.2, SKIN, -0.34, 1.0));
-    model.add(box(0.18, 0.6, 0.2, SKIN, 0.34, 1.0));
-    const skin = new three.MeshLambertMaterial({ color: SKIN });
-    const faceMat = new three.MeshLambertMaterial({ map: makeFaceTexture() });
+    model.add(box(0.5, 0.6, 0.26, look.shirt, 0, 1.0));
+    model.add(box(0.18, 0.6, 0.2, look.skin, -0.34, 1.0));
+    model.add(box(0.18, 0.6, 0.2, look.skin, 0.34, 1.0));
+    const skin = new three.MeshLambertMaterial({ color: look.skin });
+    const faceMat = new three.MeshLambertMaterial({ map: makeFaceTexture(look.skin) });
     const head = new three.Mesh(new three.BoxGeometry(0.5, 0.5, 0.5), [skin, skin, skin, skin, faceMat, skin]);
     head.position.set(0, 1.55, 0);
     model.add(head);
+    const hair = box(0.54, 0.16, 0.54, look.hair, 0, 1.86); // a little cap of hair on top
+    model.add(hair);
     model.scale.setScalar(AVATAR_HEIGHT / MODEL_HEIGHT);
     group.add(model);
     const label = makeLabel(name);
@@ -236,6 +237,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     tenant: opts.tenant,
     world: opts.world,
     name: opts.name,
+    skin: opts.skin,
+    shirt: opts.shirt,
+    hair: opts.hair,
     handlers: {
       onState: (state) => opts.hud.onState(state),
       onWelcome: (msg) => {
@@ -250,7 +254,7 @@ export function createCoop(opts: CoopOptions): CoopController {
             continue;
           }
           seen.add(p.id);
-          const avatar = avatars.get(p.id) ?? spawnAvatar(p.id, p.name);
+          const avatar = avatars.get(p.id) ?? spawnAvatar(p.id, p.name, { skin: p.skin, shirt: p.shirt, hair: p.hair });
           avatar.interp.push({ t: performance.now(), x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
         }
         for (const id of [...avatars.keys()]) if (!seen.has(id)) removeAvatar(id);

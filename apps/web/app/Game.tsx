@@ -5,11 +5,23 @@ import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import type { CoopBridge, DebugSnapshot } from '../lib/game-engine';
+import type { Appearance } from '../lib/coop';
 import type { NetState } from '../lib/net';
 
 const NAME_KEY = 'bl-name';
+const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
+const DEFAULT_LOOK: Appearance = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
 const CHAT_BACKLOG = 6;
 const CHAT_FADE_MS = 8000;
+
+function loadLook(): Appearance {
+  if (typeof window === 'undefined') return DEFAULT_LOOK;
+  return {
+    skin: window.localStorage.getItem(LOOK_KEYS.skin) || DEFAULT_LOOK.skin,
+    shirt: window.localStorage.getItem(LOOK_KEYS.shirt) || DEFAULT_LOOK.shirt,
+    hair: window.localStorage.getItem(LOOK_KEYS.hair) || DEFAULT_LOOK.hair,
+  };
+}
 
 const BANNER_KEYS: Record<NetState, string | null> = {
   connecting: 'coop.connecting',
@@ -49,6 +61,7 @@ export default function Game() {
   const [offline, setOffline] = useState(false);
   const [offlineDismissed, setOfflineDismissed] = useState(false);
   const [name, setName] = useState(loadName);
+  const [look, setLook] = useState<Appearance>(loadLook);
   const [netState, setNetState] = useState<NetState | null>(null);
   const [ping, setPing] = useState(0);
   const [online, setOnline] = useState(1);
@@ -79,6 +92,7 @@ export default function Game() {
         setOffline(isOffline);
         const bridge: CoopBridge = {
           resolveName: () => loadName().trim() || generateGuestName(),
+          resolveAppearance: () => loadLook(),
           hud: {
             onState: (state) => setNetState(state),
             onPing: (value) => setPing(value),
@@ -139,6 +153,11 @@ export default function Game() {
   function onNameChange(value: string): void {
     setName(value);
     if (typeof window !== 'undefined') window.localStorage.setItem(NAME_KEY, value);
+  }
+
+  function onLookChange(part: keyof Appearance, value: string): void {
+    setLook((current) => ({ ...current, [part]: value }));
+    if (typeof window !== 'undefined') window.localStorage.setItem(LOOK_KEYS[part], value);
   }
 
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
@@ -292,6 +311,12 @@ export default function Game() {
             onChange={(e) => onNameChange(e.target.value)}
           />
         </label>
+        <div id="lookField">
+          <span className="lookTitle">{t('customize.title')}</span>
+          <label>{t('customize.skin')}<input type="color" value={look.skin} onChange={(e) => onLookChange('skin', e.target.value)} /></label>
+          <label>{t('customize.shirt')}<input type="color" value={look.shirt} onChange={(e) => onLookChange('shirt', e.target.value)} /></label>
+          <label>{t('customize.hair')}<input type="color" value={look.hair} onChange={(e) => onLookChange('hair', e.target.value)} /></label>
+        </div>
         <div id="help">
           <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
           <div className="card"><b>{t('start.jump_fly')}</b> {t('start.jump_fly_keys')}</div>

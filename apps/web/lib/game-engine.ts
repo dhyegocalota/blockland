@@ -14,7 +14,7 @@ import { blockVelocityIntoActors } from './engine/actors';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
-import { createCoop, MAIN_WORLD, type CoopController, type CoopHud } from './coop';
+import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopHud } from './coop';
 import type { EditCell, EditOp } from './protocol';
 
 interface Creature {
@@ -73,6 +73,7 @@ export interface DebugSnapshot {
 // engine exposes chat sending and a live debug snapshot for F3.
 export interface CoopBridge {
   resolveName(): string;
+  resolveAppearance(): Appearance;
   hud: CoopHud;
   bind(api: { sendChat(text: string): void; debugSnapshot(): DebugSnapshot }): void;
 }
@@ -579,11 +580,19 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     blip(selected === FACE_ID ? 720 : 520, 0.08);
     debug('engine', 'place block', { x: px, y: py, z: pz, id: selected });
   }
+  // A voxel cell overlaps an actor standing with its feet at (fx, fy, fz).
+  function cellOverlapsActor(x: number, y: number, z: number, fx: number, fy: number, fz: number): boolean {
+    return x + 1 > fx - PLAYER_RADIUS && x < fx + PLAYER_RADIUS &&
+      z + 1 > fz - PLAYER_RADIUS && z < fz + PLAYER_RADIUS &&
+      y + 1 > fy && y < fy + PLAYER_HEIGHT;
+  }
+
+  // True if the cell would land on the local player or any remote player (no building on people).
   function overlapsPlayer(x: number, y: number, z: number): boolean {
     const p = player.pos;
-    return x + 1 > p.x - PLAYER_RADIUS && x < p.x + PLAYER_RADIUS &&
-      z + 1 > p.z - PLAYER_RADIUS && z < p.z + PLAYER_RADIUS &&
-      y + 1 > p.y - EYE_HEIGHT && y < p.y - EYE_HEIGHT + PLAYER_HEIGHT;
+    if (cellOverlapsActor(x, y, z, p.x, p.y - EYE_HEIGHT, p.z)) return true;
+    if (!coop) return false;
+    return coop.getColliders().some((a) => cellOverlapsActor(x, y, z, a.x, a.y, a.z));
   }
 
   // ---------- Magic structures ----------
@@ -943,6 +952,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (!serverUrl) { debug('coop', 'single-player (no server url)'); return; }
     if (!bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
     const name = bridge.resolveName();
+    const look = bridge.resolveAppearance();
     coop = createCoop({
       three: THREE,
       scene,
@@ -950,6 +960,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       tenant: brand.id,
       world: MAIN_WORLD,
       name,
+      skin: look.skin,
+      shirt: look.shirt,
+      hair: look.hair,
       hud: bridge.hud,
       applyRemoteEdit,
       applyRemoteEditBatch,

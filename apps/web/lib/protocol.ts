@@ -6,12 +6,14 @@ import type { ClientMsg, EditCell, EditOp, ServerMsg } from './protocol.gen';
 
 export type { Brand, ClientMsg, EditCell, EditOp, PlayerState, ServerMsg } from './protocol.gen';
 
-export const join = (tenant: string, world: string, name: string): ClientMsg => ({
-  t: 'join',
-  tenant,
-  world,
-  name,
-});
+export const join = (params: {
+  tenant: string;
+  world: string;
+  name: string;
+  skin: string;
+  shirt: string;
+  hair: string;
+}): ClientMsg => ({ t: 'join', ...params });
 
 export const move = (x: number, y: number, z: number, yaw: number, pitch: number): ClientMsg => ({
   t: 'move',
