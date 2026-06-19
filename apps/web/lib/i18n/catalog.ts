@@ -130,6 +130,25 @@ export const messages: Record<Locale, Record<string, string>> = {
     'presence.you': '{name} (você)',
     'feed.joined': '{name} entrou',
     'feed.left': '{name} saiu',
+    'feed.renamed': '{old} agora é {name}',
+
+    // Change name (logged-in rename)
+    'rename.button': '✏️ Mudar nome',
+    'rename.prompt': 'Qual será seu novo nome?',
+    'rename.success': '✏️ Agora você é {name}!',
+    'rename.error_name_taken': 'Esse nome já é de outra pessoa. Escolha outro.',
+    'rename.error_invalid': 'Nome inválido.',
+    'rename.error_generic': 'Não consegui mudar o nome. Tente de novo.',
+
+    // Start-screen leaderboard widget
+    'board.title': '🏆 Placar',
+    'board.tab_all': 'Todos os tempos',
+    'board.tab_month': 'Últimos 30 dias',
+    'board.show': '🏆 Ver placar',
+    'board.hide': 'Esconder placar',
+    'board.loading': 'Carregando...',
+    'board.empty': 'Sem pontuações ainda.',
+    'board.error': 'Não foi possível carregar o placar.',
 
     // Debug panel (F3)
     'debug.title': '🛠️ Debug (F3)',
@@ -202,8 +221,6 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.prev': '‹ Anterior',
     'admin.next': 'Próxima ›',
     'admin.page_of': 'Página {page} de {total}',
-    'admin.root_only_title': '🔒 Admin só no domínio principal',
-    'admin.root_only_hint': 'Abra o painel pelo domínio raiz (sem subdomínio de tenant).',
     'admin.save_tenant': 'Salvar tenant',
     'admin.clear': 'Limpar',
     'admin.saved': 'Salvo: {name}',
@@ -374,6 +391,25 @@ export const messages: Record<Locale, Record<string, string>> = {
     'presence.you': '{name} (you)',
     'feed.joined': '{name} joined',
     'feed.left': '{name} left',
+    'feed.renamed': '{old} is now {name}',
+
+    // Change name (logged-in rename)
+    'rename.button': '✏️ Change name',
+    'rename.prompt': "What's your new name?",
+    'rename.success': '✏️ You are now {name}!',
+    'rename.error_name_taken': 'That name belongs to someone else. Pick another.',
+    'rename.error_invalid': 'Invalid name.',
+    'rename.error_generic': "Couldn't change your name. Try again.",
+
+    // Start-screen leaderboard widget
+    'board.title': '🏆 Leaderboard',
+    'board.tab_all': 'All time',
+    'board.tab_month': 'Last 30 days',
+    'board.show': '🏆 Show leaderboard',
+    'board.hide': 'Hide leaderboard',
+    'board.loading': 'Loading...',
+    'board.empty': 'No scores yet.',
+    'board.error': "Couldn't load the leaderboard.",
 
     // Debug panel (F3)
     'debug.title': '🛠️ Debug (F3)',
@@ -446,8 +482,6 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.prev': '‹ Prev',
     'admin.next': 'Next ›',
     'admin.page_of': 'Page {page} of {total}',
-    'admin.root_only_title': '🔒 Admin lives on the main domain',
-    'admin.root_only_hint': 'Open the panel from the root domain (no tenant subdomain).',
     'admin.save_tenant': 'Save tenant',
     'admin.clear': 'Clear',
     'admin.saved': 'Saved: {name}',

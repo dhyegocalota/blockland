@@ -198,6 +198,18 @@ describe('net client', () => {
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'chat', text: 'hello' }));
   });
 
+  it('routes a timeline event to onEvent', () => {
+    const events: unknown[] = [];
+    const { client } = makeClient({ handlers: { onEvent: (m) => events.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'event', kind: 'rename', name: 'Bea', detail: 'Ana' });
+    expect(events).toEqual([{ t: 'event', kind: 'rename', name: 'Bea', detail: 'Ana' }]);
+  });
+
   it('does not reconnect when reconnect is disabled', () => {
     const { client } = makeClient({ reconnect: false });
     client.connect();

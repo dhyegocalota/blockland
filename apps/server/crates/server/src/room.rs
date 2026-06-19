@@ -44,6 +44,12 @@ pub enum RoomCmd {
     Leave {
         id: PlayerId,
     },
+    /// A logged-in account renamed itself: update the live player and broadcast the timeline event.
+    Rename {
+        account_id: String,
+        new_name: String,
+        old_name: String,
+    },
 }
 
 /// Simple token bucket; refilled every tick, spent per accepted message.
@@ -77,9 +83,10 @@ impl Bucket {
 struct Player {
     id: PlayerId,
     name: String,
-    // The trimmed username this player claimed (empty for an anonymous guest) and the live session
-    // token that proves it. Together they let the tick loop kick a player whose claim was taken over.
-    claim_name: String,
+    // The stable account this player is logged in as (empty for an anonymous guest) and the live
+    // session token that proves it. Together they let the tick loop kick a player whose claim was
+    // taken over (keyed by account_id, so the name can change underneath without losing the session).
+    account_id: String,
     claim: String,
     skin: String,
     shirt: String,
@@ -174,7 +181,7 @@ impl Room {
                 }
                 cmd = self.rx.recv() => {
                     match cmd {
-                        Some(c) => self.handle(c),
+                        Some(c) => self.handle(c).await,
                         None => break,
                     }
                 }
@@ -191,7 +198,7 @@ impl Room {
         tracing::info!(tenant = %self.key.0, world = %self.key.1, "room closed");
     }
 
-    fn handle(&mut self, cmd: RoomCmd) {
+    async fn handle(&mut self, cmd: RoomCmd) {
         match cmd {
             RoomCmd::Join {
                 name,
@@ -200,17 +207,22 @@ impl Room {
                 ip,
                 conn,
                 reply,
-            } => self.on_join(name, claim, look, ip, conn, reply),
+            } => self.on_join(name, claim, look, ip, conn, reply).await,
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
             RoomCmd::Leave { id } => {
                 if self.players.remove(&id).is_some() {
                     self.broadcast(&ServerMsg::Left { id });
                 }
             }
+            RoomCmd::Rename {
+                account_id,
+                new_name,
+                old_name,
+            } => self.on_rename(&account_id, &new_name, &old_name),
         }
     }
 
-    fn on_join(
+    async fn on_join(
         &mut self,
         name: String,
         claim: String,
@@ -227,24 +239,68 @@ impl Room {
             let _ = reply.send(Err("room_full".into()));
             return;
         }
-        // Identity: an empty name is an anonymous guest (the server names them). A non-empty name
-        // must present the live claim for (tenant, name); otherwise the handshake is rejected.
+        // Identity: an empty name+claim is an anonymous guest (the server names them). Otherwise the
+        // claim TOKEN must resolve to an account in this tenant; the server adopts that account's
+        // CURRENT name (authoritative), ignoring the name the client typed.
         let chosen = name.trim().to_string();
-        let held = self.hub.claims.get(&self.key.0, &chosen);
-        let claim_valid = !claim.is_empty() && held.as_deref() == Some(claim.as_str());
-        if !chosen.is_empty() && !claim_valid {
-            tracing::debug!(tenant = %self.key.0, name = %chosen, "join rejected: claim required");
+        let guest = chosen.is_empty() && claim.is_empty();
+        if guest {
+            return self
+                .admit(
+                    String::new(),
+                    sanitize_name(&name),
+                    claim,
+                    look,
+                    ip,
+                    conn,
+                    reply,
+                )
+                .await;
+        }
+        let resolved = match self.hub.db.claim_to_account(&self.key.0, &claim).await {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::error!(tenant = %self.key.0, error = %e, "claim lookup failed");
+                let _ = reply.send(Err("claim_required".into()));
+                return;
+            }
+        };
+        let Some((account_id, authoritative_name)) = resolved else {
+            tracing::debug!(tenant = %self.key.0, "join rejected: claim required");
+            let _ = reply.send(Err("claim_required".into()));
+            return;
+        };
+        let live = self.hub.claims.get(&account_id).as_deref() == Some(claim.as_str());
+        if !live {
+            tracing::debug!(tenant = %self.key.0, "join rejected: claim required");
             let _ = reply.send(Err("claim_required".into()));
             return;
         }
+        self.admit(account_id, authoritative_name, claim, look, ip, conn, reply)
+            .await;
+    }
+
+    /// Build the player, send Welcome + the world EditBatch + the recent timeline backlog (to this
+    /// connection only), and register them in the room.
+    #[allow(clippy::too_many_arguments)]
+    async fn admit(
+        &mut self,
+        account_id: String,
+        authoritative_name: String,
+        claim: String,
+        look: Appearance,
+        ip: IpAddr,
+        conn: mpsc::Sender<ServerMsg>,
+        reply: oneshot::Sender<Result<PlayerId, String>>,
+    ) {
         let id = self.hub.alloc_id();
         let spawn = World::spawn();
         let limits = &self.hub.limits;
         let now = Instant::now();
         let player = Player {
             id,
-            name: sanitize_name(&name),
-            claim_name: chosen,
+            name: authoritative_name,
+            account_id,
             claim,
             skin: sanitize_color(&look.skin, "#f2c18b"),
             shirt: sanitize_color(&look.shirt, "#ff5d2e"),
@@ -288,10 +344,47 @@ impl Room {
                 by: 0,
             });
         }
+        // Replay the recent timeline so the history echoes even for events that happened while
+        // nobody was online. Sent to this connection only, after Welcome + the world.
+        match self
+            .hub
+            .db
+            .recent_events(&self.key.0, crate::db::default_event_backlog())
+            .await
+        {
+            Ok(events) => {
+                for event in events {
+                    let _ = conn.try_send(ServerMsg::Event {
+                        kind: event.kind,
+                        name: event.name,
+                        detail: event.detail,
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::error!(tenant = %self.key.0, error = %e, "event backlog load failed")
+            }
+        }
         self.players.insert(id, player);
         self.empty_since = None;
         let _ = reply.send(Ok(id));
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player joined");
+    }
+
+    /// Apply a server-authoritative rename to the matching live player (matched by account_id, so a
+    /// guest is never affected) and broadcast the timeline event to everyone in the room.
+    fn on_rename(&mut self, account_id: &str, new_name: &str, old_name: &str) {
+        for player in self.players.values_mut() {
+            if !player.account_id.is_empty() && player.account_id == account_id {
+                player.name = new_name.to_string();
+            }
+        }
+        self.broadcast(&ServerMsg::Event {
+            kind: "rename".into(),
+            name: new_name.to_string(),
+            detail: old_name.to_string(),
+        });
+        tracing::info!(tenant = %self.key.0, %new_name, %old_name, "player renamed");
     }
 
     fn on_input(&mut self, id: PlayerId, msg: ClientMsg) {
@@ -465,16 +558,16 @@ impl Room {
                 kicked.push(p.id);
                 continue;
             }
-            // Kick-on-reclaim: a named player whose claim is no longer the live one (someone re-claimed
-            // the username) is dropped. Guests (no claim name) are never affected.
-            let still_holds = self.hub.claims.get(&self.key.0, &p.claim_name).as_deref()
-                == Some(p.claim.as_str());
-            if !p.claim_name.is_empty() && !still_holds {
+            // Kick-on-reclaim: a logged-in player whose claim is no longer the live one (someone
+            // re-claimed the account) is dropped. Guests (no account_id) are never affected.
+            let still_holds =
+                self.hub.claims.get(&p.account_id).as_deref() == Some(p.claim.as_str());
+            if !p.account_id.is_empty() && !still_holds {
                 let _ = p.conn.try_send(ServerMsg::Error {
                     code: "reclaimed".into(),
                     msg: "Your username was taken over from another device.".into(),
                 });
-                tracing::debug!(id = %p.id, name = %p.claim_name, "reclaimed kick");
+                tracing::debug!(id = %p.id, account_id = %p.account_id, "reclaimed kick");
                 kicked.push(p.id);
                 continue;
             }

@@ -16,32 +16,29 @@ use crate::room::{Room, RoomCmd};
 
 pub type RoomKey = (String, String);
 
-/// In-memory mirror of the active claim per (tenant, name): the single live session token that may
-/// use that username in that tenant. Warmed from the db on startup, then the source of truth the
-/// room checks every join/tick. An empty token is never a valid claim.
+/// In-memory mirror of the active claim per account: the single live session token that may act as
+/// that account. Warmed from the db on startup, then the source of truth the room checks every
+/// join/tick. An empty token is never a valid claim. Keyed by the stable `account_id`, never the name.
 #[derive(Default)]
 pub struct Claims {
-    active: DashMap<(String, String), String>,
+    active: DashMap<String, String>,
 }
 
 impl Claims {
-    pub fn set(&self, tenant: &str, name: &str, token: &str) {
+    pub fn set(&self, account_id: &str, token: &str) {
         self.active
-            .insert((tenant.to_string(), name.to_string()), token.to_string());
+            .insert(account_id.to_string(), token.to_string());
     }
 
-    pub fn get(&self, tenant: &str, name: &str) -> Option<String> {
-        self.active
-            .get(&(tenant.to_string(), name.to_string()))
-            .map(|t| t.value().clone())
+    pub fn get(&self, account_id: &str) -> Option<String> {
+        self.active.get(account_id).map(|t| t.value().clone())
     }
 
     /// Forget the claim only if `token` is the one currently held (a stale token must not evict a
     /// re-claimed session).
-    pub fn remove(&self, tenant: &str, name: &str, token: &str) {
-        let key = (tenant.to_string(), name.to_string());
+    pub fn remove(&self, account_id: &str, token: &str) {
         self.active
-            .remove_if(&key, |_, current| current.as_str() == token);
+            .remove_if(account_id, |_, current| current.as_str() == token);
     }
 }
 
@@ -203,8 +200,8 @@ impl Hub {
             Vec::new()
         });
         let claim_count = warmed.len();
-        for (tenant, name, token) in warmed {
-            claims.set(&tenant, &name, &token);
+        for (account_id, token) in warmed {
+            claims.set(&account_id, &token);
         }
         tracing::info!(claims = claim_count, "claims warmed");
 
@@ -275,6 +272,16 @@ impl Hub {
                 Ok(tx)
             }
         }
+    }
+
+    /// Route a command to a tenant's live room, if one is currently running. Returns false when no
+    /// room is open (nobody online) — the change is already persisted, so there is nothing to notify.
+    pub async fn send_to_room(&self, tenant: &str, cmd: RoomCmd) -> bool {
+        let key = (tenant.to_string(), "main".to_string());
+        let Some(tx) = self.rooms.get(&key).map(|tx| tx.clone()) else {
+            return false;
+        };
+        tx.send(cmd).await.is_ok()
     }
 
     pub fn admin_stats(&self) -> AdminStats {
@@ -348,28 +355,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn claims_set_get_and_isolate_by_tenant() {
+    fn claims_set_get_and_isolate_by_account() {
         let claims = Claims::default();
-        claims.set("teo", "Ann", "tokA");
-        assert_eq!(claims.get("teo", "Ann").as_deref(), Some("tokA"));
-        assert!(claims.get("demo", "Ann").is_none());
+        claims.set("acc-a", "tokA");
+        assert_eq!(claims.get("acc-a").as_deref(), Some("tokA"));
+        assert!(claims.get("acc-b").is_none());
     }
 
     #[test]
     fn claims_set_replaces_previous_holder() {
         let claims = Claims::default();
-        claims.set("teo", "Ann", "tokA");
-        claims.set("teo", "Ann", "tokB");
-        assert_eq!(claims.get("teo", "Ann").as_deref(), Some("tokB"));
+        claims.set("acc-a", "tokA");
+        claims.set("acc-a", "tokB");
+        assert_eq!(claims.get("acc-a").as_deref(), Some("tokB"));
     }
 
     #[test]
     fn claims_remove_only_matches_current_token() {
         let claims = Claims::default();
-        claims.set("teo", "Ann", "tokB");
-        claims.remove("teo", "Ann", "tokA");
-        assert_eq!(claims.get("teo", "Ann").as_deref(), Some("tokB"));
-        claims.remove("teo", "Ann", "tokB");
-        assert!(claims.get("teo", "Ann").is_none());
+        claims.set("acc-a", "tokB");
+        claims.remove("acc-a", "tokA");
+        assert_eq!(claims.get("acc-a").as_deref(), Some("tokB"));
+        claims.remove("acc-a", "tokB");
+        assert!(claims.get("acc-a").is_none());
     }
 }

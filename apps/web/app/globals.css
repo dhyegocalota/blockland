@@ -326,6 +326,33 @@ canvas { display: block; }
   animation: chatIn .2s ease both;
 }
 .feedIcon { font-style: normal; opacity: .85; }
+.feedLine.system { color: var(--gold); font-style: normal; }
+
+/* ---------- Start-screen leaderboard (compact, collapsible) ---------- */
+#sessionActions { z-index: 2; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+#boardToggle { z-index: 2; }
+#leaderboard {
+  z-index: 2; width: min(340px, 90vw); background: rgba(42,26,74,.88); border: 3px solid var(--gold);
+  border-radius: 18px; padding: 12px 14px 14px; color: #fff; box-shadow: 0 10px 30px #0005;
+}
+#leaderboard .boardHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#leaderboard .boardTitle { font-weight: 900; font-size: 17px; color: var(--gold); }
+#leaderboard .boardClose {
+  font-family: inherit; background: none; border: none; color: #fff; font-size: 16px; cursor: pointer; opacity: .8;
+}
+#leaderboard .boardClose:hover { opacity: 1; }
+#leaderboard .boardTabs { display: flex; gap: 6px; margin-bottom: 10px; }
+#leaderboard .boardTabs button {
+  flex: 1; font-family: inherit; font-weight: 800; font-size: 13px; color: #fff; cursor: pointer;
+  background: rgba(255,255,255,.12); border: 2px solid transparent; border-radius: 12px; padding: 7px 6px;
+}
+#leaderboard .boardTabs button.on { background: var(--gold); color: #2a1a4a; border-color: #fff; }
+#leaderboard .boardMsg { text-align: center; font-weight: 700; font-size: 13px; opacity: .85; padding: 6px 0; }
+#leaderboard .boardList { list-style: none; display: flex; flex-direction: column; gap: 3px; }
+#leaderboard .boardList li { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
+#leaderboard .boardRank { width: 22px; text-align: right; color: var(--gold); }
+#leaderboard .boardName { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#leaderboard .boardScore { font-variant-numeric: tabular-nums; }
 
 /* ---------- Debug panel (F3) ---------- */
 #debugPanel {

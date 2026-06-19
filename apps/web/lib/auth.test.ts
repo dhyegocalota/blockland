@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./api', () => ({ signedFetch: vi.fn() }));
 
-import { authRequest, authVerifyToken, authVerifyCode, authLogout } from './auth';
+import { authRequest, authVerifyToken, authVerifyCode, authLogout, authRename } from './auth';
 import { signedFetch } from './api';
 
 const signedFetchMock = vi.mocked(signedFetch);
@@ -59,6 +59,25 @@ describe('auth client', () => {
       claim: 'cl',
     });
     expect(result).toEqual({ ok: true });
+  });
+
+  it('authRename posts the tenant, claim and new name and returns the new name', async () => {
+    signedFetchMock.mockResolvedValue(ok({ ok: true, name: 'Bea' }));
+    const result = await authRename({ tenant: 'teo', claim: 'cl', newName: 'Bea' });
+    expect(signedFetchMock).toHaveBeenCalledWith('POST', '/internal/auth/rename', {
+      tenant: 'teo',
+      claim: 'cl',
+      newName: 'Bea',
+    });
+    expect(result).toEqual({ ok: true, name: 'Bea' });
+  });
+
+  it('authRename surfaces a name_taken failure', async () => {
+    signedFetchMock.mockResolvedValue(ok({ ok: false, error: 'name_taken' }));
+    expect(await authRename({ tenant: 'teo', claim: 'cl', newName: 'Bea' })).toEqual({
+      ok: false,
+      error: 'name_taken',
+    });
   });
 
   it('throws when the upstream is not ok', async () => {

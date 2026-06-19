@@ -53,6 +53,17 @@ describe('pushFeed', () => {
     expect(second).toHaveLength(2);
   });
 
+  it('appends a rename system event carrying the old name in detail', () => {
+    const entries = pushFeed({ entries: [], event: { kind: 'rename', name: 'Bea', detail: 'Ana' }, id: 0, now: 100 });
+    expect(entries).toEqual([{ kind: 'rename', name: 'Bea', detail: 'Ana', id: 0, at: 100 }]);
+  });
+
+  it('does not coalesce two renames of the same player with different old names', () => {
+    const first = pushFeed({ entries: [], event: { kind: 'rename', name: 'Bea', detail: 'Ana' }, id: 0, now: 100 });
+    const second = pushFeed({ entries: first, event: { kind: 'rename', name: 'Bea', detail: 'Cris' }, id: 1, now: 110 });
+    expect(second).toHaveLength(2);
+  });
+
   it('caps the visible list to the last FEED_VISIBLE entries', () => {
     const entries = Array.from({ length: FEED_VISIBLE + 3 }).reduce<FeedEntry[]>(
       (acc, _unused, index) => pushFeed({ entries: acc, event: { kind: 'join', name: `P${index}` }, id: index, now: index }),

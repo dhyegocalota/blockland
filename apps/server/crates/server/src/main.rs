@@ -16,7 +16,8 @@
 //!   POST   /internal/uploads?key&content_type  upload a tenant asset, returns { "url" }
 //!   POST   /internal/auth/request        start a login: { tenant, name, email } -> { ok, token, code, name, email }
 //!   POST   /internal/auth/verify         finish a login: { token } or { tenant, name, code } -> { ok, tenant, name, claim }
-//!   POST   /internal/auth/logout         end a session: { tenant, name, claim } -> { ok }
+//!   POST   /internal/auth/logout         end a session: { tenant, claim } -> { ok }
+//!   POST   /internal/auth/rename         rename a logged-in account: { tenant, claim, newName } -> { ok, name } | { ok:false, error }
 
 mod auth;
 mod bans;
@@ -86,6 +87,7 @@ async fn main() {
         .route("/internal/auth/request", post(internal_auth_request))
         .route("/internal/auth/verify", post(internal_auth_verify))
         .route("/internal/auth/logout", post(internal_auth_logout))
+        .route("/internal/auth/rename", post(internal_auth_rename))
         .route(
             "/internal/uploads",
             post(uploads::internal_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
@@ -425,7 +427,6 @@ async fn internal_auth_verify(
 #[derive(Deserialize)]
 struct AuthLogoutReq {
     tenant: String,
-    name: String,
     claim: String,
 }
 
@@ -441,16 +442,43 @@ async fn internal_auth_logout(
     let Ok(req) = serde_json::from_slice::<AuthLogoutReq>(&body) else {
         return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
     };
-    let result = auth::logout(
-        &state.hub.db,
-        &state.hub.claims,
-        &req.tenant,
-        &req.name,
-        &req.claim,
-    )
-    .await;
+    let result = auth::logout(&state.hub.db, &state.hub.claims, &req.tenant, &req.claim).await;
     match result {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AuthRenameReq {
+    tenant: String,
+    claim: String,
+    #[serde(rename = "newName")]
+    new_name: String,
+}
+
+async fn internal_auth_rename(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "POST", &original_uri.0, &headers, &body) {
+        return resp;
+    }
+    let Ok(req) = serde_json::from_slice::<AuthRenameReq>(&body) else {
+        return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
+    };
+    match auth::rename(&state.hub, &req.tenant, &req.claim, &req.new_name).await {
+        Ok(auth::RenameResult::Ok { name }) => {
+            Json(serde_json::json!({ "ok": true, "name": name })).into_response()
+        }
+        Ok(auth::RenameResult::NameTaken) => {
+            Json(serde_json::json!({ "ok": false, "error": "name_taken" })).into_response()
+        }
+        Ok(auth::RenameResult::Invalid) => {
+            Json(serde_json::json!({ "ok": false, "error": "invalid" })).into_response()
+        }
         Err(e) => internal_error(e),
     }
 }

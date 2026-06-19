@@ -65,7 +65,11 @@ export default function Admin() {
 
   // Let the admin page scroll (the game's global CSS pins body overflow to hidden).
   useEffect(() => {
-    setBlocked(onTenantSubdomain());
+    if (onTenantSubdomain()) {
+      setBlocked(true);
+      window.location.replace('/welcome');
+      return;
+    }
     const saved = localStorage.getItem('bl-admin-key');
     if (saved) setKey(saved);
     const prev = { overflow: document.body.style.overflow, height: document.body.style.height };
@@ -167,14 +171,7 @@ export default function Admin() {
     e.target.value = '';
   };
 
-  if (blocked) {
-    return (
-      <main style={S.wrap}>
-        <h1 style={S.h1}>{t('admin.root_only_title')}</h1>
-        <p style={{ color: '#9aa' }}>{t('admin.root_only_hint')}</p>
-      </main>
-    );
-  }
+  if (blocked) return null;
 
   if (!authed) {
     return (

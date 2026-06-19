@@ -9,6 +9,7 @@ import type { CoopBridge, DebugSnapshot } from '../lib/game-engine';
 import type { Appearance, RosterEntry } from '../lib/coop';
 import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
 import type { NetState } from '../lib/net';
+import Leaderboard from './Leaderboard';
 
 const NAME_KEY = 'bl-name';
 const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
@@ -36,6 +37,19 @@ const BANNER_KEYS: Record<NetState, string | null> = {
 };
 
 const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed'];
+
+const FEED_ICONS: Record<FeedEvent['kind'], string> = {
+  join: '➕',
+  leave: '➖',
+  chat: '💬',
+  rename: '✏️',
+};
+
+function feedText(entry: FeedEntry): string {
+  if (entry.kind === 'rename' && entry.detail) return t('feed.renamed', { old: entry.detail, name: entry.name });
+  if (entry.kind === 'rename') return entry.name;
+  return t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name });
+}
 
 const AUTH_ERROR_KEYS: Record<string, string> = {
   claim_required: 'auth.claim_required',
@@ -301,6 +315,35 @@ export default function Game() {
     setLoggedIn(false);
   }, []);
 
+  // A logged-in player can rename without re-emailing. On success we update the stored session +
+  // name field so the next Join carries the new name (resolveClaim keys on it), and show a toast.
+  const changeName = useCallback(async () => {
+    const session = loadSession();
+    if (!session || !brand) return;
+    const prompted = window.prompt(t('rename.prompt'), session.name);
+    if (prompted === null) return;
+    const newName = prompted.trim();
+    if (!newName || newName === session.name) return;
+    try {
+      const res = await fetch('/api/auth/rename', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tenant: session.tenant, claim: session.claim, newName }),
+      });
+      const data = (await res.json()) as { ok: boolean; name?: string; error?: string };
+      if (!data.ok || !data.name) {
+        const key = data.error === 'name_taken' ? 'rename.error_name_taken' : 'rename.error_invalid';
+        setAuthToast(t(key));
+        return;
+      }
+      saveSession({ tenant: session.tenant, name: data.name, claim: session.claim });
+      onNameChange(data.name);
+      setAuthToast(t('rename.success', { name: data.name }));
+    } catch {
+      setAuthToast(t('rename.error_generic'));
+    }
+  }, [brand]);
+
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
   if (!brand) return null;
 
@@ -412,9 +455,9 @@ export default function Game() {
 
       <div id="feed">
         {feed.map((entry) => (
-          <div className="feedLine" key={entry.id}>
-            <span className="feedIcon">{entry.kind === 'join' ? '➕' : '➖'}</span>
-            {t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name })}
+          <div className={entry.kind === 'rename' ? 'feedLine system' : 'feedLine'} key={entry.id}>
+            <span className="feedIcon">{FEED_ICONS[entry.kind]}</span>
+            {feedText(entry)}
           </div>
         ))}
       </div>
@@ -527,7 +570,10 @@ export default function Game() {
           />
         </label>
         {loggedIn && (
-          <button id="logoutBtn" className="ghost" onClick={logout}>{t('login.logout')}</button>
+          <div id="sessionActions">
+            <button id="renameBtn" className="ghost" onClick={changeName}>{t('rename.button')}</button>
+            <button id="logoutBtn" className="ghost" onClick={logout}>{t('login.logout')}</button>
+          </div>
         )}
         <div id="lookField">
           <span className="lookTitle">{t('customize.title')}</span>
@@ -543,6 +589,7 @@ export default function Game() {
           {t('start.instructions')}
         </button>
         <button id="playBtn">{t('start.play')}</button>
+        <Leaderboard tenant={brand.id} />
       </div>
     </>
   );

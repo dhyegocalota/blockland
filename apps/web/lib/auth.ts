@@ -63,3 +63,23 @@ export async function authLogout(params: {
 }): Promise<{ ok: boolean }> {
   return (await postAuth('/internal/auth/logout', params)) as { ok: boolean };
 }
+
+export type RenameError = 'name_taken' | 'invalid';
+
+export interface AuthRenameResult {
+  ok: true;
+  name: string;
+}
+
+export interface AuthRenameFailure {
+  ok: false;
+  error: RenameError;
+}
+
+export async function authRename(params: {
+  tenant: string;
+  claim: string;
+  newName: string;
+}): Promise<AuthRenameResult | AuthRenameFailure> {
+  return (await postAuth('/internal/auth/rename', params)) as AuthRenameResult | AuthRenameFailure;
+}

@@ -2,12 +2,13 @@
 // keep the visible feed small and spam-free. coop.ts derives the raw transitions; Game.tsx folds
 // them into the visible list. No three.js / DOM here — just data, so it is fully unit-tested.
 
-export type FeedEventKind = 'join' | 'leave' | 'chat';
+export type FeedEventKind = 'join' | 'leave' | 'chat' | 'rename';
 
 export interface FeedEvent {
   kind: FeedEventKind;
   name: string;
   text?: string;
+  detail?: string;
 }
 
 export interface FeedEntry extends FeedEvent {
@@ -41,6 +42,7 @@ function isDuplicate(previous: FeedEntry, event: FeedEvent, now: number): boolea
   if (previous.kind !== event.kind) return false;
   if (previous.name !== event.name) return false;
   if (previous.text !== event.text) return false;
+  if (previous.detail !== event.detail) return false;
   return now - previous.at < FEED_DEDUPE_MS;
 }
 

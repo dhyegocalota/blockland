@@ -37,6 +37,7 @@ type SnapshotMsg = Extract<ServerMsg, { t: 'snapshot' }>;
 type EditMsg = Extract<ServerMsg, { t: 'edit' }>;
 type EditBatchMsg = Extract<ServerMsg, { t: 'edit_batch' }>;
 type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
+type EventMsg = Extract<ServerMsg, { t: 'event' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -45,6 +46,7 @@ export interface NetHandlers {
   onEdit?(msg: EditMsg): void;
   onEditBatch?(msg: EditBatchMsg): void;
   onChat?(msg: ChatMsg): void;
+  onEvent?(msg: EventMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -149,6 +151,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'chat') {
       opts.handlers.onChat?.(msg);
+      return;
+    }
+    if (msg.t === 'event') {
+      opts.handlers.onEvent?.(msg);
       return;
     }
     if (msg.t === 'ping') {

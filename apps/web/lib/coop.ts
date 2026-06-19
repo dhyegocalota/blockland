@@ -222,6 +222,22 @@ export function createCoop(opts: CoopOptions): CoopController {
     avatar.bubbleTimer = window.setTimeout(() => disposeBubble(avatar), BUBBLE_TTL_MS);
   }
 
+  // A rename event renames the live avatar (label + roster name) for whoever currently shows the old
+  // name, so the in-game name follows the persisted change even mid-session.
+  function renameAvatar(oldName: string, newName: string): void {
+    for (const avatar of avatars.values()) {
+      if (avatar.name !== oldName) continue;
+      avatar.group.remove(avatar.label);
+      avatar.label.material.map?.dispose();
+      avatar.label.material.dispose();
+      const label = makeLabel(newName);
+      label.position.y = AVATAR_HEIGHT + LABEL_LIFT;
+      avatar.group.add(label);
+      avatar.label = label;
+      avatar.name = newName;
+    }
+  }
+
   function removeAvatar(id: number): void {
     const avatar = avatars.get(id);
     if (!avatar) return;
@@ -288,6 +304,10 @@ export function createCoop(opts: CoopOptions): CoopController {
       onChat: (msg) => {
         showBubble(msg.from, msg.text);
         opts.hud.onChat(msg.name, msg.text);
+      },
+      onEvent: (msg) => {
+        if (msg.kind === 'rename') renameAvatar(msg.detail, msg.name);
+        opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });

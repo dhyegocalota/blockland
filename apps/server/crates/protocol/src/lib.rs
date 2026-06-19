@@ -107,6 +107,12 @@ pub enum ServerMsg {
         code: String,
         msg: String,
     },
+    /// A persisted timeline event (e.g. a rename), broadcast live and replayed as backlog on join.
+    Event {
+        kind: String,
+        name: String,
+        detail: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

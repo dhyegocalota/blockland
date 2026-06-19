@@ -1,12 +1,14 @@
-//! Per-tenant username identity. A username is owned by one email within a tenant; ownership is
-//! proven by a magic link (clickable token) or a typed 6-digit code. A "claim" token is the single
-//! live session for (tenant, name); re-claiming kicks the previous holder. This module is the pure
+//! Per-tenant account identity. An account is a stable `account_id`; the username is its mutable
+//! display name, owned by one email within a tenant and proven by a magic link (clickable token) or
+//! a typed 6-digit code. A "claim" token is the single live session for an account; re-claiming kicks
+//! the previous holder. A logged-in account can rename without re-emailing. This module is the pure
 //! backend the HMAC-signed `/internal/auth/*` routes call into; emailing the token/code is Next's job.
 
 use rand::Rng;
 
 use crate::db::Db;
-use crate::hub::Claims;
+use crate::hub::{Claims, Hub};
+use crate::room::RoomCmd;
 
 const TOKEN_HEX_CHARS: usize = 32;
 const CODE_DIGITS: usize = 6;
@@ -33,6 +35,13 @@ pub struct Verified {
     pub claim: String,
 }
 
+/// Outcome of a rename request, mapped 1:1 onto the HTTP contract.
+pub enum RenameResult {
+    Ok { name: String },
+    NameTaken,
+    Invalid,
+}
+
 /// Begin a login: validate the name + email, refuse if the name is already owned by a different
 /// email, otherwise mint a token + code and store the magic link for 15 minutes.
 pub async fn request(
@@ -47,7 +56,7 @@ pub async fn request(
     let Some(email) = valid_email(email) else {
         return Ok(RequestResult::Invalid);
     };
-    if let Some(account) = db.get_account(tenant, &name).await? {
+    if let Some(account) = db.get_account_by_name(tenant, &name).await? {
         if account.email != email {
             return Ok(RequestResult::NotOwner);
         }
@@ -64,8 +73,10 @@ pub async fn request(
     })
 }
 
-/// Finish a login: consume the magic link (single-use), upsert the account, mint a claim, persist
-/// it and publish it to the in-memory map. This revokes the previous claim for that (tenant, name).
+/// Finish a login: consume the magic link (single-use), find-or-create the account by
+/// `(tenant, email)` and adopt the requested name if free (recording a `rename` timeline event when
+/// the name changes), then mint a claim, persist it and publish it to the in-memory map keyed by the
+/// stable account_id. This revokes the previous claim for that account.
 pub async fn verify(
     db: &Db,
     claims: &Claims,
@@ -75,31 +86,80 @@ pub async fn verify(
     let Some(link) = db.consume_magic_link(by_token, by_code).await? else {
         return Ok(None);
     };
-    db.upsert_account(&link.tenant, &link.name, &link.email)
+    let claimed = db
+        .claim_account(&link.tenant, &link.email, &link.name)
         .await?;
+    if claimed.renamed {
+        db.record_event(
+            &link.tenant,
+            &claimed.account_id,
+            "rename",
+            &claimed.name,
+            &claimed.old_name,
+        )
+        .await?;
+    }
     let claim = gen_token();
-    db.set_claim(&link.tenant, &link.name, &link.email, &claim)
-        .await?;
-    claims.set(&link.tenant, &link.name, &claim);
+    db.set_claim(&claimed.account_id, &claim).await?;
+    claims.set(&claimed.account_id, &claim);
     Ok(Some(Verified {
         tenant: link.tenant,
-        name: link.name,
+        name: claimed.name,
         claim,
     }))
 }
 
-/// End a session: drop the persisted claim and forget it in memory, but only if `claim` is the one
-/// currently held (a stale token must not log out a re-claimed session).
+/// End a session: resolve the claim token to its account, then drop the persisted claim and forget
+/// it in memory, but only if `claim` is the one currently held (a stale token must not log out a
+/// re-claimed session).
 pub async fn logout(
     db: &Db,
     claims: &Claims,
     tenant: &str,
-    name: &str,
     claim: &str,
 ) -> Result<(), libsql::Error> {
-    db.clear_claim(tenant, name, claim).await?;
-    claims.remove(tenant, name, claim);
+    let Some((account_id, _)) = db.claim_to_account(tenant, claim).await? else {
+        return Ok(());
+    };
+    db.clear_claim(&account_id, claim).await?;
+    claims.remove(&account_id, claim);
     Ok(())
+}
+
+/// Rename a logged-in account without re-emailing: validate the claim, then adopt `new_name` if it is
+/// free in the tenant. On success, record a `rename` timeline event and notify the tenant's live room
+/// so the player's name and a broadcast `Event` reflect the change.
+pub async fn rename(
+    hub: &Hub,
+    tenant: &str,
+    claim: &str,
+    new_name: &str,
+) -> Result<RenameResult, libsql::Error> {
+    let Some(new_name) = valid_name(new_name) else {
+        return Ok(RenameResult::Invalid);
+    };
+    let Some((account_id, _)) = hub.db.claim_to_account(tenant, claim).await? else {
+        return Ok(RenameResult::Invalid);
+    };
+    let Some(old_name) = hub.db.rename_account(&account_id, &new_name).await? else {
+        return Ok(RenameResult::NameTaken);
+    };
+    if old_name == new_name {
+        return Ok(RenameResult::Ok { name: new_name });
+    }
+    hub.db
+        .record_event(tenant, &account_id, "rename", &new_name, &old_name)
+        .await?;
+    hub.send_to_room(
+        tenant,
+        RoomCmd::Rename {
+            account_id,
+            new_name: new_name.clone(),
+            old_name,
+        },
+    )
+    .await;
+    Ok(RenameResult::Ok { name: new_name })
 }
 
 fn valid_name(raw: &str) -> Option<String> {
@@ -206,6 +266,14 @@ mod tests {
         ));
     }
 
+    async fn account_id(db: &Db, tenant: &str, name: &str) -> String {
+        db.get_account_by_name(tenant, name)
+            .await
+            .unwrap()
+            .unwrap()
+            .account_id
+    }
+
     #[tokio::test]
     async fn verify_by_code_mints_claim_and_persists_account() {
         let db = Db::memory().await;
@@ -219,14 +287,39 @@ mod tests {
         assert_eq!(verified.tenant, "teo");
         assert_eq!(verified.name, "Ann");
         assert_eq!(verified.claim.len(), TOKEN_HEX_CHARS);
+        let id = account_id(&db, "teo", "Ann").await;
+        assert_eq!(claims.get(&id).as_deref(), Some(verified.claim.as_str()));
         assert_eq!(
-            claims.get("teo", "Ann").as_deref(),
-            Some(verified.claim.as_str())
-        );
-        assert_eq!(
-            db.get_account("teo", "Ann").await.unwrap().unwrap().email,
+            db.get_account_by_name("teo", "Ann")
+                .await
+                .unwrap()
+                .unwrap()
+                .email,
             "ann@x.com"
         );
+    }
+
+    #[tokio::test]
+    async fn verify_renames_a_returning_email_and_logs_the_event() {
+        let db = Db::memory().await;
+        let claims = Claims::default();
+        let (first, _) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        verify(&db, &claims, Some(&first), None)
+            .await
+            .unwrap()
+            .unwrap();
+        // Same email comes back asking for a free name -> renamed, and the timeline records it.
+        let (second, _) = ok_request(&db, "teo", "Annie", "ann@x.com").await;
+        let verified = verify(&db, &claims, Some(&second), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(verified.name, "Annie");
+        let events = db.recent_events("teo", 20).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "rename");
+        assert_eq!(events[0].name, "Annie");
+        assert_eq!(events[0].detail, "Ann");
     }
 
     #[tokio::test]
@@ -268,10 +361,8 @@ mod tests {
             .claim;
 
         assert_ne!(first_claim, second_claim);
-        assert_eq!(
-            claims.get("teo", "Ann").as_deref(),
-            Some(second_claim.as_str())
-        );
+        let id = account_id(&db, "teo", "Ann").await;
+        assert_eq!(claims.get(&id).as_deref(), Some(second_claim.as_str()));
     }
 
     #[tokio::test]
@@ -284,13 +375,61 @@ mod tests {
             .unwrap()
             .unwrap()
             .claim;
+        let id = account_id(&db, "teo", "Ann").await;
 
-        logout(&db, &claims, "teo", "Ann", "stale-token")
+        // A stale token resolves to no account and never clears the live claim.
+        logout(&db, &claims, "teo", "stale-token").await.unwrap();
+        assert_eq!(claims.get(&id).as_deref(), Some(claim.as_str()));
+
+        logout(&db, &claims, "teo", &claim).await.unwrap();
+        assert!(claims.get(&id).is_none());
+    }
+
+    #[tokio::test]
+    async fn rename_updates_name_logs_event_and_guards_taken_or_invalid() {
+        let db = std::sync::Arc::new(Db::memory().await);
+        let hub = Hub::load(db).await;
+        let (token, _) = ok_request(&hub.db, "teo", "Ann", "ann@x.com").await;
+        let claim = verify(&hub.db, &hub.claims, Some(&token), None)
             .await
-            .unwrap();
-        assert_eq!(claims.get("teo", "Ann").as_deref(), Some(claim.as_str()));
+            .unwrap()
+            .unwrap()
+            .claim;
 
-        logout(&db, &claims, "teo", "Ann", &claim).await.unwrap();
-        assert!(claims.get("teo", "Ann").is_none());
+        // A free name renames the account and records a timeline event.
+        let renamed = rename(&hub, "teo", &claim, "Annie").await.unwrap();
+        assert!(matches!(renamed, RenameResult::Ok { name } if name == "Annie"));
+        let account = hub
+            .db
+            .claim_to_account("teo", &claim)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(account.1, "Annie");
+        let events = hub.db.recent_events("teo", 20).await.unwrap();
+        assert_eq!(events.last().unwrap().name, "Annie");
+        assert_eq!(events.last().unwrap().detail, "Ann");
+
+        // A name already taken in the tenant is refused; the current name stays.
+        let (bob_token, _) = ok_request(&hub.db, "teo", "Bob", "bob@x.com").await;
+        verify(&hub.db, &hub.claims, Some(&bob_token), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            rename(&hub, "teo", &claim, "Bob").await.unwrap(),
+            RenameResult::NameTaken
+        ));
+
+        // An unknown claim cannot rename anything.
+        assert!(matches!(
+            rename(&hub, "teo", "stale-token", "Zed").await.unwrap(),
+            RenameResult::Invalid
+        ));
+        // An empty/over-long name is invalid.
+        assert!(matches!(
+            rename(&hub, "teo", &claim, "  ").await.unwrap(),
+            RenameResult::Invalid
+        ));
     }
 }

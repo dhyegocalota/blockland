@@ -101,8 +101,16 @@ export async function deleteTenant(id: string): Promise<void> {
   if (!res.ok) throw new Error(`api: deleteTenant failed (${res.status})`);
 }
 
-export async function topScores(tenant: string, limit: number = DEFAULT_TOP_LIMIT): Promise<ScoreEntry[]> {
-  const path = `/internal/leaderboard/${encodeURIComponent(tenant)}?limit=${limit}`;
+export type LeaderboardWindow = 'all' | 'month';
+
+export async function topScores(params: {
+  tenant: string;
+  window?: LeaderboardWindow;
+  limit?: number;
+}): Promise<ScoreEntry[]> {
+  const limit = params.limit ?? DEFAULT_TOP_LIMIT;
+  const base = `/internal/leaderboard/${encodeURIComponent(params.tenant)}?limit=${limit}`;
+  const path = params.window === 'month' ? `${base}&window=month` : base;
   const res = await signedFetch('GET', path);
   if (!res.ok) throw new Error(`api: topScores failed (${res.status})`);
   return (await res.json()) as ScoreEntry[];
