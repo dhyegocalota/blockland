@@ -18,6 +18,8 @@ use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
 // cannot flood the room or build across the whole map.
 const MAX_BATCH_EDITS: usize = 8192;
 const BATCH_RADIUS: f32 = 48.0;
+// Cells per outgoing EditBatch frame, matching the client; keeps each message under the text cap.
+const BATCH_CHUNK_SIZE: usize = 256;
 
 pub enum RoomCmd {
     Join {
@@ -245,8 +247,11 @@ impl Room {
             .into_iter()
             .map(|(x, y, z, block)| EditCell { x, y, z, id: block })
             .collect();
-        if !edits.is_empty() {
-            let _ = conn.try_send(ServerMsg::EditBatch { edits, by: 0 });
+        for chunk in edits.chunks(BATCH_CHUNK_SIZE) {
+            let _ = conn.try_send(ServerMsg::EditBatch {
+                edits: chunk.to_vec(),
+                by: 0,
+            });
         }
         self.players.insert(id, player);
         self.empty_since = None;

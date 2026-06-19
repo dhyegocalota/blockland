@@ -13,7 +13,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::hub::Hub;
 use crate::room::RoomCmd;
 
-const MAX_TEXT_BYTES: usize = 4096;
+// Large enough for a chunked EditBatch (the client caps each batch to BATCH_CHUNK cells).
+const MAX_TEXT_BYTES: usize = 32 * 1024;
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {

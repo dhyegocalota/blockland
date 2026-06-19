@@ -18,6 +18,9 @@ import {
   type ServerMsg,
 } from './protocol';
 
+// Cells per EditBatch frame; keeps each WebSocket message well under the server's text-size cap.
+const BATCH_CHUNK = 256;
+
 export type NetState =
   | 'connecting'
   | 'online'
@@ -220,7 +223,9 @@ export function createNet(opts: NetOptions): NetClient {
       rawSend(encodeClientMsg(edit(op, x, y, z, id)));
     },
     sendEditBatch(edits): void {
-      if (edits.length > 0) rawSend(encodeClientMsg(editBatch(edits)));
+      for (let i = 0; i < edits.length; i += BATCH_CHUNK) {
+        rawSend(encodeClientMsg(editBatch(edits.slice(i, i + BATCH_CHUNK))));
+      }
     },
     sendChat(text): void {
       rawSend(encodeClientMsg(chat(text)));
