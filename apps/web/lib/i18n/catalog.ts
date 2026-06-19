@@ -69,6 +69,33 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block_keys': 'Teclas 1 a 9',
     'start.play': '▶ JOGAR',
 
+    // Start screen — name input
+    'start.name_label': 'Seu nome',
+    'start.name_placeholder': 'Digite seu nome',
+
+    // Co-op connection status
+    'coop.connecting': '🔌 Conectando ao mundo...',
+    'coop.reconnecting': '📡 Reconectando...',
+    'coop.offline': '🚫 Sem conexão — jogando sozinho',
+    'coop.banned': '⛔ Você foi banido deste mundo',
+    'coop.kicked': '👋 Você foi removido por inatividade',
+    'coop.room_closed': '🌙 Este mundo foi fechado',
+    'coop.ping': '📶 {ping}ms',
+
+    // Chat
+    'chat.placeholder': 'Escreva uma mensagem...',
+    'chat.line': '{name}: {text}',
+
+    // Debug panel (F3)
+    'debug.title': '🛠️ Debug (F3)',
+    'debug.fps': 'FPS',
+    'debug.ping': 'Ping',
+    'debug.state': 'Rede',
+    'debug.online': 'Online',
+    'debug.pos': 'Posição',
+    'debug.chunks': 'Chunks',
+    'debug.tenant': 'Tenant',
+
     // Errors
     'error.connect': '😕 Não consegui carregar o mundo. Verifique sua conexão e tente de novo.',
 
@@ -204,6 +231,33 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block': 'Swap block',
     'start.swap_block_keys': 'Keys 1 to 9',
     'start.play': '▶ PLAY',
+
+    // Start screen — name input
+    'start.name_label': 'Your name',
+    'start.name_placeholder': 'Type your name',
+
+    // Co-op connection status
+    'coop.connecting': '🔌 Connecting to the world...',
+    'coop.reconnecting': '📡 Reconnecting...',
+    'coop.offline': '🚫 No connection — playing solo',
+    'coop.banned': '⛔ You were banned from this world',
+    'coop.kicked': '👋 You were removed for being idle',
+    'coop.room_closed': '🌙 This world has been closed',
+    'coop.ping': '📶 {ping}ms',
+
+    // Chat
+    'chat.placeholder': 'Write a message...',
+    'chat.line': '{name}: {text}',
+
+    // Debug panel (F3)
+    'debug.title': '🛠️ Debug (F3)',
+    'debug.fps': 'FPS',
+    'debug.ping': 'Ping',
+    'debug.state': 'Net',
+    'debug.online': 'Online',
+    'debug.pos': 'Position',
+    'debug.chunks': 'Chunks',
+    'debug.tenant': 'Tenant',
 
     // Errors
     'error.connect': "😕 Couldn't load the world. Check your connection and try again.",

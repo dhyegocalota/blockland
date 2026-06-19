@@ -13,6 +13,8 @@ import { type Axis, moveAxis } from './engine/physics';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
+import { createCoop, MAIN_WORLD, type CoopController, type CoopHud } from './coop';
+import type { EditOp } from './protocol';
 
 interface Creature {
   typeKey: string;
@@ -53,7 +55,28 @@ interface GameWindow extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
-export function initGame(brand: Brand): (() => void) | undefined {
+export interface DebugSnapshot {
+  fps: number;
+  ping: number;
+  state: string;
+  online: number;
+  x: number;
+  y: number;
+  z: number;
+  chunks: number;
+  tenant: string;
+}
+
+// The bridge connects the React HUD to the engine: the HUD supplies the player name (resolved at
+// connect time so late edits to the name field count) and receives net status / chat updates; the
+// engine exposes chat sending and a live debug snapshot for F3.
+export interface CoopBridge {
+  resolveName(): string;
+  hud: CoopHud;
+  bind(api: { sendChat(text: string): void; debugSnapshot(): DebugSnapshot }): void;
+}
+
+export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | undefined {
   if (typeof window === 'undefined') return undefined;
   const win = window as unknown as GameWindow;
   if (win.__blGameBooted) return win.__blGameCleanup;
@@ -307,6 +330,35 @@ export function initGame(brand: Brand): (() => void) | undefined {
   };
   let selected = 1;
   let peaceful = true;
+  let coop: CoopController | null = null;
+  let fps = 0;
+
+  // ---------- Co-op (remote players) — only when a server URL is configured ----------
+  const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
+  function applyRemoteEdit({ x, y, z, id }: { x: number; y: number; z: number; id: number }): void {
+    if (!inBounds(x, y, z)) return;
+    setVoxel(x, y, z, id);
+    remeshRegion(x - 1, x + 1, z - 1, z + 1);
+    debug('coop', 'remote edit', { x, y, z, id });
+  }
+  function localPose(): { x: number; y: number; z: number; yaw: number; pitch: number } {
+    return { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch };
+  }
+  function sendCoopEdit(op: EditOp, x: number, y: number, z: number, id: number): void {
+    coop?.sendEdit(op, x, y, z, id);
+  }
+  function debugSnapshot(): DebugSnapshot {
+    const round = (n: number): number => Math.round(n * 10) / 10;
+    const base = {
+      fps: Math.round(fps),
+      x: round(player.pos.x), y: round(player.pos.y), z: round(player.pos.z),
+      chunks: chunkMeshes.size,
+      tenant: brand.id,
+    };
+    if (!coop) return { ...base, ping: 0, state: 'offline', online: 1 };
+    return { ...base, ping: coop.ping, state: coop.state, online: coop.onlineCount };
+  }
+  bridge?.bind({ sendChat: (text) => coop?.sendChat(text), debugSnapshot });
 
   // ---------- Creatures (animals to hunt, monsters to fight) ----------
   const creatures: Creature[] = [];
@@ -494,6 +546,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
     const removed = getVoxel(r.hit[0], r.hit[1], r.hit[2]);
     setVoxel(r.hit[0], r.hit[1], r.hit[2], AIR);
     remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
+    sendCoopEdit('break', r.hit[0], r.hit[1], r.hit[2], AIR);
     player.bag += 1;
     updateStats();
     blip(220, 0.08);
@@ -507,6 +560,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
     if (overlapsPlayer(px, py, pz)) return;
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
+    sendCoopEdit('place', px, py, pz, selected);
     blip(selected === FACE_ID ? 720 : 520, 0.08);
     debug('engine', 'place block', { x: px, y: py, z: pz, id: selected });
   }
@@ -550,7 +604,8 @@ export function initGame(brand: Brand): (() => void) | undefined {
   const keys: Record<string, boolean> = {};
   interface Joystick { active: boolean; x: number; y: number; id: number | null; cx: number; cy: number; r: number; }
   const joystick: Joystick = { active: false, x: 0, y: 0, id: null, cx: 0, cy: 0, r: 50 };
-  addEventListener('keydown', (e) => { keys[e.code] = true; handleHotkey(e); }, { signal });
+  const typingInField = (): boolean => document.activeElement instanceof HTMLInputElement;
+  addEventListener('keydown', (e) => { if (typingInField()) return; keys[e.code] = true; handleHotkey(e); }, { signal });
   addEventListener('keyup', (e) => { keys[e.code] = false; }, { signal });
 
   function update(dt: number): void {
@@ -823,7 +878,9 @@ export function initGame(brand: Brand): (() => void) | undefined {
     if (disposed) return;
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
+    if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
     if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); updateCreatures(dt); updatePoofs(dt); }
+    if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
     renderer.render(scene, camera);
     rafId = requestAnimationFrame(loop);
   }
@@ -839,6 +896,24 @@ export function initGame(brand: Brand): (() => void) | undefined {
     if (isTouch) el('touchControls').style.display = 'block';
     if (!isTouch) lockPointer();
     blip(660, 0.12); setTimeout(() => blip(880, 0.14), 120);
+    startCoop();
+  }
+  function startCoop(): void {
+    if (coop) return;
+    if (!serverUrl) { debug('coop', 'single-player (no server url)'); return; }
+    if (!bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
+    const name = bridge.resolveName();
+    coop = createCoop({
+      three: THREE,
+      scene,
+      url: serverUrl,
+      tenant: brand.id,
+      world: MAIN_WORLD,
+      name,
+      hud: bridge.hud,
+      applyRemoteEdit,
+    });
+    debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }
   el('playBtn').addEventListener('click', start, { signal });
 
@@ -868,6 +943,8 @@ export function initGame(brand: Brand): (() => void) | undefined {
 
   const cleanup = (): void => {
     disposed = true;
+    coop?.close();
+    coop = null;
     cancelAnimationFrame(rafId);
     abort.abort();
     renderer.dispose();

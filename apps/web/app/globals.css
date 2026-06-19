@@ -182,6 +182,58 @@ canvas { display: block; }
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ---------- Name input (start screen) ---------- */
+#nameField {
+  z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  font-size: 16px; font-weight: 900; color: #2a1a4a;
+}
+#nameInput {
+  font-family: inherit; font-size: 20px; font-weight: 800; text-align: center; color: var(--ink);
+  background: #fff; border: 4px solid #fff; border-radius: 16px; padding: 10px 18px; width: min(280px, 80vw);
+  box-shadow: 0 6px 0 #00000022; outline: none;
+}
+#nameInput:focus { border-color: var(--gold); box-shadow: 0 6px 0 #00000022, 0 0 0 4px #ffd23f55; }
+
+/* ---------- Co-op connection banner ---------- */
+#netBanner {
+  position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 45; pointer-events: none;
+  background: rgba(42,26,74,.78); color: #fff; font-weight: 900; font-size: 15px;
+  padding: 8px 18px; border-radius: 14px; border: 3px solid var(--gold);
+  backdrop-filter: blur(6px); box-shadow: 0 6px 18px #0005; max-width: 92vw; text-align: center;
+}
+#netBanner.severe { border-color: #ff5d2e; background: rgba(120,20,20,.82); }
+
+/* ---------- Chat ---------- */
+#chat {
+  position: fixed; left: 16px; bottom: 96px; z-index: 30; width: min(360px, 80vw);
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+#chatLog { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.chatLine {
+  background: rgba(42,26,74,.6); color: #fff; font-weight: 700; font-size: 14px;
+  padding: 5px 12px; border-radius: 12px; border: 2px solid rgba(255,255,255,.4);
+  backdrop-filter: blur(4px); max-width: 100%; word-break: break-word;
+  animation: chatIn .2s ease both;
+}
+@keyframes chatIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+#chatInput {
+  pointer-events: auto; font-family: inherit; font-size: 15px; font-weight: 700; color: var(--ink);
+  background: #fff; border: 3px solid var(--gold); border-radius: 14px; padding: 9px 14px;
+  width: 100%; outline: none; box-shadow: 0 4px 12px #0004;
+}
+
+/* ---------- Debug panel (F3) ---------- */
+#debugPanel {
+  position: fixed; left: 12px; top: 12px; z-index: 70; pointer-events: none;
+  background: rgba(20,12,40,.82); color: #fff; border: 2px solid rgba(255,255,255,.35);
+  border-radius: 12px; padding: 10px 14px; min-width: 200px; backdrop-filter: blur(6px);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 13px;
+}
+#debugPanel h3 { font-size: 14px; font-weight: 900; color: var(--gold); margin-bottom: 8px; }
+#debugPanel div { display: flex; justify-content: space-between; gap: 16px; padding: 1px 0; }
+#debugPanel span { opacity: .7; }
+#debugPanel b { font-weight: 700; }
+
 /* ---------- Touch / mobile controls ---------- */
 canvas { touch-action: none; }
 #touchControls { position: fixed; inset: 0; z-index: 20; pointer-events: none; }

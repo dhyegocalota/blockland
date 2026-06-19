@@ -1,13 +1,70 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
+import type { CoopBridge, DebugSnapshot } from '../lib/game-engine';
+import type { NetState } from '../lib/net';
+
+const NAME_KEY = 'bl-name';
+const CHAT_BACKLOG = 6;
+const CHAT_FADE_MS = 8000;
+
+const BANNER_KEYS: Record<NetState, string | null> = {
+  connecting: 'coop.connecting',
+  online: null,
+  reconnecting: 'coop.reconnecting',
+  offline: 'coop.offline',
+  banned: 'coop.banned',
+  kicked: 'coop.kicked',
+  room_closed: 'coop.room_closed',
+};
+
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed'];
+
+function generateGuestName(): string {
+  return `Guest${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+function loadName(): string {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(NAME_KEY) ?? '';
+}
+
+interface ChatLine {
+  id: number;
+  name: string;
+  text: string;
+}
+
+interface GameApi {
+  sendChat(text: string): void;
+  debugSnapshot(): DebugSnapshot;
+}
 
 export default function Game() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [failed, setFailed] = useState(false);
+  const [name, setName] = useState(loadName);
+  const [netState, setNetState] = useState<NetState | null>(null);
+  const [ping, setPing] = useState(0);
+  const [online, setOnline] = useState(1);
+  const [chatLines, setChatLines] = useState<ChatLine[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState('');
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugData, setDebugData] = useState<DebugSnapshot | null>(null);
+
+  const gameApiRef = useRef<GameApi | null>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatLineId = useRef(0);
+
+  const pushChatLine = useCallback((from: string, text: string) => {
+    const id = chatLineId.current++;
+    setChatLines((lines) => [...lines, { id, name: from, text }].slice(-CHAT_BACKLOG));
+    setTimeout(() => setChatLines((lines) => lines.filter((line) => line.id !== id)), CHAT_FADE_MS);
+  }, []);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -17,9 +74,19 @@ export default function Game() {
         if (!alive) return;
         debug('tenant', 'active tenant', { id: active.id, name: active.name });
         setBrand(active);
+        const bridge: CoopBridge = {
+          resolveName: () => loadName().trim() || generateGuestName(),
+          hud: {
+            onState: (state) => setNetState(state),
+            onPing: (value) => setPing(value),
+            onChat: (from, text) => pushChatLine(from, text),
+            onCount: (count) => setOnline(count),
+          },
+          bind: (api) => { gameApiRef.current = api; },
+        };
         import('../lib/game-engine').then((mod) => {
           debug('engine', 'engine module loaded', { id: active.id, name: active.name });
-          cleanup = mod.initGame(active);
+          cleanup = mod.initGame(active, bridge);
         });
       })
       .catch((err) => {
@@ -28,10 +95,55 @@ export default function Game() {
         setFailed(true);
       });
     return () => { alive = false; if (cleanup) cleanup(); };
+  }, [pushChatLine]);
+
+  const openChat = useCallback(() => {
+    setChatOpen(true);
+    requestAnimationFrame(() => chatInputRef.current?.focus());
   }, []);
+
+  const sendChat = useCallback(() => {
+    const text = chatDraft.trim();
+    if (text) gameApiRef.current?.sendChat(text);
+    setChatDraft('');
+    setChatOpen(false);
+  }, [chatDraft]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.code === 'F3') { event.preventDefault(); setDebugOpen((open) => !open); return; }
+      if (chatOpen) return;
+      const typingTarget = event.target instanceof HTMLInputElement;
+      if (typingTarget) return;
+      if (event.code === 'Enter' || event.code === 'KeyT') { event.preventDefault(); openChat(); }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [chatOpen, openChat]);
+
+  useEffect(() => {
+    if (!debugOpen) return;
+    let rafId = 0;
+    const tick = (): void => {
+      const api = gameApiRef.current;
+      if (api) setDebugData(api.debugSnapshot());
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [debugOpen]);
+
+  function onNameChange(value: string): void {
+    setName(value);
+    if (typeof window !== 'undefined') window.localStorage.setItem(NAME_KEY, value);
+  }
 
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
   if (!brand) return null;
+
+  const bannerKey = netState ? BANNER_KEYS[netState] : null;
+  const severe = netState ? SEVERE_STATES.includes(netState) : false;
+  const showPing = netState === 'online';
 
   return (
     <>
@@ -43,6 +155,7 @@ export default function Game() {
           <span className="stat" id="stars">⭐ 0</span>
           <span className="stat record" id="record">🏆 0</span>
           <span className="stat" id="bag">🎒 0</span>
+          {showPing && <span className="stat" id="ping">{t('coop.ping', { ping })}</span>}
         </div>
         <div id="crosshair"></div>
         <div id="toast"></div>
@@ -54,6 +167,44 @@ export default function Game() {
           <button className="btn on" id="modeBtn">{t('hud.peace_on')}</button>
         </div>
       </div>
+
+      {bannerKey && (
+        <div id="netBanner" className={severe ? 'severe' : undefined} role="status">{t(bannerKey)}</div>
+      )}
+
+      <div id="chat">
+        <div id="chatLog">
+          {chatLines.map((line) => (
+            <div className="chatLine" key={line.id}>{t('chat.line', { name: line.name, text: line.text })}</div>
+          ))}
+        </div>
+        {chatOpen && (
+          <input
+            id="chatInput"
+            ref={chatInputRef}
+            value={chatDraft}
+            placeholder={t('chat.placeholder')}
+            onChange={(e) => setChatDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.code === 'Enter') { e.preventDefault(); sendChat(); }
+              if (e.code === 'Escape') { e.preventDefault(); setChatDraft(''); setChatOpen(false); }
+            }}
+          />
+        )}
+      </div>
+
+      {debugOpen && debugData && (
+        <div id="debugPanel">
+          <h3>{t('debug.title')}</h3>
+          <div><span>{t('debug.fps')}</span><b>{debugData.fps}</b></div>
+          <div><span>{t('debug.ping')}</span><b>{debugData.ping}ms</b></div>
+          <div><span>{t('debug.state')}</span><b>{debugData.state}</b></div>
+          <div><span>{t('debug.online')}</span><b>{debugData.online}</b></div>
+          <div><span>{t('debug.pos')}</span><b>{debugData.x}, {debugData.y}, {debugData.z}</b></div>
+          <div><span>{t('debug.chunks')}</span><b>{debugData.chunks}</b></div>
+          <div><span>{t('debug.tenant')}</span><b>{debugData.tenant}</b></div>
+        </div>
+      )}
 
       <div id="touchControls" style={{ display: 'none' }}>
         <div id="joystick"><div id="joyKnob"></div></div>
@@ -108,6 +259,16 @@ export default function Game() {
         <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">{t('start.record')}</span>
+        <label id="nameField">
+          {t('start.name_label')}
+          <input
+            id="nameInput"
+            value={name}
+            maxLength={16}
+            placeholder={t('start.name_placeholder')}
+            onChange={(e) => onNameChange(e.target.value)}
+          />
+        </label>
         <div id="help">
           <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
           <div className="card"><b>{t('start.jump_fly')}</b> {t('start.jump_fly_keys')}</div>
