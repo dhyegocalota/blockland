@@ -61,6 +61,8 @@ export default function Game() {
           <div className="buildGrid">
             <button className="buildCard" data-kind="trophy"><span className="emoji">🏆</span><span>Taça da Copa do Mundo</span></button>
             <button className="buildCard" data-kind="ball"><span className="emoji">⚽</span><span>Bola gigante da Copa 2026</span></button>
+            <button className="buildCard" data-kind="figure"><span className="emoji">🧑‍🦱</span><span>Figurinha do Teo craque ⚽</span></button>
+            <button className="buildCard" data-kind="cola"><span className="emoji">🥤</span><span>Refri gigante da Copa</span></button>
           </div>
           <button id="closeBuild">Fechar</button>
         </div>
