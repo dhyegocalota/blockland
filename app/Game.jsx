@@ -25,8 +25,9 @@ export default function Game() {
         <div id="hotbar"></div>
         <div id="actionRow">
           <button className="btn" id="helpBtn">❓ Controles</button>
+          <button className="btn" id="buildBtn">🏗️ Construir</button>
           <button className="btn" id="flyBtn">✈️ Voar</button>
-          <button className="btn" id="modeBtn">⚔️ Paz: OFF</button>
+          <button className="btn on" id="modeBtn">🕊️ Paz: ON</button>
         </div>
       </div>
 
@@ -46,9 +47,22 @@ export default function Game() {
             <div className="card"><b>Coletar 🎒</b> Quebre blocos</div>
             <div className="card"><b>Bloco do Teo 😎</b> Tecla 0</div>
             <div className="card"><b>Modo paz 🕊️</b> Tecla P (monstros calmos)</div>
+            <div className="card"><b>Construções 🏗️</b> Tecla B (taça e bola!)</div>
             <div className="card"><b>Ver controles</b> Tecla V</div>
           </div>
           <button id="closeControls">▶ Voltar a jogar</button>
+        </div>
+      </div>
+
+      <div id="buildMenu" hidden>
+        <div className="panel">
+          <h2>🏗️ Construções Mágicas</h2>
+          <p className="buildHint">Escolha uma e ela aparece bem na sua frente! ✨</p>
+          <div className="buildGrid">
+            <button className="buildCard" data-kind="trophy"><span className="emoji">🏆</span><span>Taça da Copa do Mundo</span></button>
+            <button className="buildCard" data-kind="ball"><span className="emoji">⚽</span><span>Bola gigante da Copa 2026</span></button>
+          </div>
+          <button id="closeBuild">Fechar</button>
         </div>
       </div>
 
