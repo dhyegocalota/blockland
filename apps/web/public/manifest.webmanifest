@@ -1,0 +1,15 @@
+{
+  "name": "Blocklandia",
+  "short_name": "Blocklandia",
+  "description": "Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.",
+  "display": "standalone",
+  "orientation": "landscape",
+  "start_url": "/",
+  "scope": "/",
+  "theme_color": "#22c55e",
+  "background_color": "#0b1220",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

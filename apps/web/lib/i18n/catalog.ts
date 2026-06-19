@@ -82,6 +82,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.room_closed': '🌙 Este mundo foi fechado',
     'coop.ping': '📶 {ping}ms',
 
+    // Offline mode (bundled tenant, no data API)
+    'offline.title': '📴 Modo Offline',
+    'offline.body': 'Você está sem conexão, mas pode jogar sozinho normalmente! Construa, cace e explore — tudo funciona offline. O modo co-op volta quando a internet voltar.',
+    'offline.play': '▶ Jogar offline',
+
     // Chat
     'chat.placeholder': 'Escreva uma mensagem...',
     'chat.line': '{name}: {text}',
@@ -170,6 +175,32 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.upload_needs_id': 'Defina o ID do tenant antes de enviar imagens.',
     'admin.uploading': 'Enviando imagem...',
     'admin.uploaded': 'Imagem enviada!',
+
+    // Admin — moderation
+    'mod.title': '🛡️ Moderação',
+    'mod.online_title': 'Jogadores online',
+    'mod.online_empty': 'Ninguém online agora.',
+    'mod.refresh': 'Atualizar',
+    'mod.col_tenant': 'Tenant',
+    'mod.col_name': 'Nome',
+    'mod.col_position': 'Posição',
+    'mod.col_ping': 'Ping',
+    'mod.ban': 'Banir',
+    'mod.ban_prompt': 'IP para banir:',
+    'mod.bans_title': 'IPs banidos',
+    'mod.bans_empty': 'Nenhum IP banido.',
+    'mod.unban': 'Desbanir',
+    'mod.ip_placeholder': 'Ex.: 1.2.3.4',
+    'mod.error': 'Erro de moderação: {error}',
+
+    // Admin — leaderboard
+    'leaderboard.title': '🏆 Placar',
+    'leaderboard.tenant_label': 'Tenant',
+    'leaderboard.load': 'Carregar',
+    'leaderboard.empty': 'Sem pontuações ainda.',
+    'leaderboard.col_rank': '#',
+    'leaderboard.col_name': 'Nome',
+    'leaderboard.col_score': 'Pontos',
   },
   'en-US': {
     // HUD action buttons
@@ -247,6 +278,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.kicked': '👋 You were removed for being idle',
     'coop.room_closed': '🌙 This world has been closed',
     'coop.ping': '📶 {ping}ms',
+
+    // Offline mode (bundled tenant, no data API)
+    'offline.title': '📴 Offline Mode',
+    'offline.body': "You're offline, but you can still play solo just fine! Build, hunt and explore — everything works offline. Co-op comes back once you're online again.",
+    'offline.play': '▶ Play offline',
 
     // Chat
     'chat.placeholder': 'Write a message...',
@@ -336,5 +372,31 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.upload_needs_id': 'Set the tenant ID before uploading images.',
     'admin.uploading': 'Uploading image...',
     'admin.uploaded': 'Image uploaded!',
+
+    // Admin — moderation
+    'mod.title': '🛡️ Moderation',
+    'mod.online_title': 'Online players',
+    'mod.online_empty': 'Nobody online right now.',
+    'mod.refresh': 'Refresh',
+    'mod.col_tenant': 'Tenant',
+    'mod.col_name': 'Name',
+    'mod.col_position': 'Position',
+    'mod.col_ping': 'Ping',
+    'mod.ban': 'Ban',
+    'mod.ban_prompt': 'IP to ban:',
+    'mod.bans_title': 'Banned IPs',
+    'mod.bans_empty': 'No banned IPs.',
+    'mod.unban': 'Unban',
+    'mod.ip_placeholder': 'e.g. 1.2.3.4',
+    'mod.error': 'Moderation error: {error}',
+
+    // Admin — leaderboard
+    'leaderboard.title': '🏆 Leaderboard',
+    'leaderboard.tenant_label': 'Tenant',
+    'leaderboard.load': 'Load',
+    'leaderboard.empty': 'No scores yet.',
+    'leaderboard.col_rank': '#',
+    'leaderboard.col_name': 'Name',
+    'leaderboard.col_score': 'Score',
   },
 };

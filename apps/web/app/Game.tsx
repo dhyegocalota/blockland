@@ -46,6 +46,8 @@ interface GameApi {
 export default function Game() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [failed, setFailed] = useState(false);
+  const [offline, setOffline] = useState(false);
+  const [offlineDismissed, setOfflineDismissed] = useState(false);
   const [name, setName] = useState(loadName);
   const [netState, setNetState] = useState<NetState | null>(null);
   const [ping, setPing] = useState(0);
@@ -70,10 +72,11 @@ export default function Game() {
     let cleanup: (() => void) | undefined;
     let alive = true;
     resolveTenant()
-      .then((active) => {
+      .then(({ tenant: active, offline: isOffline }) => {
         if (!alive) return;
-        debug('tenant', 'active tenant', { id: active.id, name: active.name });
+        debug('tenant', 'active tenant', { id: active.id, name: active.name, offline: isOffline });
         setBrand(active);
+        setOffline(isOffline);
         const bridge: CoopBridge = {
           resolveName: () => loadName().trim() || generateGuestName(),
           hud: {
@@ -170,6 +173,16 @@ export default function Game() {
 
       {bannerKey && (
         <div id="netBanner" className={severe ? 'severe' : undefined} role="status">{t(bannerKey)}</div>
+      )}
+
+      {offline && !offlineDismissed && (
+        <div id="offlineNotice" role="dialog" aria-modal="true">
+          <div className="panel">
+            <h2>{t('offline.title')}</h2>
+            <p>{t('offline.body')}</p>
+            <button id="offlinePlay" onClick={() => setOfflineDismissed(true)}>{t('offline.play')}</button>
+          </div>
+        </div>
       )}
 
       <div id="chat">

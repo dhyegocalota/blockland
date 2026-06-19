@@ -2,7 +2,7 @@
 // turned on with `?debug=1` in the URL or `localStorage.bl-debug = '1'`. Warnings and
 // errors always print. Each line is tagged `[BL:<scope>]` for easy filtering.
 
-export type Scope = 'engine' | 'net' | 'coop' | 'tenant' | 'i18n' | 'api';
+export type Scope = 'engine' | 'net' | 'coop' | 'tenant' | 'i18n' | 'api' | 'pwa';
 
 export type LogFields = Record<string, unknown>;
 
@@ -13,6 +13,7 @@ const COLORS: Record<Scope, string> = {
   tenant: '#ffd23f',
   i18n: '#b06bff',
   api: '#ff8a3d',
+  pwa: '#22c55e',
 };
 
 function debugEnabled(): boolean {

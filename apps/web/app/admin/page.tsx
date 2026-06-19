@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEvent } from 'react';
 import { t } from '../../lib/i18n';
 import type { Tenant } from '../../lib/builtins';
+import type { ScoreEntry } from '../../lib/api';
 
 const EMPTY: Tenant = {
   id: '', name: '', hero: '', titleA: '', titleB: '',
@@ -33,6 +34,29 @@ interface UploadResponse {
   error?: string;
 }
 
+interface OnlinePlayer {
+  id: number;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  ping_ms: number;
+}
+
+interface RoomSnapshot {
+  tenant: string;
+  players: OnlinePlayer[];
+}
+
+interface AdminStats {
+  room_list: RoomSnapshot[];
+}
+
+interface OnlineRow {
+  tenant: string;
+  player: OnlinePlayer;
+}
+
 const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'avatar' | 'face'>> = {
   avatar: 'avatar',
   faceTexture: 'face',
@@ -47,6 +71,10 @@ export default function Admin() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [form, setForm] = useState<Tenant>(EMPTY);
   const [msg, setMsg] = useState('');
+  const [online, setOnline] = useState<OnlineRow[]>([]);
+  const [bans, setBans] = useState<string[]>([]);
+  const [boardTenant, setBoardTenant] = useState('');
+  const [board, setBoard] = useState<ScoreEntry[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem('bl-admin-key');
@@ -60,6 +88,46 @@ export default function Admin() {
     setAuthed(true);
     setMsg('');
     localStorage.setItem('bl-admin-key', k);
+    loadOnline(k);
+    loadBans(k);
+  }
+
+  async function loadOnline(k = key) {
+    const res = await fetch('/api/admin/online', { headers: { 'x-admin-key': k } });
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    const stats = (await res.json()) as AdminStats;
+    const rows = stats.room_list.flatMap((room) =>
+      room.players.map((player) => ({ tenant: room.tenant, player })),
+    );
+    setOnline(rows);
+  }
+
+  async function loadBans(k = key) {
+    const res = await fetch('/api/admin/bans', { headers: { 'x-admin-key': k } });
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    setBans((await res.json()) as string[]);
+  }
+
+  async function moderate(action: 'ban' | 'unban', ip: string) {
+    const res = await fetch(`/api/admin/${action}`, {
+      method: 'POST',
+      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify({ ip }),
+    });
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    setBans((await res.json()) as string[]);
+  }
+
+  function promptBan() {
+    const ip = prompt(t('mod.ban_prompt'));
+    if (ip) moderate('ban', ip.trim());
+  }
+
+  async function loadBoard() {
+    if (boardTenant.trim() === '') return;
+    const res = await fetch(`/api/leaderboard/${boardTenant.trim()}`);
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    setBoard((await res.json()) as ScoreEntry[]);
   }
 
   async function save(e: FormEvent<HTMLFormElement>) {
@@ -158,6 +226,89 @@ export default function Admin() {
           <button style={S.small} type="button" onClick={() => setForm(EMPTY)}>{t('admin.clear')}</button>
         </div>
       </form>
+
+      <h2 style={{ ...S.h1, fontSize: 18, marginTop: 36 }}>{t('mod.title')}</h2>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <b style={{ flex: 1 }}>{t('mod.online_title')}</b>
+        <button style={S.small} onClick={() => loadOnline()}>{t('mod.refresh')}</button>
+        <button style={{ ...S.small, color: '#ff7a7a' }} onClick={promptBan}>{t('mod.ban')}</button>
+      </div>
+
+      {online.length === 0
+        ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.online_empty')}</p>
+        : (
+          <table style={S.table}>
+            <thead>
+              <tr>
+                <th style={S.th}>{t('mod.col_tenant')}</th>
+                <th style={S.th}>{t('mod.col_name')}</th>
+                <th style={S.th}>{t('mod.col_position')}</th>
+                <th style={S.th}>{t('mod.col_ping')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {online.map(({ tenant, player }) => (
+                <tr key={`${tenant}-${player.id}`}>
+                  <td style={S.td}>{tenant}</td>
+                  <td style={S.td}>{player.name}</td>
+                  <td style={S.td}>{Math.round(player.x)}, {Math.round(player.y)}, {Math.round(player.z)}</td>
+                  <td style={S.td}>{player.ping_ms}ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '28px 0 10px' }}>
+        <b style={{ flex: 1 }}>{t('mod.bans_title')}</b>
+        <button style={S.small} onClick={() => loadBans()}>{t('mod.refresh')}</button>
+      </div>
+
+      {bans.length === 0
+        ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.bans_empty')}</p>
+        : (
+          <div style={{ display: 'grid', gap: 8, marginBottom: 28 }}>
+            {bans.map((ip) => (
+              <div key={ip} style={S.row}>
+                <code style={{ flex: 1, color: '#e8e8f0' }}>{ip}</code>
+                <button style={S.small} onClick={() => moderate('unban', ip)}>{t('mod.unban')}</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+      <h2 style={{ ...S.h1, fontSize: 18, marginTop: 8 }}>{t('leaderboard.title')}</h2>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
+        <input style={{ ...S.input, flex: 1 }} placeholder={t('leaderboard.tenant_label')}
+          value={boardTenant} onChange={(e) => setBoardTenant(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && loadBoard()} />
+        <button style={S.btn} onClick={loadBoard}>{t('leaderboard.load')}</button>
+      </div>
+
+      {board.length === 0
+        ? <p style={{ color: '#789' }}>{t('leaderboard.empty')}</p>
+        : (
+          <table style={S.table}>
+            <thead>
+              <tr>
+                <th style={S.th}>{t('leaderboard.col_rank')}</th>
+                <th style={S.th}>{t('leaderboard.col_name')}</th>
+                <th style={S.th}>{t('leaderboard.col_score')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {board.map((entry, index) => (
+                <tr key={`${entry.name}-${index}`}>
+                  <td style={S.td}>{index + 1}</td>
+                  <td style={S.td}>{entry.name}</td>
+                  <td style={S.td}>{entry.score}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
     </main>
   );
 }
@@ -171,4 +322,7 @@ const S: Record<string, CSSProperties> = {
   link: { color: '#9cf', textDecoration: 'none', padding: '6px 10px', fontSize: 14 },
   file: { color: '#9aa', fontSize: 12 },
   row: { display: 'flex', alignItems: 'center', gap: 10, background: '#15151f', border: '1px solid #262633', borderRadius: 10, padding: 10 },
+  table: { width: '100%', maxWidth: 720, borderCollapse: 'collapse', marginBottom: 28, background: '#15151f', border: '1px solid #262633', borderRadius: 10, overflow: 'hidden' },
+  th: { textAlign: 'left', color: '#9aa', fontSize: 13, padding: '10px 12px', borderBottom: '1px solid #262633' },
+  td: { color: '#e8e8f0', fontSize: 14, padding: '8px 12px', borderBottom: '1px solid #1d1d28' },
 };

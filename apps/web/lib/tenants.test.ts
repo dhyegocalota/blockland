@@ -6,8 +6,18 @@ function stubLocation({ hostname, search }: { hostname: string; search: string }
   globalThis.window = { location: { hostname, search } } as unknown as Window & typeof globalThis;
 }
 
-function stubFetch(response: { ok: boolean; json?: () => Promise<unknown> }) {
+type StubResponse = { ok: boolean; json?: () => Promise<unknown> };
+
+function stubFetch(response: StubResponse) {
   globalThis.fetch = vi.fn().mockResolvedValue(response) as unknown as typeof fetch;
+}
+
+function stubFetchByUrl(routes: { api: StubResponse; bundle: StubResponse }) {
+  globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith('/tenant.json')) return Promise.resolve(routes.bundle);
+    return Promise.resolve(routes.api);
+  }) as unknown as typeof fetch;
 }
 
 afterEach(() => {
@@ -43,16 +53,23 @@ describe('tenantIdFromLocation', () => {
 });
 
 describe('resolveTenant', () => {
-  it('returns the tenant from the data API', async () => {
+  it('returns the tenant from the data API as online', async () => {
     stubLocation({ hostname: 'teo.localhost', search: '' });
     const tenant = { id: 'teo', name: 'Teocraft' };
     stubFetch({ ok: true, json: () => Promise.resolve(tenant) });
-    await expect(resolveTenant()).resolves.toEqual(tenant);
+    await expect(resolveTenant()).resolves.toEqual({ tenant, offline: false });
   });
 
-  it('throws when the tenant cannot be loaded (no silent fallback)', async () => {
+  it('falls back to the bundled tenant.json as offline when the API fails', async () => {
+    stubLocation({ hostname: 'teo.localhost', search: '' });
+    const tenant = { id: 'teo', name: 'Teocraft' };
+    stubFetchByUrl({ api: { ok: false }, bundle: { ok: true, json: () => Promise.resolve(tenant) } });
+    await expect(resolveTenant()).resolves.toEqual({ tenant, offline: true });
+  });
+
+  it('throws when both the API and the bundled tenant.json are missing', async () => {
     stubLocation({ hostname: 'ghost.localhost', search: '' });
-    stubFetch({ ok: false });
+    stubFetchByUrl({ api: { ok: false }, bundle: { ok: false } });
     await expect(resolveTenant()).rejects.toThrow('tenant_unavailable:ghost');
   });
 });

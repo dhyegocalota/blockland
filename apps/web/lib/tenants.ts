@@ -24,15 +24,51 @@ export function tenantIdFromLocation(): string {
   return DEFAULT_TENANT;
 }
 
-export async function resolveTenant(): Promise<Tenant> {
+export interface ResolvedTenant {
+  tenant: Tenant;
+  offline: boolean;
+}
+
+async function fetchOnlineTenant(id: string): Promise<Tenant | null> {
+  try {
+    const res = await fetch(`/api/tenants/${encodeURIComponent(id)}`, { cache: 'no-store' });
+    if (!res.ok) {
+      warn('tenant', 'store returned non-ok', { id, status: res.status });
+      return null;
+    }
+    return (await res.json()) as Tenant;
+  } catch (error) {
+    warn('tenant', 'store fetch threw', { id, error: String(error) });
+    return null;
+  }
+}
+
+async function fetchBundledTenant(): Promise<Tenant | null> {
+  try {
+    const res = await fetch('/tenant.json', { cache: 'no-store' });
+    if (!res.ok) return null;
+    return (await res.json()) as Tenant;
+  } catch (error) {
+    warn('tenant', 'bundled tenant fetch threw', { error: String(error) });
+    return null;
+  }
+}
+
+export async function resolveTenant(): Promise<ResolvedTenant> {
   const id = tenantIdFromLocation();
   debug('tenant', 'resolving', { id, host: window.location.hostname, search: window.location.search });
-  const res = await fetch(`/api/tenants/${encodeURIComponent(id)}`, { cache: 'no-store' });
-  if (!res.ok) {
-    warn('tenant', 'store returned non-ok', { id, status: res.status });
-    throw new Error(`tenant_unavailable:${id}`);
+
+  const online = await fetchOnlineTenant(id);
+  if (online) {
+    debug('tenant', 'resolved from store', { id: online.id, name: online.name });
+    return { tenant: online, offline: false };
   }
-  const tenant = (await res.json()) as Tenant;
-  debug('tenant', 'resolved from store', { id: tenant.id, name: tenant.name });
-  return tenant;
+
+  const bundled = await fetchBundledTenant();
+  if (bundled) {
+    debug('tenant', 'resolved from bundled artifact (offline)', { id: bundled.id, name: bundled.name });
+    return { tenant: bundled, offline: true };
+  }
+
+  throw new Error(`tenant_unavailable:${id}`);
 }

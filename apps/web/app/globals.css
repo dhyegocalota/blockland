@@ -145,6 +145,26 @@ canvas { display: block; }
 }
 #closeControls:active { transform: translateY(5px); box-shadow: 0 2px 0 #c43d18; }
 
+/* ---------- Offline mode notice ---------- */
+#offlineNotice {
+  position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .55); backdrop-filter: blur(6px); pointer-events: auto; padding: 16px;
+}
+#offlineNotice .panel {
+  background: linear-gradient(#ffffff, #e8f4ff); border: 6px solid #fff; border-radius: 28px;
+  padding: 22px 26px 26px; max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 24px 60px #0007; text-align: center;
+  animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
+}
+#offlineNotice h2 { color: var(--ink); font-size: clamp(22px, 5vw, 30px); font-weight: 900; margin-bottom: 14px; }
+#offlineNotice p { color: #2a1a4a; font-weight: 800; font-size: 16px; line-height: 1.4; margin-bottom: 20px; }
+#offlinePlay {
+  font-family: inherit; font-size: 22px; font-weight: 900; color: #fff;
+  background: linear-gradient(#ff8a3d, #ff5d2e); border: 5px solid #fff; border-radius: 20px;
+  padding: 12px 38px; cursor: pointer; box-shadow: 0 7px 0 #c43d18; transition: transform .1s;
+}
+#offlinePlay:active { transform: translateY(5px); box-shadow: 0 2px 0 #c43d18; }
+
 /* ---------- Build menu ---------- */
 #buildMenu {
   position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
