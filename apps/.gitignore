@@ -1,0 +1,4 @@
+
+# Playwright/test artifacts
+.playwright-mcp/
+/p*.png

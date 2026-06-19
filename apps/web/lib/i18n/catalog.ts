@@ -10,8 +10,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.controls': '❓ Controles',
     'hud.build': '🏗️ Construir',
     'hud.fly': '✈️ Voar',
-    'hud.peace_on': '🕊️ Paz: ON',
-    'hud.peace_off': '⚔️ Paz: OFF',
+    'hud.exit': '🚪 Sair',
 
     // Controls modal
     'controls.title': '🎮 Controles',
@@ -62,6 +61,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.structures': 'Construções',
     'game_admin.allowed': 'Liberada',
     'game_admin.blocked': 'Bloqueada',
+    'game_admin.monsters_calm': '🕊️ Monstros calmos',
+    'game_admin.monsters_attack': '👹 Monstros atacam',
 
     // Start screen
     'start.record': '🏆 Recorde: 0',
@@ -143,12 +144,6 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.kill': '{name} derrotou um {detail}',
 
     // Change name (logged-in rename)
-    'rename.button': '✏️ Mudar nome',
-    'rename.prompt': 'Qual será seu novo nome?',
-    'rename.success': '✏️ Agora você é {name}!',
-    'rename.error_name_taken': 'Esse nome já é de outra pessoa. Escolha outro.',
-    'rename.error_invalid': 'Nome inválido.',
-    'rename.error_generic': 'Não consegui mudar o nome. Tente de novo.',
 
     // Start-screen leaderboard widget
     'board.title': '🏆 Placar',
@@ -177,9 +172,6 @@ export const messages: Record<Locale, Record<string, string>> = {
     'toast.nap': '😴 Você cochilou! Voltando pra base...',
     'toast.flying': '✈️ Voando!',
     'toast.walking': '🚶 Andando',
-    'toast.peace_on': '🕊️ Modo paz! Monstros não atacam',
-    'toast.peace_off': '⚔️ Monstros bravos de novo!',
-    'toast.peace_admin_only': '🛡️ Só um admin pode mudar o modo paz',
     'toast.block_selected': 'Bloco: {name}',
     'toast.reward': '{emoji} +{reward} ⭐',
     'toast.built_trophy': '🏆 Taça da Copa construída!',
@@ -294,8 +286,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.controls': '❓ Controls',
     'hud.build': '🏗️ Build',
     'hud.fly': '✈️ Fly',
-    'hud.peace_on': '🕊️ Peace: ON',
-    'hud.peace_off': '⚔️ Peace: OFF',
+    'hud.exit': '🚪 Leave',
 
     // Controls modal
     'controls.title': '🎮 Controls',
@@ -346,6 +337,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.structures': 'Structures',
     'game_admin.allowed': 'Allowed',
     'game_admin.blocked': 'Blocked',
+    'game_admin.monsters_calm': '🕊️ Monsters calm',
+    'game_admin.monsters_attack': '👹 Monsters attack',
 
     // Start screen
     'start.record': '🏆 Record: 0',
@@ -427,12 +420,6 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.kill': '{name} beat a {detail}',
 
     // Change name (logged-in rename)
-    'rename.button': '✏️ Change name',
-    'rename.prompt': "What's your new name?",
-    'rename.success': '✏️ You are now {name}!',
-    'rename.error_name_taken': 'That name belongs to someone else. Pick another.',
-    'rename.error_invalid': 'Invalid name.',
-    'rename.error_generic': "Couldn't change your name. Try again.",
 
     // Start-screen leaderboard widget
     'board.title': '🏆 Leaderboard',
@@ -461,9 +448,6 @@ export const messages: Record<Locale, Record<string, string>> = {
     'toast.nap': '😴 You dozed off! Heading back to base...',
     'toast.flying': '✈️ Flying!',
     'toast.walking': '🚶 Walking',
-    'toast.peace_on': '🕊️ Peace mode! Monsters do not attack',
-    'toast.peace_off': '⚔️ Monsters are angry again!',
-    'toast.peace_admin_only': '🛡️ Only an admin can change peace mode',
     'toast.block_selected': 'Block: {name}',
     'toast.reward': '{emoji} +{reward} ⭐',
     'toast.built_trophy': '🏆 World Cup Trophy built!',

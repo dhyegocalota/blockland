@@ -139,11 +139,22 @@ impl Creature {
             Some((player, _)) => (player[0] - self.pos[0]).atan2(player[1] - self.pos[2]),
             None => wander_yaw(self.id, tick),
         };
-        self.pos[0] += self.yaw.sin() * config.speed * dt;
-        self.pos[2] += self.yaw.cos() * config.speed * dt;
-        self.pos[1] = ground_y(self.pos[0], self.pos[2], &height_at);
+        let next_x = self.pos[0] + self.yaw.sin() * config.speed * dt;
+        let next_z = self.pos[2] + self.yaw.cos() * config.speed * dt;
+        let next_ground = ground_y(next_x, next_z, &height_at);
+        // A creature can drop into a hole but climbs at most one block per step, so it never scales a
+        // wall or pops two blocks out of a pit the player dug — it walks at its own level.
+        if next_ground - self.pos[1] > MAX_CLIMB {
+            return;
+        }
+        self.pos[0] = next_x;
+        self.pos[2] = next_z;
+        self.pos[1] = next_ground;
     }
 }
+
+/// Tallest step a creature may climb in a single move (one block).
+const MAX_CLIMB: f32 = 1.0;
 
 fn ground_y(x: f32, z: f32, height_at: &impl Fn(i32, i32) -> i32) -> f32 {
     height_at(x.floor() as i32, z.floor() as i32) as f32 + GROUND_OFFSET
@@ -205,6 +216,33 @@ mod tests {
         assert_eq!(c.pos[1], 10.0 + GROUND_OFFSET);
         assert_eq!(c.hp, 2);
         assert_eq!(c.max_hp, 2);
+    }
+
+    #[test]
+    fn never_climbs_a_tall_wall() {
+        // Ground 5, with a 4-block-tall wall from x>=3. A slime chasing a nearby player cannot scale it.
+        let terrain = |x: i32, _z: i32| if x >= 3 { 9 } else { 5 };
+        let mut c = Creature::spawn(1, CreatureKind::Slime, 1.0, 0.5, terrain);
+        for _ in 0..300 {
+            c.advance(&[[10.0, 0.5]], false, 0.1, 0, terrain);
+        }
+        assert!(c.pos[0] < 3.0, "blocked before the wall, x={}", c.pos[0]);
+        assert!(c.pos[1] < 9.0, "never reaches the wall top, y={}", c.pos[1]);
+    }
+
+    #[test]
+    fn climbs_a_single_block_step() {
+        // A one-block step (5 -> 6) is climbable, so it keeps chasing past x=3.
+        let terrain = |x: i32, _z: i32| if x >= 3 { 6 } else { 5 };
+        let mut c = Creature::spawn(1, CreatureKind::Slime, 1.0, 0.5, terrain);
+        for _ in 0..200 {
+            c.advance(&[[10.0, 0.5]], false, 0.1, 0, terrain);
+        }
+        assert!(
+            c.pos[0] > 3.0,
+            "should step up the single block, x={}",
+            c.pos[0]
+        );
     }
 
     #[test]

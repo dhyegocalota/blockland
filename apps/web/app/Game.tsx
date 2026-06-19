@@ -7,6 +7,7 @@ import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
 import { STRUCTURE_KINDS, type CoopBridge, type DebugSnapshot } from '../lib/game-engine';
 import type { Appearance, RoomState, RosterEntry } from '../lib/coop';
+import { randomLook } from '../lib/look';
 import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
@@ -135,6 +136,17 @@ export default function Game() {
     setTimeout(() => setFeed((entries) => entries.filter((entry) => entry.id !== id)), CHAT_FADE_MS);
   }, []);
 
+  // First-time players get a random look (persisted so it stays stable); done after mount to avoid a
+  // hydration mismatch on the color inputs.
+  useEffect(() => {
+    if (window.localStorage.getItem(LOOK_KEYS.skin)) return;
+    const look = randomLook();
+    setLook(look);
+    window.localStorage.setItem(LOOK_KEYS.skin, look.skin);
+    window.localStorage.setItem(LOOK_KEYS.shirt, look.shirt);
+    window.localStorage.setItem(LOOK_KEYS.hair, look.hair);
+  }, []);
+
   useEffect(() => {
     let alive = true;
     resolveTenant()
@@ -205,8 +217,8 @@ export default function Game() {
     gameApiRef.current?.setAdminPeace(!room.peace);
   }, [room.peace]);
 
-  const toggleStructure = useCallback((kind: string, blocked: boolean) => {
-    gameApiRef.current?.setAdminStructure(kind, blocked);
+  const toggleStructure = useCallback((kind: string, allowed: boolean) => {
+    gameApiRef.current?.setAdminStructure(kind, allowed);
   }, []);
 
   useEffect(() => {
@@ -315,6 +327,18 @@ export default function Game() {
     return () => window.removeEventListener('keydown', onKey);
   }, [loginStep, discardName]);
 
+  // Clicking outside an open in-game overlay closes it.
+  useEffect(() => {
+    if (!adminOpen && !rosterOpen) return;
+    function onDown(event: PointerEvent): void {
+      const target = event.target as Node;
+      if (adminOpen && !document.getElementById('adminPanel')?.contains(target)) setAdminOpen(false);
+      if (rosterOpen && !document.getElementById('presence')?.contains(target)) setRosterOpen(false);
+    }
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [adminOpen, rosterOpen]);
+
   const requestCode = useCallback(async () => {
     if (!brand) return;
     setLoginBusy(true);
@@ -378,33 +402,6 @@ export default function Game() {
 
   // A logged-in player can rename without re-emailing. On success we update the stored session +
   // name field so the next Join carries the new name (resolveClaim keys on it), and show a toast.
-  const changeName = useCallback(async () => {
-    const session = loadSession();
-    if (!session || !brand) return;
-    const prompted = window.prompt(t('rename.prompt'), session.name);
-    if (prompted === null) return;
-    const newName = prompted.trim();
-    if (!newName || newName === session.name) return;
-    try {
-      const res = await fetch('/api/auth/rename', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tenant: session.tenant, claim: session.claim, newName }),
-      });
-      const data = (await res.json()) as { ok: boolean; name?: string; error?: string };
-      if (!data.ok || !data.name) {
-        const key = data.error === 'name_taken' ? 'rename.error_name_taken' : 'rename.error_invalid';
-        setAuthToast(t(key));
-        return;
-      }
-      saveSession({ tenant: session.tenant, name: data.name, claim: session.claim });
-      onNameChange(data.name);
-      setAuthToast(t('rename.success', { name: data.name }));
-    } catch {
-      setAuthToast(t('rename.error_generic'));
-    }
-  }, [brand]);
-
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
   if (!brand) return null;
 
@@ -431,7 +428,7 @@ export default function Game() {
           <button className="btn" id="helpBtn">{t('hud.controls')}</button>
           <button className="btn" id="buildBtn">{t('hud.build')}</button>
           <button className="btn" id="flyBtn">{t('hud.fly')}</button>
-          <button className="btn on" id="modeBtn">{t('hud.peace_on')}</button>
+          <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}</button>
         </div>
       </div>
 
@@ -459,10 +456,10 @@ export default function Game() {
             <div id="adminBody">
               <button
                 id="adminPeace"
-                className={room.peace ? 'on' : undefined}
+                className={room.peace ? undefined : 'on'}
                 onClick={toggleRoomPeace}
               >
-                {room.peace ? t('hud.peace_on') : t('hud.peace_off')}
+                {room.peace ? t('game_admin.monsters_calm') : t('game_admin.monsters_attack')}
               </button>
               <span className="adminLabel">{t('game_admin.structures')}</span>
               <ul id="adminStructures">
@@ -473,7 +470,7 @@ export default function Game() {
                       <span>{t(STRUCTURE_LABEL_KEYS[kind])}</span>
                       <button
                         className={blocked ? 'blocked' : 'allowed'}
-                        onClick={() => toggleStructure(kind, !blocked)}
+                        onClick={() => toggleStructure(kind, blocked)}
                       >
                         {blocked ? t('game_admin.blocked') : t('game_admin.allowed')}
                       </button>
@@ -495,7 +492,12 @@ export default function Game() {
       )}
 
       {loginStep && (
-        <div id="loginModal" role="dialog" aria-modal="true">
+        <div
+          id="loginModal"
+          role="dialog"
+          aria-modal="true"
+          onClick={(event) => { if (event.target === event.currentTarget) discardName(); }}
+        >
           <div className="panel">
             {loginStep === 'email' && (
               <>
@@ -668,7 +670,6 @@ export default function Game() {
         </label>
         {loggedIn && (
           <div id="sessionActions">
-            <button id="renameBtn" className="ghost" onClick={changeName}>{t('rename.button')}</button>
             <button id="logoutBtn" className="ghost" onClick={logout}>{t('login.logout')}</button>
           </div>
         )}

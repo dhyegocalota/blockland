@@ -393,7 +393,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // everyone, and blocked structures disable those entries in the build menu.
   function applyRoomState({ peace, blockedStructures: blocked }: { peace: boolean; blockedStructures: string[] }): void {
     peaceful = peace;
-    syncPeaceUi();
     blockedStructures.clear();
     for (const kind of blocked) blockedStructures.add(kind);
     syncBuildMenu();
@@ -508,6 +507,18 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     setTimeout(() => heartsEl.classList.remove('hit'), 300);
     updateStats();
     if (player.hearts <= 0) napAndRespawn();
+  }
+  // In co-op the server owns the creatures, but each client still takes its own damage from the
+  // server-synced monsters when the room is not at peace (so monsters actually attack again).
+  function hurtFromServerCreatures(dt: number): void {
+    player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
+    if (peaceful || player.hurtCooldown > 0 || !coop) return;
+    for (const cr of coop.getCreatures()) {
+      if (creatureDefFor(cr.kind).kind !== 'monster') continue;
+      const dist = Math.hypot(player.pos.x - cr.x, player.pos.z - cr.z);
+      const verticalGap = Math.abs(player.pos.y - EYE_HEIGHT - cr.y);
+      if (dist < 1.2 && verticalGap < 1.6) { hurtPlayer(); return; }
+    }
   }
   function napAndRespawn(): void {
     toast(t('toast.nap'));
@@ -886,7 +897,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (b) selectSlot(b.id);
     if (e.code === 'KeyF') toggleFly();
     if (e.code === 'KeyV') toggleControls();
-    if (e.code === 'KeyP') requestPeace();
     if (e.code === 'KeyB') toggleBuildMenu();
   }
 
@@ -906,6 +916,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   function toggleControls(): void { controlsEl.hidden ? showControls() : hideControls(); }
   el('helpBtn').addEventListener('click', (e) => { e.stopPropagation(); showControls(); }, { signal });
   el('closeControls').addEventListener('click', (e) => { e.stopPropagation(); hideControls(); }, { signal });
+  controlsEl.addEventListener('click', (e) => { if (e.target === controlsEl) hideControls(); }, { signal });
 
   // ---------- Build menu ----------
   const buildMenuEl = el('buildMenu');
@@ -922,6 +933,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   function toggleBuildMenu(): void { buildMenuEl.hidden ? showBuildMenu() : hideBuildMenu(); }
   el('buildBtn').addEventListener('click', (e) => { e.stopPropagation(); showBuildMenu(); }, { signal });
   el('closeBuild').addEventListener('click', (e) => { e.stopPropagation(); hideBuildMenu(); }, { signal });
+  buildMenuEl.addEventListener('click', (e) => { if (e.target === buildMenuEl) hideBuildMenu(); }, { signal });
   buildMenuEl.querySelectorAll<HTMLButtonElement>('.buildCard').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -998,21 +1010,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   el('flyBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFly(); }, { signal });
 
-  // Peace is now room-wide and admin-controlled: the button only reflects the room state, and only an
-  // admin's click asks the server to flip it. A non-admin click is a no-op (read-only).
-  const modeBtn = el('modeBtn');
-  function syncPeaceUi(): void {
-    modeBtn.classList.toggle('on', peaceful);
-    modeBtn.textContent = peaceful ? t('hud.peace_on') : t('hud.peace_off');
-  }
-  function requestPeace(): void {
-    if (!coop?.isAdmin) { toast(t('toast.peace_admin_only')); return; }
-    coop.sendAdminSetPeace(!peaceful);
-    debug('engine', 'peace requested', { next: !peaceful });
-  }
-  modeBtn.addEventListener('click', (e) => { e.stopPropagation(); requestPeace(); }, { signal });
-  syncPeaceUi();
-
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
@@ -1027,7 +1024,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
     if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
-    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (!coop) updateCreatures(dt); updatePoofs(dt); }
+    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (coop) hurtFromServerCreatures(dt); else updateCreatures(dt); updatePoofs(dt); }
     if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
     renderer.render(scene, camera);
     rafId = requestAnimationFrame(loop);
