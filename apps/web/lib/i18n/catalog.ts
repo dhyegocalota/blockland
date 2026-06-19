@@ -69,6 +69,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block_keys': 'Teclas 1 a 9',
     'start.play': '▶ JOGAR',
 
+    // Errors
+    'error.connect': '😕 Não consegui carregar o mundo. Verifique sua conexão e tente de novo.',
+
     // Toasts
     'toast.nap': '😴 Você cochilou! Voltando pra base...',
     'toast.flying': '✈️ Voando!',
@@ -201,6 +204,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.swap_block': 'Swap block',
     'start.swap_block_keys': 'Keys 1 to 9',
     'start.play': '▶ PLAY',
+
+    // Errors
+    'error.connect': "😕 Couldn't load the world. Check your connection and try again.",
 
     // Toasts
     'toast.nap': '😴 You dozed off! Heading back to base...',

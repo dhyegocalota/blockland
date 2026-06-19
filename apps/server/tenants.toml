@@ -1,5 +1,6 @@
-# White-label tenants: branding only. Limits are fixed and global (one room per tenant).
-# Override at runtime with TENANTS_FILE=/path/to/tenants.toml
+# Server-wide resource limits (fixed and global; one room per tenant).
+# Tenants themselves are dynamic and live in the database (seeded on first run).
+# Override at runtime with TENANTS_FILE=/path/to/limits.toml
 
 [limits]
 max_players_per_room = 10
@@ -11,14 +12,3 @@ chat_per_sec = 2.0
 idle_secs = 45
 edit_reach = 9.0
 max_speed = 18.0
-
-[[tenant]]
-id = "teo"
-name = "Teocraft"
-primary = "#ffd23f"
-logo = "/tenants/teo/avatar.png"
-
-[[tenant]]
-id = "demo"
-name = "Demo World"
-primary = "#3dc6ff"

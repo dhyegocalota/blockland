@@ -3,26 +3,34 @@
 import { useEffect, useState } from 'react';
 import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
-import { debug } from '../lib/log';
+import { debug, warn } from '../lib/log';
 
 export default function Game() {
   const [brand, setBrand] = useState<Brand | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
     let alive = true;
-    resolveTenant().then((active) => {
-      if (!alive) return;
-      debug('tenant', 'active tenant', { id: active.id, name: active.name });
-      setBrand(active);
-      import('../lib/game-engine').then((mod) => {
-        debug('engine', 'engine module loaded', { id: active.id, name: active.name });
-        cleanup = mod.initGame(active);
+    resolveTenant()
+      .then((active) => {
+        if (!alive) return;
+        debug('tenant', 'active tenant', { id: active.id, name: active.name });
+        setBrand(active);
+        import('../lib/game-engine').then((mod) => {
+          debug('engine', 'engine module loaded', { id: active.id, name: active.name });
+          cleanup = mod.initGame(active);
+        });
+      })
+      .catch((err) => {
+        if (!alive) return;
+        warn('tenant', 'failed to load tenant', { error: String(err) });
+        setFailed(true);
       });
-    });
     return () => { alive = false; if (cleanup) cleanup(); };
   }, []);
 
+  if (failed) return <div id="loadError">{t('error.connect')}</div>;
   if (!brand) return null;
 
   return (
