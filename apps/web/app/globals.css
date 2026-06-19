@@ -296,6 +296,37 @@ canvas { display: block; }
   width: 100%; outline: none; box-shadow: 0 4px 12px #0004;
 }
 
+/* ---------- Online presence ---------- */
+#presence {
+  position: fixed; left: 12px; top: 64px; z-index: 35; pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: min(220px, 60vw);
+}
+#presenceToggle {
+  pointer-events: auto; font-family: inherit; font-weight: 900; font-size: 15px; color: #fff;
+  background: rgba(42,26,74,.55); border: 2px solid rgba(255,255,255,.5); border-radius: 14px;
+  padding: 5px 12px; cursor: pointer; backdrop-filter: blur(6px); white-space: nowrap;
+}
+#presence.open #presenceToggle { border-color: var(--gold); }
+#presenceList {
+  pointer-events: auto; list-style: none; display: flex; flex-direction: column; gap: 4px;
+  background: rgba(20,12,40,.55); border: 2px solid rgba(255,255,255,.35); border-radius: 12px;
+  padding: 8px 12px; backdrop-filter: blur(6px); max-width: 100%; animation: chatIn .2s ease both;
+}
+#presenceList li { color: #fff; font-weight: 700; font-size: 14px; word-break: break-word; }
+#presenceList li.self { color: var(--gold); }
+
+/* ---------- Event feed (system events, next to chat) ---------- */
+#feed {
+  position: fixed; left: 16px; bottom: 152px; z-index: 29; width: min(360px, 80vw);
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start; pointer-events: none;
+}
+.feedLine {
+  display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,.78);
+  font-style: italic; font-weight: 700; font-size: 13px; text-shadow: 0 1px 3px #000a;
+  animation: chatIn .2s ease both;
+}
+.feedIcon { font-style: normal; opacity: .85; }
+
 /* ---------- Debug panel (F3) ---------- */
 #debugPanel {
   position: fixed; left: 12px; top: 12px; z-index: 70; pointer-events: none;

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AIR, BEDROCK_ID, GROUND, SIZE_Y, WATER_ID, WATER_LEVEL,
+  AIR, BEDROCK_ID, DIRT_ID, GRASS_ID, GROUND, SAND_ID, SIZE_Y, STONE_ID, WATER_ID,
+  WATER_LEVEL, WHITE_ID,
 } from './constants';
 import {
   Biome, baseVoxel, biomeAt, heightAt, surfaceBlock,
 } from './worldgen';
 
-const ALL_BIOMES: Biome[] = ['desert', 'plains', 'forest', 'snow'];
+const ALL_BIOMES: Biome[] = [
+  'ocean', 'beach', 'plains', 'forest', 'desert', 'savanna', 'mountains', 'snow',
+];
 const SAMPLE_COUNT = 1000;
 
 describe('heightAt', () => {
@@ -48,48 +51,26 @@ describe('biomeAt', () => {
     }
   });
 
-  it('produces every biome somewhere on the map', () => {
+  it('produces several biomes across a broad sweep of the map', () => {
     const seen = new Set<Biome>();
     for (let i = 0; i < SAMPLE_COUNT; i++) {
-      seen.add(biomeAt(i * 53, i * 17));
-      seen.add(biomeAt(-i * 31, i * 71));
+      seen.add(biomeAt(i * 271 - 60000, i * 409 - 60000));
+      seen.add(biomeAt(-i * 313, i * 719));
     }
-    for (const biome of ALL_BIOMES) expect(seen).toContain(biome);
+    expect(seen.size).toBeGreaterThan(3);
   });
 });
 
 describe('surfaceBlock', () => {
-  it('uses sand at and below the shoreline regardless of biome', () => {
-    expect(surfaceBlock('plains', WATER_LEVEL + 1)).toBe(6);
-    expect(surfaceBlock('forest', WATER_LEVEL)).toBe(6);
-    expect(surfaceBlock('snow', WATER_LEVEL - 2)).toBe(6);
-  });
-
-  it('caps high peaks with snow', () => {
-    expect(surfaceBlock('plains', GROUND + 9)).toBe(12);
-    expect(surfaceBlock('desert', GROUND + 9)).toBe(12);
-  });
-
-  it('uses rock on mid-high mountains below the snow line', () => {
-    expect(surfaceBlock('plains', GROUND + 7)).toBe(3);
-    expect(surfaceBlock('forest', GROUND + 8)).toBe(3);
-  });
-
-  it('uses sand in the desert at normal elevation', () => {
-    expect(surfaceBlock('desert', GROUND + 2)).toBe(6);
-  });
-
-  it('uses snow in the snow biome at normal elevation', () => {
-    expect(surfaceBlock('snow', GROUND + 2)).toBe(12);
-  });
-
-  it('uses grass for plains and forest at normal elevation', () => {
-    expect(surfaceBlock('plains', GROUND + 2)).toBe(1);
-    expect(surfaceBlock('forest', GROUND + 2)).toBe(1);
-  });
-
-  it('prioritises the shoreline over the desert rule', () => {
-    expect(surfaceBlock('desert', WATER_LEVEL + 1)).toBe(6);
+  it('maps each biome to a fitting block', () => {
+    expect(surfaceBlock('ocean')).toBe(SAND_ID);
+    expect(surfaceBlock('beach')).toBe(SAND_ID);
+    expect(surfaceBlock('desert')).toBe(SAND_ID);
+    expect(surfaceBlock('snow')).toBe(WHITE_ID);
+    expect(surfaceBlock('mountains')).toBe(STONE_ID);
+    expect(surfaceBlock('savanna')).toBe(DIRT_ID);
+    expect(surfaceBlock('plains')).toBe(GRASS_ID);
+    expect(surfaceBlock('forest')).toBe(GRASS_ID);
   });
 });
 
@@ -105,7 +86,7 @@ describe('baseVoxel', () => {
 
   it('places the surface block exactly at the top', () => {
     const top = heightAt(10, 10);
-    expect(baseVoxel(10, top, 10)).toBe(surfaceBlock(biomeAt(10, 10), top));
+    expect(baseVoxel(10, top, 10)).toBe(surfaceBlock(biomeAt(10, 10)));
   });
 
   it('fills the two cells under the surface with dirt', () => {

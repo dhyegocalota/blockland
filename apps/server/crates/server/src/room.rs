@@ -325,11 +325,10 @@ impl Room {
                 let (dx, dy, dz) = (x - p.x, y - p.y, z - p.z);
                 let dist = (dx * dx + dy * dy + dz * dz).sqrt();
                 let allowed = max_speed * dt + 2.0;
-                let span = 0.0..=sim::WORLD_SIZE as f32;
-                let in_world = span.contains(&x)
-                    && span.contains(&z)
-                    && y > -32.0
-                    && y < sim::SIZE_Y as f32 + 64.0;
+                let horizontal = 0.0..=sim::WORLD_SIZE as f32;
+                let in_world = horizontal.contains(&x)
+                    && horizontal.contains(&z)
+                    && (0.0..=sim::MAX_FLY_Y as f32).contains(&y);
                 if dist <= allowed && in_world && x.is_finite() && y.is_finite() && z.is_finite() {
                     p.x = x;
                     p.y = y;

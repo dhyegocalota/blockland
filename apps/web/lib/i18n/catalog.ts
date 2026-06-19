@@ -126,6 +126,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'chat.placeholder': 'Escreva uma mensagem...',
     'chat.line': '{name}: {text}',
 
+    // Presence + event feed
+    'presence.you': '{name} (você)',
+    'feed.joined': '{name} entrou',
+    'feed.left': '{name} saiu',
+
     // Debug panel (F3)
     'debug.title': '🛠️ Debug (F3)',
     'debug.fps': 'FPS',
@@ -364,6 +369,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     // Chat
     'chat.placeholder': 'Write a message...',
     'chat.line': '{name}: {text}',
+
+    // Presence + event feed
+    'presence.you': '{name} (you)',
+    'feed.joined': '{name} joined',
+    'feed.left': '{name} left',
 
     // Debug panel (F3)
     'debug.title': '🛠️ Debug (F3)',

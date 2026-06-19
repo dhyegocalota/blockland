@@ -270,6 +270,32 @@ impl Db {
         Ok(scores)
     }
 
+    /// Top scores whose best was set on/after `since_ms` — the "last N days" leaderboard view.
+    pub async fn top_scores_since(
+        &self,
+        tenant: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<ScoreEntry>, libsql::Error> {
+        let clamped = limit.clamp(1, MAX_TOP_LIMIT) as i64;
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT name, score FROM leaderboard
+                 WHERE tenant = ?1 AND created_at >= ?2 ORDER BY score DESC, created_at ASC LIMIT ?3",
+                params![tenant.trim(), since_ms, clamped],
+            )
+            .await?;
+        let mut scores = Vec::new();
+        while let Some(row) = rows.next().await? {
+            scores.push(ScoreEntry {
+                name: row.get::<String>(0)?,
+                score: row.get::<i64>(1)?,
+            });
+        }
+        Ok(scores)
+    }
+
     /// Authoritative score write: keeps the best score per name, clamps the name length, and
     /// rejects invalid scores. Returns the stored entry, or `None` if the input was invalid.
     pub async fn submit_score(

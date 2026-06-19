@@ -315,12 +315,26 @@ async fn internal_leaderboard(
     if let Some(resp) = verify_internal(&state.auth, "GET", &original_uri.0, &headers, b"") {
         return resp;
     }
-    match state
-        .hub
-        .db
-        .top_scores(&tenant, db::default_top_limit())
-        .await
-    {
+    let window = original_uri
+        .0
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("window=")));
+    let limit = db::default_top_limit();
+    let result = if window == Some("month") {
+        const MONTH_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        state
+            .hub
+            .db
+            .top_scores_since(&tenant, now - MONTH_MS, limit)
+            .await
+    } else {
+        state.hub.db.top_scores(&tenant, limit).await
+    };
+    match result {
         Ok(scores) => Json(scores).into_response(),
         Err(e) => internal_error(e),
     }

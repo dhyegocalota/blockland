@@ -4,7 +4,7 @@ import { t } from './i18n';
 import { debug } from './log';
 import {
   AIR, CHUNK, EYE_HEIGHT, FACE_ID, FLY_SPEED, GRAVITY, JUMP_SPEED, PLAYER_HEIGHT,
-  PLAYER_RADIUS, REACH, SIZE_X, SIZE_Y, SIZE_Z, WALK_SPEED,
+  PLAYER_RADIUS, REACH, SIZE_X, SIZE_Y, SIZE_Z, WALK_SPEED, clampToWorld,
 } from './engine/constants';
 import { BLOCKS, type BlockDef, blockById } from './engine/blocks';
 import { heightAt } from './engine/worldgen';
@@ -714,6 +714,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     stepAxis('y', player.vel.y * dt);
 
     if (player.pos.y < -8) { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); }
+    clampToWorld(player.pos);
 
     camera.position.copy(player.pos);
     const lookDir = new THREE.Vector3(

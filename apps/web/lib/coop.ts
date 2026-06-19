@@ -12,6 +12,7 @@ import { RemoteInterpolator } from './engine/interpolation';
 import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
 import type { EditCell, EditOp } from './protocol';
+import type { FeedEvent, RosterMember } from './feed';
 
 // One persistent world per tenant (see apps/server model); the world name is fixed and global.
 export const MAIN_WORLD = 'main';
@@ -40,11 +41,17 @@ export interface LocalPose {
   pitch: number;
 }
 
+export interface RosterEntry extends RosterMember {
+  self: boolean;
+}
+
 export interface CoopHud {
   onState(state: NetState): void;
   onPing(ping: number): void;
   onChat(name: string, text: string): void;
   onCount(online: number): void;
+  onRoster(players: RosterEntry[]): void;
+  onEvent(event: FeedEvent): void;
   onError(code: string): void;
 }
 
@@ -65,6 +72,7 @@ export interface CoopOptions {
 }
 
 interface Avatar {
+  name: string;
   group: THREE.Group;
   label: THREE.Sprite;
   bubble: THREE.Sprite | null;
@@ -164,7 +172,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     label.position.y = AVATAR_HEIGHT + LABEL_LIFT;
     group.add(label);
     scene.add(group);
-    const avatar: Avatar = { group, label, bubble: null, bubbleTimer: 0, interp: new RemoteInterpolator() };
+    const avatar: Avatar = { name, group, label, bubble: null, bubbleTimer: 0, interp: new RemoteInterpolator() };
     avatars.set(id, avatar);
     debug('coop', 'avatar spawned', { id, name });
     return avatar;
@@ -257,12 +265,22 @@ export function createCoop(opts: CoopOptions): CoopController {
             continue;
           }
           seen.add(p.id);
-          const avatar = avatars.get(p.id) ?? spawnAvatar(p.id, p.name, { skin: p.skin, shirt: p.shirt, hair: p.hair });
+          if (avatars.has(p.id)) {
+            avatars.get(p.id)!.interp.push({ t: performance.now(), x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
+            continue;
+          }
+          const avatar = spawnAvatar(p.id, p.name, { skin: p.skin, shirt: p.shirt, hair: p.hair });
           avatar.interp.push({ t: performance.now(), x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
+          opts.hud.onEvent({ kind: 'join', name: p.name });
         }
-        for (const id of [...avatars.keys()]) if (!seen.has(id)) removeAvatar(id);
+        for (const id of [...avatars.keys()]) {
+          if (seen.has(id)) continue;
+          opts.hud.onEvent({ kind: 'leave', name: avatars.get(id)!.name });
+          removeAvatar(id);
+        }
         onlineCount = msg.players.length;
         opts.hud.onCount(onlineCount);
+        opts.hud.onRoster(msg.players.map((p) => ({ id: p.id, name: p.name, self: p.id === selfId })));
         opts.hud.onPing(selfPing);
       },
       onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id }),

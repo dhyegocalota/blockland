@@ -6,7 +6,8 @@ import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
 import type { CoopBridge, DebugSnapshot } from '../lib/game-engine';
-import type { Appearance } from '../lib/coop';
+import type { Appearance, RosterEntry } from '../lib/coop';
+import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
 import type { NetState } from '../lib/net';
 
 const NAME_KEY = 'bl-name';
@@ -73,6 +74,9 @@ export default function Game() {
   const [netState, setNetState] = useState<NetState | null>(null);
   const [ping, setPing] = useState(0);
   const [online, setOnline] = useState(1);
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
@@ -90,11 +94,18 @@ export default function Game() {
   const loginClearedRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatLineId = useRef(0);
+  const feedEntryId = useRef(0);
 
   const pushChatLine = useCallback((from: string, text: string) => {
     const id = chatLineId.current++;
     setChatLines((lines) => [...lines, { id, name: from, text }].slice(-CHAT_BACKLOG));
     setTimeout(() => setChatLines((lines) => lines.filter((line) => line.id !== id)), CHAT_FADE_MS);
+  }, []);
+
+  const pushFeedEntry = useCallback((event: FeedEvent) => {
+    const id = feedEntryId.current++;
+    setFeed((entries) => pushFeed({ entries, event, id, now: Date.now() }));
+    setTimeout(() => setFeed((entries) => entries.filter((entry) => entry.id !== id)), CHAT_FADE_MS);
   }, []);
 
   useEffect(() => {
@@ -115,6 +126,8 @@ export default function Game() {
             onPing: (value) => setPing(value),
             onChat: (from, text) => pushChatLine(from, text),
             onCount: (count) => setOnline(count),
+            onRoster: (players) => setRoster(players),
+            onEvent: (event) => pushFeedEntry(event),
             onError: (code) => {
               const key = AUTH_ERROR_KEYS[code];
               if (key) setAuthToast(t(key));
@@ -133,7 +146,7 @@ export default function Game() {
         setFailed(true);
       });
     return () => { alive = false; if (cleanup) cleanup(); };
-  }, [pushChatLine]);
+  }, [pushChatLine, pushFeedEntry]);
 
   const openChat = useCallback(() => {
     setChatOpen(true);
@@ -318,6 +331,21 @@ export default function Game() {
         </div>
       </div>
 
+      <div id="presence" className={rosterOpen ? 'open' : undefined}>
+        <button id="presenceToggle" onClick={() => setRosterOpen((open) => !open)} aria-expanded={rosterOpen}>
+          👥 {online}
+        </button>
+        {rosterOpen && (
+          <ul id="presenceList">
+            {roster.map((player) => (
+              <li key={player.id} className={player.self ? 'self' : undefined}>
+                {player.self ? t('presence.you', { name: player.name }) : player.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {bannerKey && (
         <div id="netBanner" className={severe ? 'severe' : undefined} role="status">{t(bannerKey)}</div>
       )}
@@ -381,6 +409,15 @@ export default function Game() {
           </div>
         </div>
       )}
+
+      <div id="feed">
+        {feed.map((entry) => (
+          <div className="feedLine" key={entry.id}>
+            <span className="feedIcon">{entry.kind === 'join' ? '➕' : '➖'}</span>
+            {t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name })}
+          </div>
+        ))}
+      </div>
 
       <div id="chat">
         <div id="chatLog">
