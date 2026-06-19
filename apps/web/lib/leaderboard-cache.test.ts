@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { LEADERBOARD_TTL_MS, clearCache, readCache, writeCache } from './leaderboard-cache';
+import { LEADERBOARD_MAX_ENTRIES, LEADERBOARD_TTL_MS, clearCache, readCache, writeCache } from './leaderboard-cache';
 
 afterEach(() => clearCache());
 
@@ -23,5 +23,16 @@ describe('leaderboard cache', () => {
     writeCache('teo:all', [{ name: 'Ana', score: 42 }], 0);
     writeCache('teo:month', [{ name: 'Bea', score: 9 }], 0);
     expect(readCache('teo:month', 0)).toEqual([{ name: 'Bea', score: 9 }]);
+  });
+
+  it('never grows past the entry ceiling', () => {
+    for (let i = 0; i < LEADERBOARD_MAX_ENTRIES + 200; i++) {
+      writeCache(`tenant${i}:all`, [{ name: 'X', score: i }], 0);
+    }
+    let live = 0;
+    for (let i = 0; i < LEADERBOARD_MAX_ENTRIES + 200; i++) {
+      if (readCache(`tenant${i}:all`, 0) !== null) live++;
+    }
+    expect(live).toBeLessThanOrEqual(LEADERBOARD_MAX_ENTRIES);
   });
 });

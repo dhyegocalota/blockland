@@ -14,6 +14,7 @@ type Status = 'loading' | 'ready' | 'error';
 
 const TOP_VISIBLE = 10;
 const CLIENT_CACHE_MS = 60_000;
+const MEDALS = ['🥇', '🥈', '🥉'];
 
 interface CacheRecord {
   scores: ScoreEntry[];
@@ -98,8 +99,8 @@ export default function Leaderboard({ tenant }: { tenant: string }) {
       {status === 'ready' && scores.length > 0 && (
         <ol className="boardList">
           {scores.map((entry, index) => (
-            <li key={`${entry.name}-${index}`}>
-              <span className="boardRank">{index + 1}</span>
+            <li key={`${entry.name}-${index}`} className={index < MEDALS.length ? 'top' : undefined}>
+              <span className="boardRank">{index < MEDALS.length ? MEDALS[index] : index + 1}</span>
               <span className="boardName">{entry.name}</span>
               <span className="boardScore">{entry.score}</span>
             </li>
