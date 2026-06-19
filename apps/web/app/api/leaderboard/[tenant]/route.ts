@@ -1,5 +1,5 @@
-// Public: top scores for a tenant's leaderboard.
-import { topScores } from '../../../../lib/leaderboard';
+// Public: top scores for a tenant's leaderboard. Proxies to the Rust internal data API.
+import { topScores } from '../../../../lib/rust-api';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

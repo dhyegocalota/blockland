@@ -1,0 +1,105 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const GOLDEN = {
+  secret: 'bl-internal-test-secret',
+  method: 'POST',
+  path: '/internal/tenants',
+  ts: '1700000000',
+  nonce: '0123456789abcdef',
+  body: '{"id":"x"}',
+  signature: '8400280bdd1590664580d3486483a3cf5d75a92f1e0534ea6f7a596e816051b2',
+};
+
+let api: typeof import('./rust-api');
+
+beforeEach(async () => {
+  vi.resetModules();
+  process.env.INTERNAL_HMAC_SECRET = GOLDEN.secret;
+  process.env.RUST_API_URL = 'http://rust.test:9090';
+  api = await import('./rust-api');
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('rust-api signer', () => {
+  it('reproduces the golden signature for the fixed inputs', () => {
+    const signature = api.sign({
+      method: GOLDEN.method,
+      path: GOLDEN.path,
+      ts: GOLDEN.ts,
+      nonce: GOLDEN.nonce,
+      body: GOLDEN.body,
+    });
+    expect(signature).toBe(GOLDEN.signature);
+  });
+});
+
+describe('signedFetch', () => {
+  it('sets the three signing headers and hits the right URL', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('[]', { status: 200 }));
+
+    await api.signedFetch('GET', '/internal/tenants');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://rust.test:9090/internal/tenants');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['x-bl-ts']).toMatch(/^\d+$/);
+    expect(headers['x-bl-nonce']).toMatch(/^[0-9a-f]{32}$/);
+    expect(headers['x-bl-sig']).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('signs the request body and matches the golden signature', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.spyOn(Date, 'now').mockReturnValue(Number(GOLDEN.ts) * 1000);
+
+    await api.signedFetch('POST', '/internal/tenants', { id: 'x' });
+
+    const init = fetchMock.mock.calls[0][1];
+    const headers = init?.headers as Record<string, string>;
+    expect(init?.body).toBe(GOLDEN.body);
+    expect(headers['x-bl-ts']).toBe(GOLDEN.ts);
+    const expected = api.sign({
+      method: GOLDEN.method,
+      path: GOLDEN.path,
+      ts: GOLDEN.ts,
+      nonce: headers['x-bl-nonce'],
+      body: GOLDEN.body,
+    });
+    expect(headers['x-bl-sig']).toBe(expected);
+  });
+});
+
+describe('typed helpers', () => {
+  it('getTenant returns null on 404', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    expect(await api.getTenant('nope')).toBeNull();
+  });
+
+  it('getTenant returns the tenant on 200', async () => {
+    const tenant = { id: 'teo', name: 'Teocraft' };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(tenant), { status: 200 }),
+    );
+    expect(await api.getTenant('teo')).toMatchObject(tenant);
+  });
+
+  it('topScores requests the leaderboard path with limit', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('[]', { status: 200 }));
+    await api.topScores('teo', 5);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://rust.test:9090/internal/leaderboard/teo?limit=5');
+  });
+
+  it('deleteTenant throws on a non-ok response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
+    await expect(api.deleteTenant('teo')).rejects.toThrow();
+  });
+});

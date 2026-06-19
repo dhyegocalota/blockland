@@ -1,5 +1,5 @@
-// Public: resolve a tenant's branding by id (used by the client per subdomain/query).
-import { getTenant } from '../../../../lib/tenant-store';
+// Public: resolve a tenant's branding by id. Proxies to the Rust internal data API.
+import { getTenant } from '../../../../lib/rust-api';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

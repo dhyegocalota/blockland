@@ -2,6 +2,11 @@
 FROM rust:1-slim-bookworm AS build
 WORKDIR /app
 
+# libsql bundles SQLite (C) and links via clang/bindgen.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends clang libclang-dev pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+
 # Cache dependency builds: copy manifests + stub sources first.
 COPY Cargo.toml ./
 COPY crates/protocol/Cargo.toml crates/protocol/Cargo.toml
@@ -25,6 +30,7 @@ RUN apt-get update \
 COPY --from=build /app/target/release/server /usr/local/bin/server
 COPY tenants.toml /etc/teocraft/tenants.toml
 ENV TENANTS_FILE=/etc/teocraft/tenants.toml \
+    DATABASE_PATH=/var/lib/teocraft/blocklandia.db \
     BIND=0.0.0.0:8080 \
     RUST_LOG=info,server=debug
 EXPOSE 8080

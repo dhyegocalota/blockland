@@ -11,17 +11,16 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::bans::Bans;
+use crate::db::{Db, Tenant};
 use crate::room::{Room, RoomCmd};
 
 pub type RoomKey = (String, String);
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TenantCfg {
     pub id: String,
     pub name: String,
-    #[serde(default = "default_primary")]
     pub primary: String,
-    #[serde(default)]
     pub logo: Option<String>,
 }
 
@@ -63,9 +62,6 @@ impl Default for Limits {
     }
 }
 
-fn default_primary() -> String {
-    "#ffd23f".into()
-}
 fn d_players() -> usize {
     10
 }
@@ -96,8 +92,6 @@ fn d_speed() -> f32 {
 
 #[derive(Debug, Deserialize)]
 struct FileConfig {
-    #[serde(default)]
-    tenant: Vec<TenantCfg>,
     #[serde(default)]
     limits: Limits,
 }
@@ -151,32 +145,25 @@ pub struct Hub {
     next_id: AtomicU32,
     pub admin_token: String,
     pub bans: Arc<Bans>,
+    pub db: Arc<Db>,
 }
 
 impl Hub {
-    pub fn load() -> Self {
+    /// Build the hub from the authoritative database (the source of tenants) and the optional
+    /// `TENANTS_FILE` (limits only). The db seeds the built-in tenants on first run, so the
+    /// tenant list is always populated even on a fresh database.
+    pub async fn load(db: Arc<Db>) -> Self {
         let admin_token =
             std::env::var("ADMIN_TOKEN").unwrap_or_else(|_| "dev-admin-secret".into());
-        let (tenants, limits) = match std::env::var("TENANTS_FILE").ok() {
-            Some(path) => match std::fs::read_to_string(&path) {
-                Ok(text) => match toml::from_str::<FileConfig>(&text) {
-                    Ok(cfg) => (cfg.tenant, cfg.limits),
-                    Err(e) => {
-                        tracing::error!(%path, error=%e, "invalid tenants file, using defaults");
-                        (default_tenants(), Limits::default())
-                    }
-                },
-                Err(_) => {
-                    tracing::warn!(%path, "tenants file not found, using defaults");
-                    (default_tenants(), Limits::default())
-                }
-            },
-            None => (default_tenants(), Limits::default()),
-        };
+        let limits = load_limits();
 
+        let tenants = db.list_tenants().await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "failed to load tenants from db");
+            Vec::new()
+        });
         let map = tenants
             .into_iter()
-            .map(|t| (t.id.clone(), t))
+            .map(|t| (t.id.clone(), tenant_to_cfg(t)))
             .collect::<HashMap<_, _>>();
         tracing::info!(tenants = map.len(), "hub loaded");
         Self {
@@ -188,6 +175,7 @@ impl Hub {
             next_id: AtomicU32::new(1),
             admin_token,
             bans: Arc::new(Bans::load()),
+            db,
         }
     }
 
@@ -283,12 +271,31 @@ impl Hub {
     }
 }
 
-// Fallback only when no tenants file is provided. Real tenants come from tenants.toml.
-fn default_tenants() -> Vec<TenantCfg> {
-    vec![TenantCfg {
-        id: "demo".into(),
-        name: "Blocklandia".into(),
-        primary: "#3dc6ff".into(),
-        logo: None,
-    }]
+// Limits stay in `TENANTS_FILE` (branding now lives in the database). Defaults when absent.
+fn load_limits() -> Limits {
+    let Ok(path) = std::env::var("TENANTS_FILE") else {
+        return Limits::default();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        tracing::warn!(%path, "tenants file not found, using default limits");
+        return Limits::default();
+    };
+    match toml::from_str::<FileConfig>(&text) {
+        Ok(cfg) => cfg.limits,
+        Err(e) => {
+            tracing::error!(%path, error = %e, "invalid tenants file, using default limits");
+            Limits::default()
+        }
+    }
+}
+
+// The room/brand path only needs id, name, primary color and a logo. The avatar doubles as
+// the white-label logo (matching the old `tenants.toml` mapping).
+fn tenant_to_cfg(tenant: Tenant) -> TenantCfg {
+    TenantCfg {
+        id: tenant.id,
+        name: tenant.name,
+        primary: tenant.primary,
+        logo: Some(tenant.avatar),
+    }
 }

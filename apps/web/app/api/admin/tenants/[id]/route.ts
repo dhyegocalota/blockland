@@ -1,5 +1,5 @@
-// Admin: delete a tenant. Protected by the fixed admin key.
-import { deleteTenant } from '../../../../../lib/tenant-store';
+// Admin: delete a tenant. Protected by the fixed admin key, then proxied to the Rust API.
+import { deleteTenant } from '../../../../../lib/rust-api';
 import { isAdmin } from '../../../../../lib/admin-auth';
 
 export const runtime = 'nodejs';
