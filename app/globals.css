@@ -127,7 +127,8 @@ canvas { display: block; }
 #controls[hidden] { display: none; }
 #controls .panel {
   background: linear-gradient(#ffffff, #e8f4ff); border: 6px solid #fff; border-radius: 28px;
-  padding: 22px 26px 26px; max-width: 720px; width: 100%; box-shadow: 0 24px 60px #0007; text-align: center;
+  padding: 22px 26px 26px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 24px 60px #0007; text-align: center;
   animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
 }
 #controls h2 { color: var(--ink); font-size: clamp(22px, 5vw, 30px); font-weight: 900; margin-bottom: 16px; }
@@ -152,7 +153,8 @@ canvas { display: block; }
 #buildMenu[hidden] { display: none; }
 #buildMenu .panel {
   background: linear-gradient(#ffffff, #e8f4ff); border: 6px solid #fff; border-radius: 28px;
-  padding: 24px 26px; max-width: 640px; width: 100%; box-shadow: 0 24px 60px #0007; text-align: center;
+  padding: 24px 26px; max-width: 640px; width: 100%; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 24px 60px #0007; text-align: center;
   animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
 }
 #buildMenu h2 { color: var(--ink); font-size: clamp(22px, 5vw, 30px); font-weight: 900; }
@@ -221,3 +223,21 @@ body.is-touch #topbar { top: 6px; gap: 5px; max-width: 100vw; padding: 0 6px; }
 body.is-touch #topbar .title { display: none; }
 body.is-touch #topbar img { width: 32px; height: 32px; }
 body.is-touch #topbar .stat { font-size: 13px; padding: 3px 8px; }
+body.is-touch #buildMenu .buildCard { width: 150px; padding: 12px 8px; font-size: 14px; }
+body.is-touch #buildMenu .buildCard .emoji { font-size: 40px; }
+body.is-touch #buildMenu h2 { font-size: 22px; margin-bottom: 8px; }
+body.is-touch #buildMenu .buildHint { margin: 6px 0 12px; font-size: 13px; }
+
+/* landscape phones: spread controls so nothing stacks on top of each other */
+@media (orientation: landscape) {
+  body.is-touch #topbar { left: 8px; transform: none; justify-content: flex-start; max-width: 48vw; }
+  body.is-touch #actionRow {
+    flex-direction: row; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end;
+    top: 6px; right: 8px; bottom: auto; max-width: 48vw; gap: 6px;
+  }
+  body.is-touch #joystick { left: 14px; bottom: 14px; width: 108px; height: 108px; }
+  body.is-touch #joyKnob { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+  body.is-touch #touchButtons { right: 12px; bottom: 12px; grid-template-columns: 64px 64px; gap: 9px; }
+  body.is-touch .tbtn { width: 64px; height: 64px; font-size: 26px; }
+  body.is-touch #hotbar { bottom: 6px; max-width: 46vw; }
+}
