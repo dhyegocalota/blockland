@@ -5,7 +5,7 @@ import 'server-only';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { Tenant } from './builtins';
 
-const DEFAULT_RUST_API_URL = 'http://localhost:8080';
+const DEFAULT_API_URL = 'http://localhost:8080';
 const NONCE_BYTES = 16;
 const DEFAULT_TOP_LIMIT = 10;
 
@@ -21,7 +21,7 @@ function secret(): string {
 }
 
 function baseUrl(): string {
-  return process.env.RUST_API_URL || DEFAULT_RUST_API_URL;
+  return process.env.API_URL || DEFAULT_API_URL;
 }
 
 export function sign(params: {

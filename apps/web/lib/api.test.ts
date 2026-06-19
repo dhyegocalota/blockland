@@ -15,7 +15,7 @@ let api: typeof import('./api');
 beforeEach(async () => {
   vi.resetModules();
   process.env.INTERNAL_HMAC_SECRET = GOLDEN.secret;
-  process.env.RUST_API_URL = 'http://rust.test:9090';
+  process.env.API_URL = 'http://rust.test:9090';
   api = await import('./api');
 });
 

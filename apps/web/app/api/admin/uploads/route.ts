@@ -1,6 +1,6 @@
 // Admin: upload a tenant asset (avatar or face texture) through the signed Storage proxy.
 // Protected by the fixed admin key; builds a tenant-scoped key and forwards the raw bytes
-// to the Rust internal upload endpoint, which validates type/size and stores the object.
+// to the internal upload endpoint, which validates type/size and stores the object.
 import { uploadAsset } from '../../../../lib/api';
 import { isAdmin } from '../../../../lib/admin-auth';
 

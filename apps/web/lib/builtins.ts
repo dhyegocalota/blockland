@@ -1,5 +1,5 @@
 // Tenant data model + platform-level config. Tenant CONTENT (teo, demo, ...) lives in the
-// database, owned by the Rust server — nothing tenant-specific is hardcoded here.
+// database, owned by the server — nothing tenant-specific is hardcoded here.
 
 export interface Tenant {
   id: string;

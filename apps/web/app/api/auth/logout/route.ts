@@ -1,4 +1,4 @@
-// Log out: clears the claim for (tenant, name) on the Rust server, but only when the supplied claim
+// Log out: clears the claim for (tenant, name) on the server, but only when the supplied claim
 // token matches the live session. The kicked player's socket is then dropped on the next tick.
 import { authLogout } from '../../../../lib/auth';
 

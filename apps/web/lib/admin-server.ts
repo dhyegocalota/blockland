@@ -1,10 +1,10 @@
 // Server-side bridge to the Rust moderation API. The browser hits our /api/admin/* proxies
 // (gated by the web admin key via admin-auth); those proxies call here, which attaches the
-// server-only ADMIN_TOKEN (x-admin-token) and talks to the Rust server. The token never
+// server-only ADMIN_TOKEN (x-admin-token) and talks to the server. The token never
 // reaches the client, and upstream failures are mapped to a generic error.
 import 'server-only';
 
-const DEFAULT_RUST_API_URL = 'http://localhost:8080';
+const DEFAULT_API_URL = 'http://localhost:8080';
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 const IPV6 = /^[0-9a-fA-F:]+$/;
@@ -26,7 +26,7 @@ export class AdminUpstreamError extends Error {
 }
 
 function baseUrl(): string {
-  return process.env.RUST_API_URL || DEFAULT_RUST_API_URL;
+  return process.env.API_URL || DEFAULT_API_URL;
 }
 
 function adminToken(): string {

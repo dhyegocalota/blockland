@@ -1,4 +1,4 @@
-// Rename a logged-in account without re-emailing: the Rust server validates the claim, frees/takes the
+// Rename a logged-in account without re-emailing: the server validates the claim, frees/takes the
 // new name within the tenant, records a timeline event and notifies the live room. The browser never
 // reaches the internal route directly — this proxy signs the HMAC channel.
 import { authRename } from '../../../../lib/auth';

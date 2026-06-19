@@ -1,4 +1,4 @@
-// Server-only client for the Rust internal auth routes. Reuses the HMAC signer in api.ts so every
+// Server-only client for the internal auth routes. Reuses the HMAC signer in api.ts so every
 // request is signed on the Next -> Rust channel; the browser never reaches these routes directly.
 // A username is owned by ONE email WITHIN A TENANT, proven by a magic-link token or a 6-digit code.
 import 'server-only';

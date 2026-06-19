@@ -136,7 +136,6 @@ export default function Game() {
   }, []);
 
   useEffect(() => {
-    let cleanup: (() => void) | undefined;
     let alive = true;
     resolveTenant()
       .then(({ tenant: active, offline: isOffline }) => {
@@ -144,41 +143,51 @@ export default function Game() {
         debug('tenant', 'active tenant', { id: active.id, name: active.name, offline: isOffline });
         setBrand(active);
         setOffline(isOffline);
-        const bridge: CoopBridge = {
-          resolveName: () => loadName().trim(),
-          resolveAppearance: () => loadLook(),
-          resolveClaim: (resolvedName) => resolveClaim(active.id, resolvedName),
-          resolveOffline: () => soloRef.current,
-          hud: {
-            onState: (state) => setNetState(state),
-            onPing: (value) => setPing(value),
-            onChat: (from, text) => pushChatLine(from, text),
-            onCount: (count) => setOnline(count),
-            onRoster: (players) => setRoster(players),
-            onEvent: (event) => pushFeedEntry(event),
-            // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
-            onScore: () => undefined,
-            onAdmin: (admin) => setIsAdmin(admin),
-            onRoomState: (state) => setRoom(state),
-            onError: (code) => {
-              const key = AUTH_ERROR_KEYS[code];
-              if (key) setAuthToast(t(key));
-            },
-          },
-          bind: (api) => { gameApiRef.current = api; },
-        };
-        import('../lib/game-engine').then((mod) => {
-          debug('engine', 'engine module loaded', { id: active.id, name: active.name });
-          cleanup = mod.initGame(active, bridge);
-        });
       })
       .catch((err) => {
         if (!alive) return;
         warn('tenant', 'failed to load tenant', { error: String(err) });
         setFailed(true);
       });
+    return () => { alive = false; };
+  }, []);
+
+  // Boot the engine only after `brand` has rendered, so the HUD DOM (#controls, #start, ...) the engine
+  // wires up actually exists. Running this inside the tenant promise raced React's commit and threw.
+  useEffect(() => {
+    if (!brand) return;
+    let cleanup: (() => void) | undefined;
+    let alive = true;
+    const bridge: CoopBridge = {
+      resolveName: () => loadName().trim(),
+      resolveAppearance: () => loadLook(),
+      resolveClaim: (resolvedName) => resolveClaim(brand.id, resolvedName),
+      resolveOffline: () => soloRef.current,
+      hud: {
+        onState: (state) => setNetState(state),
+        onPing: (value) => setPing(value),
+        onChat: (from, text) => pushChatLine(from, text),
+        onCount: (count) => setOnline(count),
+        onRoster: (players) => setRoster(players),
+        onEvent: (event) => pushFeedEntry(event),
+        // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
+        onScore: () => undefined,
+        onAdmin: (admin) => setIsAdmin(admin),
+        onRoomState: (state) => setRoom(state),
+        onError: (code) => {
+          const key = AUTH_ERROR_KEYS[code];
+          if (key) setAuthToast(t(key));
+        },
+      },
+      bind: (api) => { gameApiRef.current = api; },
+    };
+    import('../lib/game-engine').then((mod) => {
+      if (!alive) return;
+      debug('engine', 'engine module loaded', { id: brand.id, name: brand.name });
+      cleanup = mod.initGame(brand, bridge);
+    });
     return () => { alive = false; if (cleanup) cleanup(); };
-  }, [pushChatLine, pushFeedEntry]);
+  }, [brand, pushChatLine, pushFeedEntry]);
 
   const openChat = useCallback(() => {
     setChatOpen(true);
@@ -280,6 +289,31 @@ export default function Game() {
     setLoggedIn(true);
     document.getElementById('playBtn')?.click();
   }, []);
+
+  // Drop the unconfirmed name so the player becomes an anonymous guest. Used by ESC (just back out)
+  // and by the "play with a random name" button (which then starts the game).
+  const discardName = useCallback(() => {
+    setName('');
+    if (typeof window !== 'undefined') window.localStorage.setItem(NAME_KEY, '');
+    setLoginError(null);
+    setLoginStep(null);
+  }, []);
+
+  const playAsGuest = useCallback(() => {
+    discardName();
+    loginClearedRef.current = true;
+    document.getElementById('playBtn')?.click();
+  }, [discardName]);
+
+  // ESC out of the name-confirm modal also discards the unconfirmed name (back to playing as a guest).
+  useEffect(() => {
+    if (!loginStep) return;
+    function onKey(event: KeyboardEvent): void {
+      if (event.code === 'Escape') { event.preventDefault(); discardName(); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [loginStep, discardName]);
 
   const requestCode = useCallback(async () => {
     if (!brand) return;
@@ -479,7 +513,7 @@ export default function Game() {
                 <button id="loginSend" disabled={loginBusy || !loginEmail.trim()} onClick={requestCode}>
                   {loginBusy ? t('login.sending') : t('login.send_code')}
                 </button>
-                <button id="loginCancel" className="ghost" onClick={() => setLoginStep(null)}>{t('login.cancel')}</button>
+                <button id="loginCancel" className="ghost" onClick={playAsGuest}>{t('login.random_name')}</button>
               </>
             )}
             {loginStep === 'code' && (
@@ -499,7 +533,7 @@ export default function Game() {
                 <button id="loginVerify" disabled={loginBusy || loginCode.trim().length < 6} onClick={verifyCode}>
                   {loginBusy ? t('login.verifying') : t('login.verify')}
                 </button>
-                <button id="loginCancel" className="ghost" onClick={() => setLoginStep(null)}>{t('login.cancel')}</button>
+                <button id="loginCancel" className="ghost" onClick={playAsGuest}>{t('login.random_name')}</button>
               </>
             )}
           </div>

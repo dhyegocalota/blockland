@@ -5,7 +5,7 @@ const ADMIN_TOKEN = 'rust-admin-token';
 
 beforeEach(() => {
   process.env.ADMIN_TOKEN = ADMIN_TOKEN;
-  process.env.RUST_API_URL = 'http://rust';
+  process.env.API_URL = 'http://rust';
 });
 
 afterEach(() => vi.restoreAllMocks());

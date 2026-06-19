@@ -1,5 +1,5 @@
 // Admin: list all tenants and create/update one. Protected by the fixed admin key,
-// then proxied to the Rust internal data API.
+// then proxied to the internal data API.
 import { listTenants, upsertTenant } from '../../../../lib/api';
 import { TENANT_FIELDS, type Tenant } from '../../../../lib/builtins';
 import { isAdmin } from '../../../../lib/admin-auth';

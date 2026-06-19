@@ -1,4 +1,4 @@
-// Admin: delete a tenant. Protected by the fixed admin key, then proxied to the Rust API.
+// Admin: delete a tenant. Protected by the fixed admin key, then proxied to the API.
 import { deleteTenant } from '../../../../../lib/api';
 import { isAdmin } from '../../../../../lib/admin-auth';
 
