@@ -19,9 +19,9 @@ Abra **http://localhost:3000** e clique em **▶ JOGAR**.
 
 ## 🎯 O que dá pra fazer
 
-- 🌍 **Mundo gigante** (2048×2048) com **biomas**: floresta, planície, deserto, neve, montanhas e lagos — carregado sob demanda (estilo Minecraft) pra rodar liso
+- 🌍 **Mundo praticamente infinito** (16384×16384, armazenado de forma esparsa — só ocupa memória onde você explora) com **biomas**: floresta, planície, deserto, neve, montanhas e lagos, carregado sob demanda (estilo Minecraft) pra rodar liso
 - 🧱 **Construir** com 16 blocos: grama, terra, pedra, madeira, folha, areia, tijolo, ouro, arco-íris, **Teo!**, água, branco, preto, **diamante**, **avaritia** (cósmico) e **bedrock**
-- 🏗️ **Construções mágicas** (tecla **B**): **Taça da Copa do Mundo** 🏆 e **Bola gigante da Copa 2026** ⚽
+- 🏗️ **Construções mágicas** (tecla **B**): **Taça da Copa do Mundo** 🏆 e **Bola gigante da Copa 2026** ⚽ — aparecem **onde você está mirando**
 - 💎 **Achar tesouros** espalhados pelo mundo (ouro, diamante e avaritia)
 - 🐷 **Caçar** porquinhos, galinhas e vaquinhas
 - 👾 **Lutar** contra geleias e aranhas (eles perseguem!)
