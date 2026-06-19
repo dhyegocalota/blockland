@@ -1,12 +1,16 @@
-//! Wire protocol shared between the authoritative server and the (future WASM) client.
+//! Wire protocol shared between the authoritative server and the web client.
 //! JSON over WebSocket for now; swap to a binary codec later without touching call sites.
+//!
+//! The TypeScript counterpart is generated from these types by the `export_typescript_bindings`
+//! test (ts-rs) into `shared/ts/protocol.ts`, so the client never hand-writes the wire shapes.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub type PlayerId = u32;
 
 /// Messages the client sends to the server.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientMsg {
     Join {
@@ -36,7 +40,7 @@ pub enum ClientMsg {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum EditOp {
     Place,
@@ -44,11 +48,11 @@ pub enum EditOp {
 }
 
 /// Messages the server sends to the client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerMsg {
     Welcome {
-        you: PlayerId,
+        you: u32,
         tenant: String,
         world: String,
         brand: Brand,
@@ -56,6 +60,7 @@ pub enum ServerMsg {
         spawn: [f32; 3],
     },
     Snapshot {
+        #[ts(type = "number")]
         tick: u64,
         players: Vec<PlayerState>,
     },
@@ -64,18 +69,18 @@ pub enum ServerMsg {
         y: i32,
         z: i32,
         id: u8,
-        by: PlayerId,
+        by: u32,
     },
     Ping {
         nonce: u32,
     },
     Chat {
-        from: PlayerId,
+        from: u32,
         name: String,
         text: String,
     },
     Left {
-        id: PlayerId,
+        id: u32,
     },
     Error {
         code: String,
@@ -83,9 +88,9 @@ pub enum ServerMsg {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct PlayerState {
-    pub id: PlayerId,
+    pub id: u32,
     pub name: String,
     pub x: f32,
     pub y: f32,
@@ -96,9 +101,43 @@ pub struct PlayerState {
 }
 
 /// White-label branding handed to the client on join.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Brand {
     pub name: String,
     pub primary: String,
     pub logo: Option<String>,
+}
+
+#[cfg(test)]
+mod export {
+    use super::*;
+
+    /// Generate the TypeScript bindings consumed by the web client. Run via `cargo test`.
+    #[test]
+    fn export_typescript_bindings() {
+        let mut out = String::new();
+        out.push_str(
+            "// AUTO-GENERATED from apps/server/crates/protocol via ts-rs. Do not edit.\n",
+        );
+        out.push_str("// Regenerate with: cargo test -p protocol\n\n");
+        for decl in [
+            Brand::decl(),
+            EditOp::decl(),
+            PlayerState::decl(),
+            ClientMsg::decl(),
+            ServerMsg::decl(),
+        ] {
+            out.push_str("export ");
+            out.push_str(&decl);
+            out.push_str("\n\n");
+        }
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../web/lib/protocol.gen.ts"
+        );
+        let parent = std::path::Path::new(path).parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        std::fs::write(path, out).unwrap();
+    }
 }

@@ -2,25 +2,17 @@ import * as THREE from 'three';
 import { PLATFORM_NAME, type Brand } from './tenants';
 import { t } from './i18n';
 import { debug } from './log';
-
-interface Block {
-  id: number;
-  name: string;
-  key: string;
-  transparent?: boolean;
-  build: ((c: HTMLCanvasElement) => void) | null;
-}
-
-interface CreatureDef {
-  kind: 'animal' | 'monster';
-  color: string;
-  size: [number, number, number];
-  hp: number;
-  speed: number;
-  reward: number;
-  emoji: string;
-  name: string;
-}
+import {
+  AIR, CHUNK, EYE_HEIGHT, FACE_ID, FLY_SPEED, GRAVITY, JUMP_SPEED, PLAYER_HEIGHT,
+  PLAYER_RADIUS, REACH, SIZE_X, SIZE_Y, SIZE_Z, WALK_SPEED,
+} from './engine/constants';
+import { BLOCKS, type BlockDef, blockById } from './engine/blocks';
+import { heightAt } from './engine/worldgen';
+import { VoxelWorld } from './engine/world';
+import { type Axis, moveAxis } from './engine/physics';
+import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
+import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
+import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 
 interface Creature {
   typeKey: string;
@@ -53,13 +45,6 @@ interface Poof {
   life: number;
 }
 
-interface VoxelHit {
-  hit: [number, number, number];
-  place: [number, number, number];
-}
-
-type Axis = 'x' | 'y' | 'z';
-type Biome = 'desert' | 'plains' | 'forest' | 'snow';
 type StructureKind = 'trophy' | 'ball' | 'figure' | 'cola' | 'steve';
 
 interface GameWindow extends Window {
@@ -84,61 +69,16 @@ export function initGame(brand: Brand): (() => void) | undefined {
   let rafId = 0;
   const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-  // ---------- World constants ----------
-  const SIZE_X = 16384;
-  const SIZE_Z = 16384;
-  const SIZE_Y = 24;
-  const CHUNK = 32;
+  // ---------- World layout ----------
   const chunksX = Math.ceil(SIZE_X / CHUNK);
   const chunksZ = Math.ceil(SIZE_Z / CHUNK);
-  const GROUND = 6;
-  const GRAVITY = -26;
-  const JUMP_SPEED = 8.6;
-  const WALK_SPEED = 5.4;
-  const FLY_SPEED = 9;
-  const PLAYER_RADIUS = 0.3;
-  const PLAYER_HEIGHT = 1.7;
-  const EYE_HEIGHT = 1.55;
-  const REACH = 7;
 
-  // ---------- Block definitions ----------
-  const AIR = 0;
-  const BLOCKS: (Block | null)[] = [
-    null,
-    { id: 1, name: t('block.grass'), key: '1', build: (c) => paint(c, '#6bd06b', '#4fb04f', '#86e886') },
-    { id: 2, name: t('block.dirt'), key: '2', build: (c) => paint(c, '#9c6b43', '#7d5232', '#b3825a') },
-    { id: 3, name: t('block.stone'), key: '3', build: (c) => paint(c, '#9b9ba3', '#7d7d85', '#b6b6bd') },
-    { id: 4, name: t('block.wood'), key: '4', build: woodTexture },
-    { id: 5, name: t('block.leaf'), key: '5', build: (c) => paint(c, '#54c25a', '#3c9c42', '#74e07a') },
-    { id: 6, name: t('block.sand'), key: '6', build: (c) => paint(c, '#f0dca0', '#dcc585', '#fbeec0') },
-    { id: 7, name: t('block.brick'), key: '7', build: brickTexture },
-    { id: 8, name: t('block.gold'), key: '8', build: goldTexture },
-    { id: 9, name: t('block.rainbow'), key: '9', build: rainbowTexture },
-    { id: 10, name: brand.faceBlockName, key: '0', build: null },
-    { id: 11, name: t('block.water'), key: '-', transparent: true, build: (c) => paint(c, '#3aa0ee', '#2f8fdc', '#5cb6f5') },
-    { id: 12, name: t('block.white'), key: 'c', build: (c) => paint(c, '#f4f4f8', '#dfe2ea', '#ffffff') },
-    { id: 13, name: t('block.black'), key: 'x', build: (c) => paint(c, '#2b2b33', '#16161c', '#3a3a44') },
-    { id: 14, name: t('block.diamond'), key: 'z', build: diamondTexture },
-    { id: 15, name: t('block.avaritia'), key: 'i', build: avaritiaTexture },
-    { id: 16, name: t('block.bedrock'), key: 'k', build: (c) => paint(c, '#565659', '#36363a', '#79797e') },
-    { id: 17, name: t('block.celeste'), key: 'l', build: (c) => paint(c, '#75aadb', '#5f97cc', '#9cc6ea') },
-    { id: 18, name: t('block.red'), key: 'r', build: (c) => paint(c, '#e0241f', '#bf1c18', '#f1564f') },
-    { id: 19, name: t('block.blue'), key: 'j', build: (c) => paint(c, '#33449c', '#27357d', '#4a5cc0') },
-  ];
-  const BEDROCK_ID = 16;
-  const CELESTE_ID = 17;
-  const RED_ID = 18;
-  const BLUE_ID = 19;
-  const SKIN_ID = 6;
-  const HAIR_ID = 2;
-  const CYAN_ID = 14;
-  const FACE_ID = 10;
-  const WATER_ID = 11;
-  const GRASS_ID = 1;
-  const GOLD_ID = 8;
-  const WHITE_ID = 12;
-  const BLACK_ID = 13;
-  const blockById = (id: number): Block | null => BLOCKS[id];
+  // ---------- Block names (i18n key, except the tenant face block) ----------
+  function blockName(b: BlockDef): string {
+    if (b.id === FACE_ID) return brand.faceBlockName;
+    if (!b.nameKey) throw new Error(`block ${b.id} has no name key`);
+    return t(b.nameKey);
+  }
 
   function el(id: string): HTMLElement {
     const node = document.getElementById(id);
@@ -157,76 +97,6 @@ export function initGame(brand: Brand): (() => void) | undefined {
     if (!g) throw new Error('2d canvas context unavailable');
     return g;
   }
-  function paint(c: HTMLCanvasElement, base: string, dark: string, light: string): void {
-    const g = ctx2d(c);
-    g.fillStyle = base; g.fillRect(0, 0, 16, 16);
-    for (let i = 0; i < 46; i++) {
-      const x = Math.floor(Math.random() * 16);
-      const y = Math.floor(Math.random() * 16);
-      g.fillStyle = Math.random() > 0.5 ? dark : light;
-      g.fillRect(x, y, 1, 1);
-    }
-  }
-  function woodTexture(c: HTMLCanvasElement): void {
-    const g = ctx2d(c);
-    g.fillStyle = '#9c6b3f'; g.fillRect(0, 0, 16, 16);
-    g.fillStyle = '#7a4f2b';
-    for (let x = 1; x < 16; x += 4) g.fillRect(x, 0, 2, 16);
-    g.fillStyle = '#b3855a';
-    for (let x = 3; x < 16; x += 4) g.fillRect(x, 0, 1, 16);
-  }
-  function brickTexture(c: HTMLCanvasElement): void {
-    const g = ctx2d(c);
-    g.fillStyle = '#c0563f'; g.fillRect(0, 0, 16, 16);
-    g.fillStyle = '#e8e0d0';
-    g.fillRect(0, 7, 16, 1); g.fillRect(0, 15, 16, 1);
-    g.fillRect(7, 0, 1, 8); g.fillRect(0, 8, 1, 8); g.fillRect(15, 8, 1, 8);
-  }
-  function goldTexture(c: HTMLCanvasElement): void {
-    const g = ctx2d(c);
-    g.fillStyle = '#ffd23f'; g.fillRect(0, 0, 16, 16);
-    g.fillStyle = '#ffe98a';
-    for (let i = 0; i < 22; i++) g.fillRect(Math.floor(Math.random() * 16), Math.floor(Math.random() * 16), 2, 2);
-    g.fillStyle = '#caa018';
-    g.fillRect(2, 2, 2, 2); g.fillRect(11, 9, 2, 2); g.fillRect(7, 12, 2, 2);
-  }
-  function rainbowTexture(c: HTMLCanvasElement): void {
-    const g = ctx2d(c);
-    const colors = ['#ff5d5d', '#ffae3d', '#ffe93d', '#5dff7a', '#3dc6ff', '#9b6bff'];
-    colors.forEach((col, i) => { g.fillStyle = col; g.fillRect(0, i * 3 - 1, 16, 3); });
-  }
-  function diamondTexture(c: HTMLCanvasElement): void {
-    const g = ctx2d(c);
-    g.fillStyle = '#54cfd6'; g.fillRect(0, 0, 16, 16);                       // aqua base
-    g.fillStyle = '#8fe9ee'; g.fillRect(0, 0, 16, 1); g.fillRect(0, 0, 1, 16); // bevel highlight
-    g.fillStyle = '#2f9aa6'; g.fillRect(0, 15, 16, 1); g.fillRect(15, 0, 1, 16); // bevel shadow
-    g.fillStyle = '#3fb3bd'; g.fillRect(2, 2, 12, 12);                       // inset face
-    const gem = (x: number, y: number): void => {
-      g.fillStyle = '#2b8a96'; g.fillRect(x, y, 4, 4);                       // facet edge
-      g.fillStyle = '#aef2f6'; g.fillRect(x + 1, y, 2, 1); g.fillRect(x, y + 1, 1, 2);
-      g.fillStyle = '#1f6f7a'; g.fillRect(x + 3, y + 2, 1, 2); g.fillRect(x + 2, y + 3, 2, 1);
-      g.fillStyle = '#ffffff'; g.fillRect(x + 1, y + 1, 1, 1);               // sparkle
-    };
-    gem(3, 3); gem(9, 3); gem(3, 9); gem(9, 9);
-    g.fillStyle = '#eafeff'; g.fillRect(7, 7, 2, 2);                         // center shine
-  }
-  function avaritiaTexture(c: HTMLCanvasElement): void {
-    const g = ctx2d(c);
-    for (let y = 0; y < 16; y++) {                                          // deep cosmic gradient
-      const t = y / 15;
-      g.fillStyle = `rgb(${18 + (t * 26) | 0}, ${5 + (t * 6) | 0}, ${38 + (t * 34) | 0})`;
-      g.fillRect(0, y, 16, 1);
-    }
-    const nebula = ['#ff2e7e', '#ff9b3d', '#ffe23f', '#46ff86', '#3dc6ff', '#9b6bff'];
-    g.globalAlpha = 0.45;
-    nebula.forEach((col, i) => { g.fillStyle = col; g.fillRect(0, (i * 3 + (i % 2)) % 16, 16, 2); });
-    g.globalAlpha = 1;
-    for (let i = 0; i < 30; i++) {                                          // stars
-      g.fillStyle = Math.random() > 0.35 ? '#ffffff' : '#bfe4ff';
-      const s = Math.random() > 0.85 ? 2 : 1;
-      g.fillRect(Math.floor(Math.random() * 16), Math.floor(Math.random() * 16), s, s);
-    }
-  }
   function textureFromCanvas(c: HTMLCanvasElement): THREE.CanvasTexture {
     const t = new THREE.CanvasTexture(c);
     t.magFilter = THREE.NearestFilter;
@@ -234,10 +104,10 @@ export function initGame(brand: Brand): (() => void) | undefined {
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
-  function renderBlockCanvas(b: Block): HTMLCanvasElement {
+  function renderBlockCanvas(b: BlockDef): HTMLCanvasElement {
     if (!b.build) throw new Error(`block ${b.id} has no texture builder`);
     const c = makeCanvas();
-    b.build(c);
+    b.build(ctx2d(c));
     return c;
   }
 
@@ -259,119 +129,13 @@ export function initGame(brand: Brand): (() => void) | undefined {
   }
 
   // ---------- Voxel storage (sparse: only visited chunks use memory -> endless world) ----------
-  const CHUNK_VOLUME = CHUNK * CHUNK * SIZE_Y;
-  const chunkData = new Map<number, Uint8Array>();
-  const genChunks = new Set<number>();
-  const chunkKey = (cx: number, cz: number): number => cx * chunksZ + cz;
-  const inBounds = (x: number, y: number, z: number): boolean => x >= 0 && x < SIZE_X && y >= 0 && y < SIZE_Y && z >= 0 && z < SIZE_Z;
-  const localIdx = (lx: number, y: number, lz: number): number => lx + lz * CHUNK + y * CHUNK * CHUNK;
-  function rawGet(x: number, y: number, z: number): number {
-    if (!inBounds(x, y, z)) return AIR;
-    const arr = chunkData.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
-    if (!arr) return AIR;
-    return arr[localIdx(x % CHUNK, y, z % CHUNK)];
-  }
-  function rawSet(x: number, y: number, z: number, id: number): void {
-    if (!inBounds(x, y, z)) return;
-    const cx = Math.floor(x / CHUNK), cz = Math.floor(z / CHUNK);
-    const key = chunkKey(cx, cz);
-    let arr = chunkData.get(key);
-    if (!arr) { arr = new Uint8Array(CHUNK_VOLUME); chunkData.set(key, arr); }
-    arr[localIdx(x % CHUNK, y, z % CHUNK)] = id;
-  }
+  const world = new VoxelWorld();
+  const chunkKey = (cx: number, cz: number): number => world.chunkKey(cx, cz);
+  const inBounds = (x: number, y: number, z: number): boolean => world.inBounds(x, y, z);
+  const getVoxel = (x: number, y: number, z: number): number => world.get(x, y, z);
+  const setVoxel = (x: number, y: number, z: number, id: number): void => world.set(x, y, z, id);
+  const isSolid = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
 
-  const WATER_LEVEL = GROUND - 1;
-  function ensureGen(cx: number, cz: number): void {
-    if (cx < 0 || cz < 0 || cx >= chunksX || cz >= chunksZ) return;
-    const key = chunkKey(cx, cz);
-    if (genChunks.has(key)) return;
-    genChunks.add(key);
-    generateChunk(cx, cz);
-  }
-  function getVoxel(x: number, y: number, z: number): number {
-    if (y < 0 || y >= SIZE_Y || x < 0 || x >= SIZE_X || z < 0 || z >= SIZE_Z) return AIR;
-    ensureGen(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
-    return rawGet(x, y, z);
-  }
-  function setVoxel(x: number, y: number, z: number, id: number): void {
-    if (!inBounds(x, y, z)) return;
-    ensureGen(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
-    rawSet(x, y, z, id);
-  }
-  const isSolid = (x: number, y: number, z: number): boolean => { const v = getVoxel(x, y, z); return v !== AIR && v !== WATER_ID; };
-
-  // ---------- Procedural world (biomes + varied terrain) ----------
-  function heightAt(x: number, z: number): number {
-    const h = Math.sin(x * 0.05) * 1.4 + Math.cos(z * 0.045) * 1.4
-      + Math.sin((x + z) * 0.02) * 2.6
-      + Math.sin(x * 0.013) * Math.cos(z * 0.017) * 4.2;
-    return Math.max(2, Math.min(SIZE_Y - 5, GROUND + Math.round(h)));
-  }
-  function biomeAt(x: number, z: number): Biome {
-    const v = Math.sin(x * 0.0125) * 1.2 + Math.cos(z * 0.011) * 1.2 + Math.sin((x - z) * 0.006) * 1.4;
-    if (v < -1.1) return 'desert';
-    if (v < 0.2) return 'plains';
-    if (v < 1.3) return 'forest';
-    return 'snow';
-  }
-  function surfaceBlock(biome: Biome, top: number): number {
-    if (top <= WATER_LEVEL + 1) return 6;                       // sandy shore
-    if (top >= GROUND + 7) return top >= GROUND + 9 ? 12 : 3;   // mountain rock + snowy peak
-    if (biome === 'desert') return 6;
-    if (biome === 'snow') return 12;
-    return 1;
-  }
-  function placeTree(x: number, top: number, z: number, x0: number, z0: number, biome: Biome): void {
-    const trunk = 3 + Math.floor(Math.random() * 3);
-    for (let t = 1; t <= trunk; t++) rawSet(x, top + t, z, 4);
-    const leaf = biome === 'snow' ? 12 : 5;
-    const cy = top + trunk;
-    for (let dx = -2; dx <= 2; dx++)
-      for (let dz = -2; dz <= 2; dz++)
-        for (let dy = 0; dy <= 2; dy++) {
-          const lx = x + dx, lz = z + dz;
-          if (lx < x0 || lx >= x0 + CHUNK || lz < z0 || lz >= z0 + CHUNK) continue;
-          if (Math.abs(dx) + Math.abs(dz) + dy > 3) continue;
-          if (rawGet(lx, cy + dy, lz) === AIR) rawSet(lx, cy + dy, lz, leaf);
-        }
-  }
-  function generateChunk(cx: number, cz: number): void {
-    const x0 = cx * CHUNK, z0 = cz * CHUNK;
-    for (let x = x0; x < x0 + CHUNK && x < SIZE_X; x++)
-      for (let z = z0; z < z0 + CHUNK && z < SIZE_Z; z++) {
-        const top = heightAt(x, z);
-        const biome = biomeAt(x, z);
-        for (let y = 0; y <= top; y++) {
-          let id = 3;
-          if (y >= top - 2) id = 2;
-          if (y === top) id = surfaceBlock(biome, top);
-          if (y === 0) id = BEDROCK_ID;
-          rawSet(x, y, z, id);
-        }
-        for (let y = top + 1; y <= WATER_LEVEL; y++) rawSet(x, y, z, WATER_ID);
-      }
-    decorateChunk(cx, cz);
-  }
-  function decorateChunk(cx: number, cz: number): void {
-    const x0 = cx * CHUNK, z0 = cz * CHUNK;
-    for (let i = 0; i < 30; i++) {
-      const x = x0 + 2 + Math.floor(Math.random() * (CHUNK - 4));
-      const z = z0 + 2 + Math.floor(Math.random() * (CHUNK - 4));
-      const top = heightAt(x, z);
-      if (top <= WATER_LEVEL) continue;
-      const biome = biomeAt(x, z);
-      const density = biome === 'forest' ? 0.75 : biome === 'plains' ? 0.22 : biome === 'snow' ? 0.16 : 0.02;
-      if (Math.random() < density) { placeTree(x, top, z, x0, z0, biome); continue; }
-      if (biome !== 'desert' && Math.random() < 0.1 && rawGet(x, top + 1, z) === AIR) rawSet(x, top + 1, z, 9);
-    }
-    for (const [chance, id] of [[0.5, 8], [0.28, 14], [0.08, 15]]) {
-      if (Math.random() >= chance) continue;
-      const x = x0 + Math.floor(Math.random() * CHUNK);
-      const z = z0 + Math.floor(Math.random() * CHUNK);
-      const top = heightAt(x, z);
-      if (top > WATER_LEVEL && rawGet(x, top + 1, z) === AIR) rawSet(x, top + 1, z, id);
-    }
-  }
   function buildWelcomeMonument() {
     const cx = SIZE_X >> 1, cz = SIZE_Z >> 1;
     const top = heightAt(cx, cz);
@@ -545,13 +309,6 @@ export function initGame(brand: Brand): (() => void) | undefined {
   let peaceful = true;
 
   // ---------- Creatures (animals to hunt, monsters to fight) ----------
-  const CREATURES: Record<string, CreatureDef> = {
-    pig: { kind: 'animal', color: '#ff9bbf', size: [0.8, 0.7, 1.0], hp: 2, speed: 2.2, reward: 2, emoji: '🐷', name: t('creature.pig') },
-    chicken: { kind: 'animal', color: '#fffbe0', size: [0.6, 0.7, 0.6], hp: 1, speed: 2.6, reward: 1, emoji: '🐔', name: t('creature.chicken') },
-    cow: { kind: 'animal', color: '#d8c5a8', size: [0.9, 0.9, 1.2], hp: 3, speed: 1.8, reward: 3, emoji: '🐮', name: t('creature.cow') },
-    slime: { kind: 'monster', color: '#5bd86a', size: [0.8, 0.8, 0.8], hp: 2, speed: 2.4, reward: 3, emoji: '👾', name: t('creature.slime') },
-    spider: { kind: 'monster', color: '#5a4a6a', size: [1.1, 0.6, 1.1], hp: 3, speed: 3.0, reward: 5, emoji: '🕷️', name: t('creature.spider') },
-  };
   const creatures: Creature[] = [];
   const creatureGroup = new THREE.Group();
   scene.add(creatureGroup);
@@ -573,7 +330,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
   }
   const SPAWN_RANGE = 80;
   function spawnCreature(typeKey: string): void {
-    const def = CREATURES[typeKey];
+    const def = CREATURE_DEFS[typeKey];
     if (!def) throw new Error(`unknown creature ${typeKey}`);
     const cx = SIZE_X / 2, cz = SIZE_Z / 2;
     const x = Math.max(2, Math.min(SIZE_X - 2, cx + (Math.random() - 0.5) * 2 * SPAWN_RANGE));
@@ -609,9 +366,11 @@ export function initGame(brand: Brand): (() => void) | undefined {
       const isMonster = cr.def.kind === 'monster';
       const hostile = isMonster && !peaceful;
 
-      if (hostile && dist < 11) cr.dir = Math.atan2(toPlayer.x, toPlayer.z);
-      else if (!isMonster && dist < 4) cr.dir = Math.atan2(-toPlayer.x, -toPlayer.z);
-      else if (cr.timer <= 0) { cr.dir = Math.random() * Math.PI * 2; cr.timer = 1.5 + Math.random() * 2; }
+      const motion = stepCreatureDirection({
+        toPlayerX: toPlayer.x, toPlayerZ: toPlayer.z, dist, isMonster, peaceful,
+        dir: cr.dir, timer: cr.timer, random: Math.random,
+      });
+      cr.dir = motion.dir; cr.timer = motion.timer;
 
       cr.mesh.position.x += Math.sin(cr.dir) * cr.def.speed * dt;
       cr.mesh.position.z += Math.cos(cr.dir) * cr.def.speed * dt;
@@ -720,23 +479,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
   function raycastVoxel(maxDist = REACH): VoxelHit | null {
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
-    const origin = camera.position.clone();
-    let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
-    const step = [Math.sign(dir.x), Math.sign(dir.y), Math.sign(dir.z)];
-    const tDelta = [Math.abs(1 / dir.x), Math.abs(1 / dir.y), Math.abs(1 / dir.z)];
-    const tMax = [
-      step[0] > 0 ? (x + 1 - origin.x) / dir.x : (origin.x - x) / -dir.x,
-      step[1] > 0 ? (y + 1 - origin.y) / dir.y : (origin.y - y) / -dir.y,
-      step[2] > 0 ? (z + 1 - origin.z) / dir.z : (origin.z - z) / -dir.z,
-    ];
-    let face = [0, 0, 0];
-    for (let i = 0; i < maxDist * 3; i++) {
-      if (isSolid(x, y, z)) return { hit: [x, y, z], place: [x + face[0], y + face[1], z + face[2]] };
-      if (tMax[0] < tMax[1] && tMax[0] < tMax[2]) { x += step[0]; if (tMax[0] > maxDist) break; tMax[0] += tDelta[0]; face = [-step[0], 0, 0]; }
-      else if (tMax[1] < tMax[2]) { y += step[1]; if (tMax[1] > maxDist) break; tMax[1] += tDelta[1]; face = [0, -step[1], 0]; }
-      else { z += step[2]; if (tMax[2] > maxDist) break; tMax[2] += tDelta[2]; face = [0, 0, -step[2]]; }
-    }
-    return null;
+    return ddaRaycast({ world, origin: camera.position, dir, maxDist });
   }
 
   // ---------- Build / break ----------
@@ -775,79 +518,6 @@ export function initGame(brand: Brand): (() => void) | undefined {
   }
 
   // ---------- Magic structures ----------
-  function fillSquare(cx: number, cz: number, y: number, half: number, id: number): void {
-    for (let dx = -half; dx <= half; dx++)
-      for (let dz = -half; dz <= half; dz++) setVoxel(cx + dx, y, cz + dz, id);
-  }
-  function stampTrophy(cx: number, gy: number, cz: number): void {
-    fillSquare(cx, cz, gy, 2, GOLD_ID);
-    fillSquare(cx, cz, gy + 1, 2, GRASS_ID);
-    fillSquare(cx, cz, gy + 2, 1, GOLD_ID);
-    for (let y = gy + 3; y <= gy + 6; y++) setVoxel(cx, y, cz, GOLD_ID);
-    stampSphere(cx, gy + 9, cz, 3, () => GOLD_ID);
-  }
-  function ballPatchCenters(): number[][] {
-    const centers = [[0, 1, 0], [0, -1, 0]];
-    for (let k = 0; k < 5; k++) { const a = (k * 2 * Math.PI) / 5; centers.push([Math.cos(a) * 0.72, 0.5, Math.sin(a) * 0.72]); }
-    for (let k = 0; k < 5; k++) { const a = ((k + 0.5) * 2 * Math.PI) / 5; centers.push([Math.cos(a) * 0.72, -0.5, Math.sin(a) * 0.72]); }
-    return centers.map((c) => { const l = Math.hypot(...c); return [c[0] / l, c[1] / l, c[2] / l]; });
-  }
-  function stampBall(cx: number, gy: number, cz: number, radius: number): void {
-    const centers = ballPatchCenters();
-    const cy = gy + radius;
-    stampSphere(cx, cy, cz, radius, (dx, dy, dz) => {
-      const len = Math.hypot(dx, dy, dz) || 1;
-      const nx = dx / len, ny = dy / len, nz = dz / len;
-      const black = centers.some((p) => nx * p[0] + ny * p[1] + nz * p[2] > 0.9);
-      return black ? BLACK_ID : WHITE_ID;
-    });
-  }
-  function stampSphere(cx: number, cy: number, cz: number, radius: number, pick: (dx: number, dy: number, dz: number) => number): void {
-    for (let dx = -radius; dx <= radius; dx++)
-      for (let dy = -radius; dy <= radius; dy++)
-        for (let dz = -radius; dz <= radius; dz++) {
-          if (Math.hypot(dx, dy, dz) > radius + 0.3) continue;
-          setVoxel(cx + dx, cy + dy, cz + dz, pick(dx, dy, dz));
-        }
-  }
-  function stampFigure(cx: number, gy: number, cz: number): void {
-    const set = (dx: number, dy: number, dz: number, id: number): void => setVoxel(cx + dx, gy + dy, cz + dz, id);
-    for (let dy = 0; dy <= 2; dy++) { set(-1, dy, 0, WHITE_ID); set(1, dy, 0, WHITE_ID); } // legs/socks
-    set(-1, 0, 0, BLACK_ID); set(1, 0, 0, BLACK_ID);                                       // boots
-    for (let dy = 3; dy <= 6; dy++) {                                                        // Argentina striped jersey
-      set(-1, dy, 0, CELESTE_ID); set(0, dy, 0, WHITE_ID); set(1, dy, 0, CELESTE_ID);
-    }
-    for (let dy = 3; dy <= 5; dy++) { set(-2, dy, 0, CELESTE_ID); set(2, dy, 0, CELESTE_ID); } // arms
-    set(0, 7, 0, WHITE_ID);                                                                  // neck
-    set(0, 8, 0, FACE_ID);                                                                     // the player face
-  }
-  function stampCola(cx: number, gy: number, cz: number): void {
-    const R = 4, H = 17;
-    for (let dy = 0; dy < H; dy++) {
-      let id = RED_ID;
-      if (dy === 0 || dy >= H - 2) id = 3;          // silvery top + bottom rim
-      if (dy >= 7 && dy <= 9) id = WHITE_ID;          // white band
-      const r = (dy === 0 || dy === H - 1) ? R - 1 : R;
-      for (let dx = -r; dx <= r; dx++)
-        for (let dz = -r; dz <= r; dz++) {
-          if (dx * dx + dz * dz > r * r + 1) continue;
-          setVoxel(cx + dx, gy + dy, cz + dz, id);
-        }
-    }
-    setVoxel(cx, gy + H, cz, 3);                      // little pull-tab knob
-  }
-  function stampSteve(cx: number, gy: number, cz: number): void {
-    const set = (dx: number, dy: number, dz: number, id: number): void => setVoxel(cx + dx, gy + dy, cz + dz, id);
-    for (let dz = 0; dz <= 1; dz++) {
-      for (let dy = 0; dy <= 3; dy++) { set(-1, dy, dz, BLUE_ID); set(1, dy, dz, BLUE_ID); } // jeans legs
-      set(-1, 0, dz, BEDROCK_ID); set(1, 0, dz, BEDROCK_ID);                                   // shoes
-      for (let dy = 4; dy <= 7; dy++) for (let dx = -1; dx <= 1; dx++) set(dx, dy, dz, CYAN_ID); // cyan shirt
-      for (let dy = 4; dy <= 6; dy++) { set(-2, dy, dz, SKIN_ID); set(2, dy, dz, SKIN_ID); }   // bare arms
-      for (let dy = 8; dy <= 9; dy++) for (let dx = -1; dx <= 1; dx++) set(dx, dy, dz, SKIN_ID); // head
-    }
-    for (let dx = -1; dx <= 1; dx++) for (let dz = 0; dz <= 1; dz++) set(dx, 10, dz, HAIR_ID);  // brown hair
-    set(-1, 9, 1, HAIR_ID); set(1, 9, 1, HAIR_ID);                                              // hair back sides
-  }
   function buildStructure(kind: StructureKind): void {
     const margin = 12;
     const aim = raycastVoxel(90);
@@ -862,11 +532,11 @@ export function initGame(brand: Brand): (() => void) | undefined {
     const cz = Math.max(margin, Math.min(SIZE_Z - margin, Math.round(targetZ)));
     const gy = groundHeight(cx, cz);
     const reach = kind === 'ball' ? 9 : kind === 'cola' ? 6 : 4;
-    if (kind === 'trophy') stampTrophy(cx, gy, cz);
-    if (kind === 'ball') stampBall(cx, gy, cz, 8);
-    if (kind === 'figure') stampFigure(cx, gy, cz);
-    if (kind === 'cola') stampCola(cx, gy, cz);
-    if (kind === 'steve') stampSteve(cx, gy, cz);
+    if (kind === 'trophy') stampTrophy({ set: setVoxel, cx, gy, cz });
+    if (kind === 'ball') stampBall({ set: setVoxel, cx, gy, cz, radius: 8 });
+    if (kind === 'figure') stampFigure({ set: setVoxel, cx, gy, cz });
+    if (kind === 'cola') stampCola({ set: setVoxel, cx, gy, cz });
+    if (kind === 'steve') stampSteve({ set: setVoxel, cx, gy, cz });
     remeshRegion(cx - reach, cx + reach, cz - reach, cz + reach);
     const messages: Record<StructureKind, string> = { trophy: t('toast.built_trophy'), ball: t('toast.built_ball'), figure: t('toast.built_figure'), cola: t('toast.built_cola'), steve: t('toast.built_steve') };
     toast(messages[kind]);
@@ -875,33 +545,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
   }
 
   // ---------- Physics ----------
-  function collide(): boolean {
-    const p = player.pos;
-    const minX = Math.floor(p.x - PLAYER_RADIUS), maxX = Math.floor(p.x + PLAYER_RADIUS);
-    const minZ = Math.floor(p.z - PLAYER_RADIUS), maxZ = Math.floor(p.z + PLAYER_RADIUS);
-    const feet = p.y - EYE_HEIGHT;
-    const minY = Math.floor(feet), maxY = Math.floor(feet + PLAYER_HEIGHT);
-    for (let x = minX; x <= maxX; x++)
-      for (let y = minY; y <= maxY; y++)
-        for (let z = minZ; z <= maxZ; z++)
-          if (isSolid(x, y, z)) return true;
-    return false;
-  }
-  function moveAxis(axis: Axis, amount: number): void {
-    const before = player.pos[axis];
-    player.pos[axis] += amount;
-    if (!collide()) return;
-    if (axis === 'y' && amount < 0) {
-      const feet = player.pos.y - EYE_HEIGHT;
-      player.pos.y = Math.floor(feet) + 1 + EYE_HEIGHT + 1e-3;
-      player.onGround = true;
-      player.vel.y = 0;
-      return;
-    }
-    player.pos[axis] = before;
-    if (axis === 'y') player.vel.y = 0;
-    else player.vel[axis] = 0;
-  }
+  const stepAxis = (axis: Axis, amount: number): void => moveAxis({ world, player, axis, amount });
 
   const keys: Record<string, boolean> = {};
   interface Joystick { active: boolean; x: number; y: number; id: number | null; cx: number; cy: number; r: number; }
@@ -938,9 +582,9 @@ export function initGame(brand: Brand): (() => void) | undefined {
     }
 
     player.onGround = false;
-    moveAxis('x', player.vel.x * dt);
-    moveAxis('z', player.vel.z * dt);
-    moveAxis('y', player.vel.y * dt);
+    stepAxis('x', player.vel.x * dt);
+    stepAxis('z', player.vel.z * dt);
+    stepAxis('y', player.vel.y * dt);
 
     if (player.pos.y < -8) { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); }
 
@@ -1126,7 +770,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
       else { swatch.style.background = `center/cover url(${renderBlockCanvas(b).toDataURL()})`; swatch.style.imageRendering = 'pixelated'; }
       slot.appendChild(swatch);
       const key = document.createElement('span'); key.className = 'key'; key.textContent = b.key; slot.appendChild(key);
-      const name = document.createElement('span'); name.className = 'name'; name.textContent = b.name; slot.appendChild(name);
+      const name = document.createElement('span'); name.className = 'name'; name.textContent = blockName(b); slot.appendChild(name);
       slot.addEventListener('click', () => selectSlot(b.id), { signal });
       hotbar.appendChild(slot);
     }
@@ -1136,7 +780,7 @@ export function initGame(brand: Brand): (() => void) | undefined {
     [...hotbar.children].forEach((s) => s.classList.toggle('active', Number((s as HTMLElement).dataset.id) === id));
     const block = blockById(id);
     if (!block) throw new Error(`unknown block ${id}`);
-    toast(t('toast.block_selected', { name: block.name }));
+    toast(t('toast.block_selected', { name: blockName(block) }));
   }
 
   const toastEl = el('toast');

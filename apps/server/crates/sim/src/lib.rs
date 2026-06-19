@@ -17,9 +17,12 @@ pub const BEDROCK: u8 = 16;
 pub const MAX_BLOCK: u8 = 19;
 
 /// Highest block of the terrain column at (x, z).
+///
+/// Computed in f64 to stay bit-for-bit identical to the JavaScript client's worldgen, so
+/// client and server agree on the terrain (verified by the shared worldgen golden vectors).
 pub fn height_at(x: i32, z: i32) -> i32 {
-    let xf = x as f32;
-    let zf = z as f32;
+    let xf = x as f64;
+    let zf = z as f64;
     let h = (xf * 0.05).sin() * 1.4
         + (zf * 0.045).cos() * 1.4
         + ((xf + zf) * 0.02).sin() * 2.6
@@ -324,5 +327,44 @@ mod tests {
             "expected compact blob, got {}",
             blob.len()
         );
+    }
+
+    // Deterministic sample grid shared with the web worldgen parity test. The web test must
+    // iterate coordinates in the SAME order: for i in 0..32 { for j in 0..32 { (i*271, j*409) } }.
+    fn golden_heights() -> Vec<i32> {
+        (0..32)
+            .flat_map(|i| (0..32).map(move |j| (i * 271, j * 409)))
+            .map(|(x, z)| height_at(x, z))
+            .collect()
+    }
+
+    /// Pins the worldgen output so the Rust server and the TypeScript client can never silently
+    /// diverge. Writes the golden file on first run, asserts against it afterwards.
+    #[test]
+    fn worldgen_matches_shared_golden() {
+        let json = format!(
+            "[{}]",
+            golden_heights()
+                .iter()
+                .map(|h| h.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../web/lib/engine/worldgen.golden.json"
+        );
+        match std::fs::read_to_string(path) {
+            Ok(existing) => assert_eq!(
+                existing.trim(),
+                json,
+                "worldgen drifted from the golden vectors"
+            ),
+            Err(_) => {
+                let parent = std::path::Path::new(path).parent().unwrap();
+                std::fs::create_dir_all(parent).unwrap();
+                std::fs::write(path, &json).unwrap();
+            }
+        }
     }
 }

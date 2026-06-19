@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { Tenant } from '../lib/builtins';
+import type { Tenant } from './builtins';
 
-let store: typeof import('../lib/tenant-store');
+let store: typeof import('./tenant-store');
 
 beforeAll(async () => {
   process.env.DATABASE_URL = ':memory:';
-  store = await import('../lib/tenant-store');
+  store = await import('./tenant-store');
 });
 
 describe('tenant-store', () => {

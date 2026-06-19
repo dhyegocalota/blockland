@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { t } from '../lib/i18n/index';
-import { messages } from '../lib/i18n/catalog';
+import { t } from './index';
+import { messages } from './catalog';
 
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window;

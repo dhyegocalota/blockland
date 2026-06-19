@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { tenantIdFromLocation } from '../lib/tenants';
-import { DEFAULT_TENANT } from '../lib/builtins';
+import { tenantIdFromLocation } from './tenants';
+import { DEFAULT_TENANT } from './builtins';
 
 function stubLocation({ hostname, search }: { hostname: string; search: string }) {
   globalThis.window = { location: { hostname, search } } as unknown as Window & typeof globalThis;
