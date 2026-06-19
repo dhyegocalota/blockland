@@ -60,10 +60,6 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
 
 type LoginStep = 'email' | 'code';
 
-function generateGuestName(): string {
-  return `Guest${Math.floor(1000 + Math.random() * 9000)}`;
-}
-
 function loadName(): string {
   if (typeof window === 'undefined') return '';
   return window.localStorage.getItem(NAME_KEY) ?? '';
@@ -149,7 +145,7 @@ export default function Game() {
         setBrand(active);
         setOffline(isOffline);
         const bridge: CoopBridge = {
-          resolveName: () => loadName().trim() || generateGuestName(),
+          resolveName: () => loadName().trim(),
           resolveAppearance: () => loadLook(),
           resolveClaim: (resolvedName) => resolveClaim(active.id, resolvedName),
           resolveOffline: () => soloRef.current,

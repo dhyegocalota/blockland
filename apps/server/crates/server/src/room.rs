@@ -280,7 +280,7 @@ impl Room {
             return self
                 .admit(
                     String::new(),
-                    sanitize_name(&name),
+                    String::new(),
                     false,
                     claim,
                     look,
@@ -341,12 +341,19 @@ impl Room {
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
         let id = self.hub.alloc_id();
+        // A guest arrives without a name; give them a unique, recognizable one so two guests never
+        // collide on a generic label. A logged-in player keeps their authoritative account name.
+        let name = if authoritative_name.is_empty() {
+            format!("Guest{id}")
+        } else {
+            authoritative_name
+        };
         let spawn = World::spawn();
         let limits = &self.hub.limits;
         let now = Instant::now();
         let player = Player {
             id,
-            name: authoritative_name,
+            name,
             account_id,
             is_admin,
             claim,
@@ -915,20 +922,6 @@ impl Room {
     }
 }
 
-fn sanitize_name(raw: &str) -> String {
-    let cleaned: String = raw
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
-        .take(16)
-        .collect();
-    let trimmed = cleaned.trim();
-    if trimmed.is_empty() {
-        "Player".into()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 // Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "steve").
 const MAX_STRUCTURE_KIND_LEN: usize = 24;
 
@@ -1218,6 +1211,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn guest_joins_without_a_claim_and_gets_a_unique_name() {
+        let mut room = test_room().await;
+        let (conn, _conn_rx) = mpsc::channel::<ServerMsg>(64);
+        let (reply, reply_rx) = oneshot::channel();
+        let look = Appearance {
+            skin: "#fff".into(),
+            shirt: "#fff".into(),
+            hair: "#fff".into(),
+        };
+        room.on_join(
+            String::new(),
+            String::new(),
+            look,
+            "127.0.0.1".parse().unwrap(),
+            conn,
+            reply,
+        )
+        .await;
+        let id = reply_rx
+            .await
+            .unwrap()
+            .expect("a guest joins with no claim");
+        let player = room.players.get(&id).unwrap();
+        assert_eq!(player.name, format!("Guest{id}"));
+        assert!(player.account_id.is_empty(), "a guest has no account");
+    }
+
+    #[tokio::test]
     async fn creatures_keep_a_minimum_population_near_players_and_refill() {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 1, false);
@@ -1275,14 +1296,5 @@ mod tests {
         assert!(b.take());
         assert!(b.take());
         assert!(!b.take());
-    }
-
-    #[test]
-    fn sanitize_trims_and_limits() {
-        assert_eq!(sanitize_name("  Teo123  "), "Teo123");
-        assert_eq!(sanitize_name(""), "Player");
-        assert_eq!(sanitize_name("!@#$%"), "Player");
-        assert_eq!(sanitize_name("abcdefghijklmnopqrstuvwxyz").len(), 16);
-        assert_eq!(sanitize_name("<script>"), "script");
     }
 }
