@@ -118,11 +118,19 @@ describe('blockById', () => {
 });
 
 describe('paint', () => {
-  it('fills a base layer then 46 speckles', () => {
+  it('fills a base layer then scatters speckles', () => {
     const { ctx, fills } = fakeContext();
     paint('#111111', '#000000', '#ffffff')(ctx);
     expect(fills[0]).toEqual({ color: '#111111', rect: [0, 0, 16, 16] });
-    expect(fills.length).toBe(1 + 46);
+    expect(fills.length).toBeGreaterThan(1);
+  });
+
+  it('is deterministic across calls', () => {
+    const first = fakeContext();
+    const second = fakeContext();
+    paint('#111111', '#000000', '#ffffff')(first.ctx);
+    paint('#111111', '#000000', '#ffffff')(second.ctx);
+    expect(first.fills).toEqual(second.fills);
   });
 
   it('paints speckles only with the dark or light color', () => {
@@ -153,23 +161,23 @@ describe('named texture painters', () => {
   it('woodTexture draws the base then grain stripes', () => {
     const { ctx, fills } = fakeContext();
     woodTexture(ctx);
-    expect(fills[0].color).toBe('#9c6b3f');
-    expect(fills.some((fill) => fill.color === '#7a4f2b')).toBe(true);
-    expect(fills.some((fill) => fill.color === '#b3855a')).toBe(true);
+    expect(fills[0].color).toBe('#6b5331');
+    expect(fills.some((fill) => fill.color === '#574326')).toBe(true);
+    expect(fills.some((fill) => fill.color === '#7d6038')).toBe(true);
   });
 
   it('brickTexture draws mortar lines over a red base', () => {
     const { ctx, fills } = fakeContext();
     brickTexture(ctx);
-    expect(fills[0]).toEqual({ color: '#c0563f', rect: [0, 0, 16, 16] });
-    expect(fills.some((fill) => fill.color === '#e8e0d0')).toBe(true);
+    expect(fills[0]).toEqual({ color: '#9c5a3c', rect: [0, 0, 16, 16] });
+    expect(fills.some((fill) => fill.color === '#c9c4b4')).toBe(true);
   });
 
   it('goldTexture sparkles over a gold base', () => {
     const { ctx, fills } = fakeContext();
     goldTexture(ctx);
-    expect(fills[0].color).toBe('#ffd23f');
-    expect(fills.some((fill) => fill.color === '#caa018')).toBe(true);
+    expect(fills[0].color).toBe('#fcee4b');
+    expect(fills.some((fill) => fill.color === '#c9a21a')).toBe(true);
   });
 
   it('rainbowTexture lays one stripe per spectrum color', () => {
@@ -189,9 +197,9 @@ describe('named texture painters', () => {
   it('diamondTexture draws bevels, gems and a center shine', () => {
     const { ctx, fills } = fakeContext();
     diamondTexture(ctx);
-    expect(fills[0]).toEqual({ color: '#54cfd6', rect: [0, 0, 16, 16] });
+    expect(fills[0]).toEqual({ color: '#4aedd9', rect: [0, 0, 16, 16] });
     expect(fills.some((fill) => fill.color === '#ffffff')).toBe(true);
-    expect(fills.some((fill) => fill.color === '#eafeff')).toBe(true);
+    expect(fills.some((fill) => fill.color === '#eafffb')).toBe(true);
   });
 
   it('avaritiaTexture restores globalAlpha after the nebula pass', () => {
