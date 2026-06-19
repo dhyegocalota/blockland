@@ -322,7 +322,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   // ---------- Player state ----------
   const MAX_HEARTS = 3;
-  const spawnPoint = (): THREE.Vector3 => new THREE.Vector3(SIZE_X / 2, heightAt(SIZE_X >> 1, SIZE_Z >> 1) + 4, SIZE_Z / 2 + 4);
+  // Spawn at the world center, lifted above the terrain AND anything built there (no spawning inside a structure).
+  const spawnPoint = (): THREE.Vector3 => {
+    const sx = SIZE_X >> 1, sz = (SIZE_Z >> 1) + 4;
+    let feet = heightAt(sx, sz) + 1;
+    while (feet < SIZE_Y - 2 && (isSolid(sx, feet, sz) || isSolid(sx, feet + 1, sz))) feet++;
+    return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + 4);
+  };
   const player: Player = {
     pos: spawnPoint(),
     vel: new THREE.Vector3(),
@@ -337,10 +343,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   // ---------- Co-op (remote players) — only when a server URL is configured ----------
   const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
+  // If a synced edit lands on the local player (e.g. a structure built where they stand), lift them out.
+  function unstuckPlayer(): void {
+    const fx = Math.floor(player.pos.x), fz = Math.floor(player.pos.z);
+    let feet = Math.floor(player.pos.y - EYE_HEIGHT);
+    if (!isSolid(fx, feet, fz) && !isSolid(fx, feet + 1, fz)) return;
+    while (feet < SIZE_Y - 2 && (isSolid(fx, feet, fz) || isSolid(fx, feet + 1, fz))) feet++;
+    player.pos.y = feet + EYE_HEIGHT;
+    player.vel.set(0, 0, 0);
+  }
   function applyRemoteEdit({ x, y, z, id }: { x: number; y: number; z: number; id: number }): void {
     if (!inBounds(x, y, z)) return;
     setVoxel(x, y, z, id);
     remeshRegion(x - 1, x + 1, z - 1, z + 1);
+    unstuckPlayer();
     debug('coop', 'remote edit', { x, y, z, id });
   }
   function applyRemoteEditBatch(edits: EditCell[]): void {
@@ -355,6 +371,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       if (z > maxZ) maxZ = z;
     }
     if (minX <= maxX) remeshRegion(minX - 1, maxX + 1, minZ - 1, maxZ + 1);
+    unstuckPlayer();
     debug('coop', 'remote edit batch', { count: edits.length });
   }
   function localPose(): { x: number; y: number; z: number; yaw: number; pitch: number } {
@@ -611,7 +628,12 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const gy = groundHeight(cx, cz);
     const reach = kind === 'ball' ? 9 : kind === 'cola' ? 6 : 4;
     const cells: EditCell[] = [];
-    const collect = (x: number, y: number, z: number, id: number): void => { setVoxel(x, y, z, id); cells.push({ x, y, z, id }); };
+    // Skip any cell that would land on a player so a structure can never trap someone.
+    const collect = (x: number, y: number, z: number, id: number): void => {
+      if (overlapsPlayer(x, y, z)) return;
+      setVoxel(x, y, z, id);
+      cells.push({ x, y, z, id });
+    };
     if (kind === 'trophy') stampTrophy({ set: collect, cx, gy, cz });
     if (kind === 'ball') stampBall({ set: collect, cx, gy, cz, radius: 8 });
     if (kind === 'figure') stampFigure({ set: collect, cx, gy, cz });
@@ -795,6 +817,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
 
   function handleHotkey(e: KeyboardEvent): void {
+    if (e.code === 'Escape') { hideControls(); hideBuildMenu(); return; }
     const b = BLOCKS.find((bl) => bl && bl.key === e.key);
     if (b) selectSlot(b.id);
     if (e.code === 'KeyF') toggleFly();
