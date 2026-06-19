@@ -40,6 +40,14 @@ export const chat = (text: string): ClientMsg => ({ t: 'chat', text });
 
 export const editBatch = (edits: EditCell[]): ClientMsg => ({ t: 'edit_batch', edits });
 
+export const adminSetPeace = (on: boolean): ClientMsg => ({ t: 'admin_set_peace', on });
+
+export const adminSetStructure = (kind: string, allowed: boolean): ClientMsg => ({
+  t: 'admin_set_structure',
+  kind,
+  allowed,
+});
+
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 
 export const parseServerMsg = (data: string): ServerMsg => JSON.parse(data) as ServerMsg;

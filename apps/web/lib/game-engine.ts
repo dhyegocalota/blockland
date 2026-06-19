@@ -48,7 +48,8 @@ interface Poof {
   life: number;
 }
 
-type StructureKind = 'trophy' | 'ball' | 'figure' | 'cola' | 'steve';
+export type StructureKind = 'trophy' | 'ball' | 'figure' | 'cola' | 'steve';
+export const STRUCTURE_KINDS: StructureKind[] = ['trophy', 'ball', 'figure', 'cola', 'steve'];
 
 interface GameWindow extends Window {
   __blGameBooted?: boolean;
@@ -76,7 +77,12 @@ export interface CoopBridge {
   resolveAppearance(): Appearance;
   resolveClaim(name: string): string;
   hud: CoopHud;
-  bind(api: { sendChat(text: string): void; debugSnapshot(): DebugSnapshot }): void;
+  bind(api: {
+    sendChat(text: string): void;
+    setAdminPeace(on: boolean): void;
+    setAdminStructure(kind: string, allowed: boolean): void;
+    debugSnapshot(): DebugSnapshot;
+  }): void;
 }
 
 export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | undefined {
@@ -339,6 +345,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   };
   let selected = 1;
   let peaceful = true;
+  const blockedStructures = new Set<string>();
   let coop: CoopController | null = null;
   let fps = 0;
 
@@ -375,6 +382,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     unstuckPlayer();
     debug('coop', 'remote edit batch', { count: edits.length });
   }
+  // Room-wide settings (admin-controlled, server-authoritative): peace calms the local creatures for
+  // everyone, and blocked structures disable those entries in the build menu.
+  function applyRoomState({ peace, blockedStructures: blocked }: { peace: boolean; blockedStructures: string[] }): void {
+    peaceful = peace;
+    syncPeaceUi();
+    blockedStructures.clear();
+    for (const kind of blocked) blockedStructures.add(kind);
+    syncBuildMenu();
+    debug('engine', 'room state applied', { peace, blocked: blocked.length });
+  }
   function localPose(): { x: number; y: number; z: number; yaw: number; pitch: number } {
     return { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch };
   }
@@ -392,7 +409,12 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (!coop) return { ...base, ping: 0, state: 'offline', online: 1 };
     return { ...base, ping: coop.ping, state: coop.state, online: coop.onlineCount };
   }
-  bridge?.bind({ sendChat: (text) => coop?.sendChat(text), debugSnapshot });
+  bridge?.bind({
+    sendChat: (text) => coop?.sendChat(text),
+    setAdminPeace: (on) => coop?.sendAdminSetPeace(on),
+    setAdminStructure: (kind, allowed) => coop?.sendAdminSetStructure(kind, allowed),
+    debugSnapshot,
+  });
 
   // ---------- Creatures (animals to hunt, monsters to fight) ----------
   const creatures: Creature[] = [];
@@ -615,6 +637,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   // ---------- Magic structures ----------
   function buildStructure(kind: StructureKind): void {
+    if (blockedStructures.has(kind)) { toast(t('build.blocked')); return; }
     const margin = 12;
     const aim = raycastVoxel(90);
     let targetX: number, targetZ: number;
@@ -824,7 +847,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (b) selectSlot(b.id);
     if (e.code === 'KeyF') toggleFly();
     if (e.code === 'KeyV') toggleControls();
-    if (e.code === 'KeyP') togglePeace();
+    if (e.code === 'KeyP') requestPeace();
     if (e.code === 'KeyB') toggleBuildMenu();
   }
 
@@ -860,15 +883,24 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   function toggleBuildMenu(): void { buildMenuEl.hidden ? showBuildMenu() : hideBuildMenu(); }
   el('buildBtn').addEventListener('click', (e) => { e.stopPropagation(); showBuildMenu(); }, { signal });
   el('closeBuild').addEventListener('click', (e) => { e.stopPropagation(); hideBuildMenu(); }, { signal });
-  buildMenuEl.querySelectorAll<HTMLElement>('.buildCard').forEach((btn) => {
+  buildMenuEl.querySelectorAll<HTMLButtonElement>('.buildCard').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const kind = btn.dataset.kind;
       if (!kind) throw new Error('build card missing data-kind');
+      if (blockedStructures.has(kind)) return;
       buildStructure(kind as StructureKind);
       hideBuildMenu();
     }, { signal });
   });
+  // Disabled blocked structure cards so a player can't pick what an admin has blocked room-wide.
+  function syncBuildMenu(): void {
+    buildMenuEl.querySelectorAll<HTMLButtonElement>('.buildCard').forEach((btn) => {
+      const kind = btn.dataset.kind;
+      if (!kind) throw new Error('build card missing data-kind');
+      btn.disabled = blockedStructures.has(kind);
+    });
+  }
 
   // ---------- Sound ----------
   let audio: AudioContext | undefined;
@@ -927,17 +959,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   el('flyBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFly(); }, { signal });
 
+  // Peace is now room-wide and admin-controlled: the button only reflects the room state, and only an
+  // admin's click asks the server to flip it. A non-admin click is a no-op (read-only).
   const modeBtn = el('modeBtn');
-  function togglePeace(): void {
-    peaceful = !peaceful;
+  function syncPeaceUi(): void {
     modeBtn.classList.toggle('on', peaceful);
     modeBtn.textContent = peaceful ? t('hud.peace_on') : t('hud.peace_off');
-    toast(peaceful ? t('toast.peace_on') : t('toast.peace_off'));
-    debug('engine', 'peace toggled', { peaceful });
   }
-  modeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePeace(); }, { signal });
-  modeBtn.classList.toggle('on', peaceful);
-  modeBtn.textContent = peaceful ? t('hud.peace_on') : t('hud.peace_off');
+  function requestPeace(): void {
+    if (!coop?.isAdmin) { toast(t('toast.peace_admin_only')); return; }
+    coop.sendAdminSetPeace(!peaceful);
+    debug('engine', 'peace requested', { next: !peaceful });
+  }
+  modeBtn.addEventListener('click', (e) => { e.stopPropagation(); requestPeace(); }, { signal });
+  syncPeaceUi();
 
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
@@ -993,6 +1028,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       hud: bridge.hud,
       applyRemoteEdit,
       applyRemoteEditBatch,
+      applyRoomState,
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }

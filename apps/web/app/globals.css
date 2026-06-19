@@ -315,6 +315,38 @@ canvas { display: block; }
 #presenceList li { color: #fff; font-weight: 700; font-size: 14px; word-break: break-word; }
 #presenceList li.self { color: var(--gold); }
 
+/* ---------- In-game admin panel ---------- */
+#adminPanel {
+  position: fixed; right: 12px; top: 64px; z-index: 35; pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: min(260px, 70vw);
+}
+#adminToggle {
+  pointer-events: auto; font-family: inherit; font-weight: 900; font-size: 15px; color: #fff;
+  background: rgba(42,26,74,.55); border: 2px solid rgba(255,255,255,.5); border-radius: 14px;
+  padding: 5px 12px; cursor: pointer; backdrop-filter: blur(6px); white-space: nowrap;
+}
+#adminPanel.open #adminToggle { border-color: var(--gold); }
+#adminBody {
+  pointer-events: auto; display: flex; flex-direction: column; gap: 8px; width: 100%;
+  background: rgba(20,12,40,.6); border: 2px solid rgba(255,255,255,.35); border-radius: 12px;
+  padding: 10px 12px; backdrop-filter: blur(6px); animation: chatIn .2s ease both;
+}
+#adminPeace {
+  font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer;
+  background: rgba(255,93,46,.35); border: 2px solid rgba(255,255,255,.35); border-radius: 10px; padding: 6px 10px;
+}
+#adminPeace.on { background: rgba(91,216,106,.35); border-color: var(--gold); }
+#adminBody .adminLabel { color: #cbb8ff; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+#adminStructures { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+#adminStructures li { display: flex; align-items: center; gap: 8px; }
+#adminStructures li span { flex: 1; color: #fff; font-weight: 700; font-size: 13px; word-break: break-word; }
+#adminStructures button {
+  font-family: inherit; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff;
+  border: 2px solid rgba(255,255,255,.35); border-radius: 9px; padding: 4px 9px; white-space: nowrap;
+}
+#adminStructures button.allowed { background: rgba(91,216,106,.3); }
+#adminStructures button.blocked { background: rgba(255,93,46,.4); }
+
 /* ---------- Event feed (system events, next to chat) ---------- */
 #feed {
   position: fixed; left: 16px; bottom: 152px; z-index: 29; width: min(360px, 80vw);

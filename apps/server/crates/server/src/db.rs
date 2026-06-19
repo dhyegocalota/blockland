@@ -43,12 +43,23 @@ pub struct ScoreEntry {
 
 /// An account is identified by a stable `account_id`; the `name` is its current, MUTABLE display
 /// name within a tenant. Identity is per tenant: `(tenant, email)` and `(tenant, name)` are unique.
+/// `is_admin` is a per-account flag that authorizes room-wide settings in-game.
 #[derive(Debug, Clone)]
 pub struct Account {
     pub account_id: String,
     pub tenant: String,
     pub name: String,
     pub email: String,
+    pub is_admin: bool,
+}
+
+/// One account row in the /admin panel's per-tenant account list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountInfo {
+    pub account_id: String,
+    pub name: String,
+    pub email: String,
+    pub is_admin: bool,
 }
 
 /// Result of finding-or-creating an account for `(tenant, email)`: the stable id, its current name,
@@ -141,6 +152,7 @@ impl Db {
                     tenant TEXT NOT NULL,
                     email TEXT NOT NULL,
                     name TEXT NOT NULL,
+                    is_admin INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL,
                     UNIQUE (tenant, email),
                     UNIQUE (tenant, name)
@@ -148,6 +160,15 @@ impl Db {
                 (),
             )
             .await?;
+        // Backfill the column on databases created before admin existed; ignore the error if it
+        // already exists (libSQL has no `ADD COLUMN IF NOT EXISTS`).
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
+                (),
+            )
+            .await;
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS leaderboard (
@@ -364,7 +385,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT account_id, name FROM accounts WHERE tenant = ?1 AND email = ?2",
+                "SELECT account_id, name, is_admin FROM accounts WHERE tenant = ?1 AND email = ?2",
                 params![tenant, email],
             )
             .await?;
@@ -374,6 +395,7 @@ impl Db {
                 tenant: tenant.to_string(),
                 name: row.get::<String>(1)?,
                 email: email.to_string(),
+                is_admin: row.get::<i64>(2)? != 0,
             })),
             None => Ok(None),
         }
@@ -387,7 +409,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT account_id, email FROM accounts WHERE tenant = ?1 AND name = ?2",
+                "SELECT account_id, email, is_admin FROM accounts WHERE tenant = ?1 AND name = ?2",
                 params![tenant, name],
             )
             .await?;
@@ -397,6 +419,7 @@ impl Db {
                 tenant: tenant.to_string(),
                 name: name.to_string(),
                 email: row.get::<String>(1)?,
+                is_admin: row.get::<i64>(2)? != 0,
             })),
             None => Ok(None),
         }
@@ -409,7 +432,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT tenant, email, name FROM accounts WHERE account_id = ?1",
+                "SELECT tenant, email, name, is_admin FROM accounts WHERE account_id = ?1",
                 params![account_id],
             )
             .await?;
@@ -419,9 +442,58 @@ impl Db {
                 tenant: row.get::<String>(0)?,
                 email: row.get::<String>(1)?,
                 name: row.get::<String>(2)?,
+                is_admin: row.get::<i64>(3)? != 0,
             })),
             None => Ok(None),
         }
+    }
+
+    /// Set the admin flag on the `(tenant, name)` account. Returns false if no such account exists,
+    /// so the /admin panel can report an unknown name instead of silently succeeding.
+    pub async fn set_admin_by_name(
+        &self,
+        tenant: &str,
+        name: &str,
+        admin: bool,
+    ) -> Result<bool, libsql::Error> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE accounts SET is_admin = ?3 WHERE tenant = ?1 AND name = ?2",
+                params![tenant, name, admin as i64],
+            )
+            .await?;
+        Ok(changed > 0)
+    }
+
+    /// Whether the account is a room admin. Unknown accounts are not admins.
+    pub async fn is_admin(&self, account_id: &str) -> Result<bool, libsql::Error> {
+        match self.get_account_by_id(account_id).await? {
+            Some(account) => Ok(account.is_admin),
+            None => Ok(false),
+        }
+    }
+
+    /// Every account of a tenant for the /admin panel, oldest-first.
+    pub async fn list_accounts(&self, tenant: &str) -> Result<Vec<AccountInfo>, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT account_id, name, email, is_admin FROM accounts
+                 WHERE tenant = ?1 ORDER BY created_at ASC",
+                params![tenant],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(AccountInfo {
+                account_id: row.get::<String>(0)?,
+                name: row.get::<String>(1)?,
+                email: row.get::<String>(2)?,
+                is_admin: row.get::<i64>(3)? != 0,
+            });
+        }
+        Ok(out)
     }
 
     /// Find-or-create the account for `(tenant, email)`, then adopt `name` as its display name only
@@ -899,6 +971,58 @@ mod tests {
         assert_eq!(third.account_id, first.account_id);
         assert!(!third.renamed);
         assert_eq!(third.name, "Annie");
+    }
+
+    #[tokio::test]
+    async fn admin_flag_defaults_off_and_grants_then_revokes() {
+        let db = memory_db().await;
+        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        assert!(!db.is_admin(&ann).await.unwrap());
+        let before = db.get_account_by_id(&ann).await.unwrap().unwrap();
+        assert!(!before.is_admin);
+
+        assert!(db.set_admin_by_name("teo", "Ann", true).await.unwrap());
+        assert!(db.is_admin(&ann).await.unwrap());
+        let granted = db.get_account_by_name("teo", "Ann").await.unwrap().unwrap();
+        assert!(granted.is_admin);
+
+        assert!(db.set_admin_by_name("teo", "Ann", false).await.unwrap());
+        assert!(!db.is_admin(&ann).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn set_admin_reports_unknown_name_and_isolates_tenants() {
+        let db = memory_db().await;
+        account(&db, "teo", "ann@x.com", "Ann").await;
+        assert!(!db.set_admin_by_name("teo", "Nobody", true).await.unwrap());
+        // A same-named account in another tenant is not affected.
+        assert!(!db.set_admin_by_name("demo", "Ann", true).await.unwrap());
+        let ann = db.get_account_by_name("teo", "Ann").await.unwrap().unwrap();
+        assert!(!ann.is_admin);
+    }
+
+    #[tokio::test]
+    async fn unknown_account_is_not_admin() {
+        let db = memory_db().await;
+        assert!(!db.is_admin("no-such-account").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn list_accounts_returns_tenant_accounts_with_admin_flag() {
+        let db = memory_db().await;
+        account(&db, "teo", "ann@x.com", "Ann").await;
+        account(&db, "teo", "bob@x.com", "Bob").await;
+        account(&db, "demo", "zoe@x.com", "Zoe").await;
+        db.set_admin_by_name("teo", "Bob", true).await.unwrap();
+
+        let accounts = db.list_accounts("teo").await.unwrap();
+        let names: Vec<&str> = accounts.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Ann", "Bob"]);
+        let bob = accounts.iter().find(|a| a.name == "Bob").unwrap();
+        assert!(bob.is_admin);
+        assert_eq!(bob.email, "bob@x.com");
+        let ann = accounts.iter().find(|a| a.name == "Ann").unwrap();
+        assert!(!ann.is_admin);
     }
 
     #[tokio::test]

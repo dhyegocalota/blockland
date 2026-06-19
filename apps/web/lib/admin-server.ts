@@ -65,3 +65,11 @@ export async function banIp(ip: string): Promise<unknown> {
 export async function unbanIp(ip: string): Promise<unknown> {
   return adminFetch('POST', '/admin/unban', { ip });
 }
+
+export async function fetchAccounts(tenant: string): Promise<unknown> {
+  return adminFetch('GET', `/admin/accounts/${encodeURIComponent(tenant)}`);
+}
+
+export async function setAccountAdmin(args: { tenant: string; name: string; admin: boolean }): Promise<unknown> {
+  return adminFetch('POST', '/admin/set-admin', args);
+}

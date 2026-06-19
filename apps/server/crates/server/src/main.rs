@@ -6,6 +6,8 @@
 //!   GET  /admin/bans      JSON list of banned IPs (needs x-admin-token)
 //!   POST /admin/ban       ban an IP: { "ip": "1.2.3.4" } (needs x-admin-token)
 //!   POST /admin/unban     unban an IP: { "ip": "1.2.3.4" } (needs x-admin-token)
+//!   GET  /admin/accounts/:tenant  list a tenant's accounts (needs x-admin-token)
+//!   POST /admin/set-admin grant/revoke admin: { tenant, name, admin } -> account list (needs x-admin-token)
 //!
 //! Internal data API (Next -> Rust, HMAC-signed; see `internal_auth`):
 //!   GET    /internal/tenants/:id          tenant JSON or 404
@@ -74,6 +76,8 @@ async fn main() {
         .route("/admin/bans", get(admin_bans))
         .route("/admin/ban", post(admin_ban))
         .route("/admin/unban", post(admin_unban))
+        .route("/admin/accounts/{tenant}", get(admin_accounts))
+        .route("/admin/set-admin", post(admin_set_admin))
         .route("/ws", get(ws_handler))
         .route(
             "/internal/tenants",
@@ -200,6 +204,53 @@ async fn admin_unban(
     };
     hub.bans.unban(ip);
     Json(hub.bans.list()).into_response()
+}
+
+/// All accounts of a tenant for the /admin panel (grant/revoke admin). Needs `x-admin-token`.
+async fn admin_accounts(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(tenant): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = check_admin(&hub, &headers) {
+        return resp;
+    }
+    match hub.db.list_accounts(&tenant).await {
+        Ok(accounts) => Json(accounts).into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetAdminReq {
+    tenant: String,
+    name: String,
+    admin: bool,
+}
+
+/// Grant or revoke a tenant account's admin flag, returning the updated account list. Needs
+/// `x-admin-token`. A name that matches no account is a 404 (the panel reports it instead of a
+/// silent success).
+async fn admin_set_admin(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Json(req): Json<SetAdminReq>,
+) -> impl IntoResponse {
+    if let Some(resp) = check_admin(&hub, &headers) {
+        return resp;
+    }
+    match hub
+        .db
+        .set_admin_by_name(&req.tenant, &req.name, req.admin)
+        .await
+    {
+        Ok(true) => match hub.db.list_accounts(&req.tenant).await {
+            Ok(accounts) => Json(accounts).into_response(),
+            Err(e) => internal_error(e),
+        },
+        Ok(false) => (StatusCode::NOT_FOUND, "unknown_account").into_response(),
+        Err(e) => internal_error(e),
+    }
 }
 
 /// Verify the HMAC signature on an internal request. The canonical path is taken from the

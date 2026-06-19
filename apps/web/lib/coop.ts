@@ -45,6 +45,11 @@ export interface RosterEntry extends RosterMember {
   self: boolean;
 }
 
+export interface RoomState {
+  peace: boolean;
+  blockedStructures: string[];
+}
+
 export interface CoopHud {
   onState(state: NetState): void;
   onPing(ping: number): void;
@@ -52,6 +57,8 @@ export interface CoopHud {
   onCount(online: number): void;
   onRoster(players: RosterEntry[]): void;
   onEvent(event: FeedEvent): void;
+  onAdmin(admin: boolean): void;
+  onRoomState(room: RoomState): void;
   onError(code: string): void;
 }
 
@@ -69,6 +76,7 @@ export interface CoopOptions {
   hud: CoopHud;
   applyRemoteEdit(args: { x: number; y: number; z: number; id: number }): void;
   applyRemoteEditBatch(edits: EditCell[]): void;
+  applyRoomState(room: RoomState): void;
 }
 
 interface Avatar {
@@ -85,11 +93,14 @@ export interface CoopController {
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
+  sendAdminSetPeace(on: boolean): void;
+  sendAdminSetStructure(kind: string, allowed: boolean): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   readonly ping: number;
   readonly state: NetState;
   readonly onlineCount: number;
+  readonly isAdmin: boolean;
   close(): void;
 }
 
@@ -100,6 +111,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   let lastMoveSentAt = 0;
   let onlineCount = 0;
   let selfPing = 0;
+  let admin = false;
 
   function makeLabel(name: string): THREE.Sprite {
     const canvas = document.createElement('canvas');
@@ -271,7 +283,9 @@ export function createCoop(opts: CoopOptions): CoopController {
       onState: (state) => opts.hud.onState(state),
       onWelcome: (msg) => {
         selfId = msg.you;
-        debug('coop', 'welcome', { you: msg.you, world: msg.world });
+        admin = msg.admin;
+        opts.hud.onAdmin(msg.admin);
+        debug('coop', 'welcome', { you: msg.you, world: msg.world, admin: msg.admin });
       },
       onSnapshot: (msg) => {
         const seen = new Set<number>();
@@ -309,6 +323,12 @@ export function createCoop(opts: CoopOptions): CoopController {
         if (msg.kind === 'rename') renameAvatar(msg.detail, msg.name);
         opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },
+      onRoomState: (msg) => {
+        const room: RoomState = { peace: msg.peace, blockedStructures: msg.blocked_structures };
+        opts.applyRoomState(room);
+        opts.hud.onRoomState(room);
+        debug('coop', 'room state', { peace: msg.peace, blocked: msg.blocked_structures.length });
+      },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });
         opts.hud.onError(code);
@@ -331,6 +351,12 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendChat(text): void {
       net.sendChat(text);
+    },
+    sendAdminSetPeace(on): void {
+      net.sendAdminSetPeace(on);
+    },
+    sendAdminSetStructure(kind, allowed): void {
+      net.sendAdminSetStructure(kind, allowed);
     },
     update(now): void {
       for (const avatar of avatars.values()) {
@@ -355,6 +381,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     get onlineCount(): number {
       return onlineCount;
+    },
+    get isAdmin(): boolean {
+      return admin;
     },
     close(): void {
       for (const id of [...avatars.keys()]) removeAvatar(id);

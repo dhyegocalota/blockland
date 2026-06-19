@@ -2,7 +2,7 @@
 //! state, validates every client input, and broadcasts snapshots. The server is the
 //! single source of truth; clients predict locally and reconcile from snapshots.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -87,6 +87,7 @@ struct Player {
     // session token that proves it. Together they let the tick loop kick a player whose claim was
     // taken over (keyed by account_id, so the name can change underneath without losing the session).
     account_id: String,
+    is_admin: bool,
     claim: String,
     skin: String,
     shirt: String,
@@ -121,6 +122,10 @@ pub struct Room {
     tick: u64,
     empty_since: Option<Instant>,
     dirty: bool,
+    // Room-wide settings an admin controls: peace calms monsters for everyone; blocked_structures
+    // gate the in-game build menu. A sorted set keeps the broadcast list deterministic.
+    peace: bool,
+    blocked_structures: BTreeSet<String>,
 }
 
 const PING_EVERY_TICKS: u64 = 40; // 2s @ 20Hz
@@ -163,6 +168,8 @@ impl Room {
             tick: 0,
             empty_since: Some(Instant::now()),
             dirty: false,
+            peace: false,
+            blocked_structures: BTreeSet::new(),
             hub,
         }
     }
@@ -249,6 +256,7 @@ impl Room {
                 .admit(
                     String::new(),
                     sanitize_name(&name),
+                    false,
                     claim,
                     look,
                     ip,
@@ -276,8 +284,21 @@ impl Room {
             let _ = reply.send(Err("claim_required".into()));
             return;
         }
-        self.admit(account_id, authoritative_name, claim, look, ip, conn, reply)
-            .await;
+        let is_admin = self.hub.db.is_admin(&account_id).await.unwrap_or_else(|e| {
+            tracing::error!(tenant = %self.key.0, error = %e, "admin lookup failed");
+            false
+        });
+        self.admit(
+            account_id,
+            authoritative_name,
+            is_admin,
+            claim,
+            look,
+            ip,
+            conn,
+            reply,
+        )
+        .await;
     }
 
     /// Build the player, send Welcome + the world EditBatch + the recent timeline backlog (to this
@@ -287,6 +308,7 @@ impl Room {
         &mut self,
         account_id: String,
         authoritative_name: String,
+        is_admin: bool,
         claim: String,
         look: Appearance,
         ip: IpAddr,
@@ -301,6 +323,7 @@ impl Room {
             id,
             name: authoritative_name,
             account_id,
+            is_admin,
             claim,
             skin: sanitize_color(&look.skin, "#f2c18b"),
             shirt: sanitize_color(&look.shirt, "#ff5d2e"),
@@ -329,6 +352,7 @@ impl Room {
             brand: self.brand.clone(),
             tick_hz: self.tick_hz,
             spawn,
+            admin: is_admin,
         };
         let _ = conn.try_send(welcome);
         // Hand the joining player the world that has already been built.
@@ -365,6 +389,8 @@ impl Room {
                 tracing::error!(tenant = %self.key.0, error = %e, "event backlog load failed")
             }
         }
+        // Hand the joining connection the current room-wide settings, after Welcome + world + backlog.
+        let _ = conn.try_send(self.room_state());
         self.players.insert(id, player);
         self.empty_since = None;
         let _ = reply.send(Ok(id));
@@ -391,6 +417,13 @@ impl Room {
         let reach = self.hub.limits.edit_reach;
         let max_speed = self.hub.limits.max_speed;
         let now = Instant::now();
+
+        // Admin-only room settings mutate `self` directly, so they're handled before the per-player
+        // borrow below. Never trust the client: ignore unless the sender is a known room admin.
+        if let ClientMsg::AdminSetPeace { .. } | ClientMsg::AdminSetStructure { .. } = msg {
+            self.on_admin_setting(id, msg);
+            return;
+        }
 
         // Edits and chat need a broadcast after the borrow ends, so stage them.
         let mut edit_out: Option<ServerMsg> = None;
@@ -509,6 +542,9 @@ impl Room {
                     p.ping_ms = (now - p.ping_sent_at).as_millis().min(u32::MAX as u128) as u32;
                 }
             }
+            ClientMsg::AdminSetPeace { .. } | ClientMsg::AdminSetStructure { .. } => {
+                /* handled before the per-player borrow above */
+            }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
         }
 
@@ -535,6 +571,50 @@ impl Room {
         }
         if let Some(m) = chat_out {
             self.broadcast(&m);
+        }
+    }
+
+    /// Apply an admin-gated room setting. The sender must be a known room admin (never trust the
+    /// client); on an actual change, broadcast the new RoomState to everyone.
+    fn on_admin_setting(&mut self, id: PlayerId, msg: ClientMsg) {
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        p.last_seen = Instant::now();
+        if !p.is_admin {
+            tracing::debug!(%id, "admin command ignored: not an admin");
+            return;
+        }
+        let changed = match msg {
+            ClientMsg::AdminSetPeace { on } => {
+                let changed = self.peace != on;
+                self.peace = on;
+                changed
+            }
+            ClientMsg::AdminSetStructure { kind, allowed } => {
+                let Some(kind) = valid_structure_kind(&kind) else {
+                    return;
+                };
+                if allowed {
+                    self.blocked_structures.remove(&kind)
+                } else {
+                    self.blocked_structures.insert(kind)
+                }
+            }
+            _ => false,
+        };
+        if changed {
+            let state = self.room_state();
+            self.broadcast(&state);
+            tracing::info!(tenant = %self.key.0, peace = self.peace, blocked = self.blocked_structures.len(), "room settings changed");
+        }
+    }
+
+    /// Snapshot the room-wide settings as the wire message broadcast on change and sent on join.
+    fn room_state(&self) -> ServerMsg {
+        ServerMsg::RoomState {
+            peace: self.peace,
+            blocked_structures: self.blocked_structures.iter().cloned().collect(),
         }
     }
 
@@ -703,6 +783,21 @@ fn sanitize_name(raw: &str) -> String {
     }
 }
 
+// Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "steve").
+const MAX_STRUCTURE_KIND_LEN: usize = 24;
+
+/// Accept a prebuilt structure-kind id: a short, lowercase alphanumeric slug. Anything else is
+/// rejected so the blocked set never fills with client junk. Returns the validated kind.
+fn valid_structure_kind(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let ok = !trimmed.is_empty()
+        && trimmed.len() <= MAX_STRUCTURE_KIND_LEN
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    ok.then(|| trimmed.to_string())
+}
+
 // Accept only a `#rrggbb` hex color; fall back to the given default for anything else (cosmetic).
 fn sanitize_color(raw: &str, default: &str) -> String {
     let ok =
@@ -724,6 +819,169 @@ fn epoch_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Db;
+    use crate::hub::Hub;
+    use std::sync::Arc;
+
+    /// A room wired to a fresh memory-db hub. The command receiver is owned by the room; tests drive
+    /// it by calling its handlers directly rather than through the channel.
+    async fn test_room() -> Room {
+        let db = Arc::new(Db::memory().await);
+        let hub = Arc::new(Hub::load(db).await);
+        let tcfg = hub.tenants.get("teo").unwrap().clone();
+        let (_tx, rx) = mpsc::channel::<RoomCmd>(16);
+        Room::new(hub, &tcfg, "main".into(), rx)
+    }
+
+    /// Insert a minimal player into the room and return the channel that captures messages sent to it.
+    fn add_player(room: &mut Room, id: PlayerId, is_admin: bool) -> mpsc::Receiver<ServerMsg> {
+        let (conn, conn_rx) = mpsc::channel::<ServerMsg>(64);
+        let now = Instant::now();
+        let player = Player {
+            id,
+            name: format!("p{id}"),
+            account_id: format!("acc{id}"),
+            is_admin,
+            claim: format!("tok{id}"),
+            skin: "#000000".into(),
+            shirt: "#000000".into(),
+            hair: "#000000".into(),
+            ip: "127.0.0.1".parse().unwrap(),
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            ping_ms: 0,
+            conn,
+            last_seen: now,
+            last_move: now,
+            joined_at_ms: 0,
+            ping_nonce: 0,
+            ping_sent_at: now,
+            move_b: Bucket::new(100.0),
+            edit_b: Bucket::new(100.0),
+            chat_b: Bucket::new(100.0),
+        };
+        room.players.insert(id, player);
+        conn_rx
+    }
+
+    fn drain_room_state(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(bool, Vec<String>)> {
+        let mut latest = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::RoomState {
+                peace,
+                blocked_structures,
+            } = msg
+            {
+                latest = Some((peace, blocked_structures));
+            }
+        }
+        latest
+    }
+
+    #[tokio::test]
+    async fn admin_toggles_peace_and_broadcasts_room_state() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        let mut other_rx = add_player(&mut room, 2, false);
+
+        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: true });
+        assert!(room.peace);
+        assert_eq!(drain_room_state(&mut admin_rx), Some((true, vec![])));
+        assert_eq!(drain_room_state(&mut other_rx), Some((true, vec![])));
+    }
+
+    #[tokio::test]
+    async fn non_admin_peace_is_ignored() {
+        let mut room = test_room().await;
+        let mut other_rx = add_player(&mut room, 2, false);
+
+        room.on_admin_setting(2, ClientMsg::AdminSetPeace { on: true });
+        assert!(!room.peace);
+        assert_eq!(drain_room_state(&mut other_rx), None);
+    }
+
+    #[tokio::test]
+    async fn admin_blocks_then_reallows_a_structure() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+
+        room.on_admin_setting(
+            1,
+            ClientMsg::AdminSetStructure {
+                kind: "trophy".into(),
+                allowed: false,
+            },
+        );
+        assert!(room.blocked_structures.contains("trophy"));
+        assert_eq!(
+            drain_room_state(&mut admin_rx),
+            Some((false, vec!["trophy".to_string()]))
+        );
+
+        room.on_admin_setting(
+            1,
+            ClientMsg::AdminSetStructure {
+                kind: "trophy".into(),
+                allowed: true,
+            },
+        );
+        assert!(room.blocked_structures.is_empty());
+        assert_eq!(drain_room_state(&mut admin_rx), Some((false, vec![])));
+    }
+
+    #[tokio::test]
+    async fn non_admin_structure_block_is_ignored() {
+        let mut room = test_room().await;
+        let mut other_rx = add_player(&mut room, 2, false);
+
+        room.on_admin_setting(
+            2,
+            ClientMsg::AdminSetStructure {
+                kind: "ball".into(),
+                allowed: false,
+            },
+        );
+        assert!(room.blocked_structures.is_empty());
+        assert_eq!(drain_room_state(&mut other_rx), None);
+    }
+
+    #[tokio::test]
+    async fn invalid_structure_kind_is_rejected_without_broadcast() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+
+        room.on_admin_setting(
+            1,
+            ClientMsg::AdminSetStructure {
+                kind: "BAD!".into(),
+                allowed: false,
+            },
+        );
+        assert!(room.blocked_structures.is_empty());
+        assert_eq!(drain_room_state(&mut admin_rx), None);
+    }
+
+    #[tokio::test]
+    async fn unchanged_setting_does_not_rebroadcast() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+
+        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: false });
+        assert_eq!(drain_room_state(&mut admin_rx), None);
+    }
+
+    #[test]
+    fn valid_structure_kind_accepts_slugs_and_rejects_junk() {
+        assert_eq!(valid_structure_kind(" trophy "), Some("trophy".to_string()));
+        assert_eq!(valid_structure_kind("steve2"), Some("steve2".to_string()));
+        assert!(valid_structure_kind("").is_none());
+        assert!(valid_structure_kind("Trophy").is_none());
+        assert!(valid_structure_kind("a b").is_none());
+        assert!(valid_structure_kind(&"x".repeat(MAX_STRUCTURE_KIND_LEN + 1)).is_none());
+    }
 
     #[test]
     fn bucket_limits_and_refills() {

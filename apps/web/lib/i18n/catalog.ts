@@ -55,6 +55,13 @@ export const messages: Record<Locale, Record<string, string>> = {
     'build.cola': 'Refri gigante da Copa',
     'build.steve': 'Estátua do Steve',
     'build.close': 'Fechar',
+    'build.blocked': '🚫 O admin bloqueou esta construção',
+
+    // In-game admin panel
+    'game_admin.title': 'Admin',
+    'game_admin.structures': 'Construções',
+    'game_admin.allowed': 'Liberada',
+    'game_admin.blocked': 'Bloqueada',
 
     // Start screen
     'start.record': '🏆 Recorde: 0',
@@ -169,6 +176,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'toast.walking': '🚶 Andando',
     'toast.peace_on': '🕊️ Modo paz! Monstros não atacam',
     'toast.peace_off': '⚔️ Monstros bravos de novo!',
+    'toast.peace_admin_only': '🛡️ Só um admin pode mudar o modo paz',
     'toast.block_selected': 'Bloco: {name}',
     'toast.reward': '{emoji} +{reward} ⭐',
     'toast.built_trophy': '🏆 Taça da Copa construída!',
@@ -257,6 +265,18 @@ export const messages: Record<Locale, Record<string, string>> = {
     'mod.ip_placeholder': 'Ex.: 1.2.3.4',
     'mod.error': 'Erro de moderação: {error}',
 
+    // Admin — accounts (grant/revoke admin)
+    'accounts.title': '👑 Admins do tenant',
+    'accounts.tenant_label': 'Tenant',
+    'accounts.load': 'Carregar',
+    'accounts.empty': 'Nenhuma conta neste tenant.',
+    'accounts.col_name': 'Nome',
+    'accounts.col_admin': 'Admin',
+    'accounts.make_admin': 'Tornar admin',
+    'accounts.remove_admin': 'Remover admin',
+    'accounts.is_admin': '👑 Admin',
+    'accounts.not_admin': '—',
+
     // Admin — leaderboard
     'leaderboard.title': '🏆 Placar',
     'leaderboard.tenant_label': 'Tenant',
@@ -316,6 +336,13 @@ export const messages: Record<Locale, Record<string, string>> = {
     'build.cola': 'Giant World Cup Soda',
     'build.steve': 'Steve Statue',
     'build.close': 'Close',
+    'build.blocked': '🚫 The admin blocked this structure',
+
+    // In-game admin panel
+    'game_admin.title': 'Admin',
+    'game_admin.structures': 'Structures',
+    'game_admin.allowed': 'Allowed',
+    'game_admin.blocked': 'Blocked',
 
     // Start screen
     'start.record': '🏆 Record: 0',
@@ -430,6 +457,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'toast.walking': '🚶 Walking',
     'toast.peace_on': '🕊️ Peace mode! Monsters do not attack',
     'toast.peace_off': '⚔️ Monsters are angry again!',
+    'toast.peace_admin_only': '🛡️ Only an admin can change peace mode',
     'toast.block_selected': 'Block: {name}',
     'toast.reward': '{emoji} +{reward} ⭐',
     'toast.built_trophy': '🏆 World Cup Trophy built!',
@@ -517,6 +545,18 @@ export const messages: Record<Locale, Record<string, string>> = {
     'mod.unban': 'Unban',
     'mod.ip_placeholder': 'e.g. 1.2.3.4',
     'mod.error': 'Moderation error: {error}',
+
+    // Admin — accounts (grant/revoke admin)
+    'accounts.title': '👑 Tenant admins',
+    'accounts.tenant_label': 'Tenant',
+    'accounts.load': 'Load',
+    'accounts.empty': 'No accounts in this tenant.',
+    'accounts.col_name': 'Name',
+    'accounts.col_admin': 'Admin',
+    'accounts.make_admin': 'Make admin',
+    'accounts.remove_admin': 'Remove admin',
+    'accounts.is_admin': '👑 Admin',
+    'accounts.not_admin': '—',
 
     // Admin — leaderboard
     'leaderboard.title': '🏆 Leaderboard',

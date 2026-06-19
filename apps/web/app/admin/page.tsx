@@ -31,6 +31,7 @@ interface OnlinePlayer { id: number; name: string; x: number; y: number; z: numb
 interface RoomSnapshot { tenant: string; players: OnlinePlayer[] }
 interface AdminStats { room_list: RoomSnapshot[] }
 interface OnlineRow { tenant: string; player: OnlinePlayer }
+interface Account { name: string; admin: boolean }
 
 const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'avatar' | 'face'>> = {
   avatar: 'avatar',
@@ -62,6 +63,8 @@ export default function Admin() {
   const [bans, setBans] = useState<string[]>([]);
   const [boardTenant, setBoardTenant] = useState('');
   const [board, setBoard] = useState<ScoreEntry[]>([]);
+  const [accountsTenant, setAccountsTenant] = useState('');
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   // Let the admin page scroll (the game's global CSS pins body overflow to hidden).
   useEffect(() => {
@@ -122,6 +125,24 @@ export default function Admin() {
     const res = await fetch(`/api/leaderboard/${boardTenant.trim()}`);
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setBoard((await res.json()) as ScoreEntry[]);
+  }
+
+  async function loadAccounts() {
+    const tenant = accountsTenant.trim();
+    if (tenant === '') return;
+    const res = await fetch(`/api/admin/accounts/${tenant}`, { headers: { 'x-admin-key': key } });
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    setAccounts((await res.json()) as Account[]);
+  }
+
+  async function setAccountAdmin(name: string, admin: boolean) {
+    const res = await fetch('/api/admin/set-admin', {
+      method: 'POST',
+      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify({ tenant: accountsTenant.trim(), name, admin }),
+    });
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    setAccounts((await res.json()) as Account[]);
   }
 
   function startEdit(tenant: Tenant) { setForm(tenant); setMsg(''); setView('edit'); }
@@ -297,6 +318,38 @@ export default function Admin() {
               </div>
             ))}
           </div>
+        )}
+
+      <h2 style={{ ...S.h1, fontSize: 18, marginTop: 8 }}>{t('accounts.title')}</h2>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
+        <input style={{ ...S.input, flex: 1 }} placeholder={t('accounts.tenant_label')}
+          value={accountsTenant} onChange={(e) => setAccountsTenant(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && loadAccounts()} />
+        <button style={S.btn} onClick={loadAccounts}>{t('accounts.load')}</button>
+      </div>
+      {accounts.length === 0
+        ? <p style={{ color: '#789', marginBottom: 28 }}>{t('accounts.empty')}</p>
+        : (
+          <table style={S.table}>
+            <thead><tr>
+              <th style={S.th}>{t('accounts.col_name')}</th>
+              <th style={S.th}>{t('accounts.col_admin')}</th>
+              <th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {accounts.map((account) => (
+                <tr key={account.name}>
+                  <td style={S.td}>{account.name}</td>
+                  <td style={S.td}>{account.admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
+                  <td style={S.td}>
+                    <button style={S.small} onClick={() => setAccountAdmin(account.name, !account.admin)}>
+                      {account.admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
 
       <h2 style={{ ...S.h1, fontSize: 18, marginTop: 8 }}>{t('leaderboard.title')}</h2>

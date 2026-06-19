@@ -5,6 +5,8 @@
 
 import { debug } from './log';
 import {
+  adminSetPeace,
+  adminSetStructure,
   chat,
   edit,
   editBatch,
@@ -38,6 +40,7 @@ type EditMsg = Extract<ServerMsg, { t: 'edit' }>;
 type EditBatchMsg = Extract<ServerMsg, { t: 'edit_batch' }>;
 type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
 type EventMsg = Extract<ServerMsg, { t: 'event' }>;
+type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -47,6 +50,7 @@ export interface NetHandlers {
   onEditBatch?(msg: EditBatchMsg): void;
   onChat?(msg: ChatMsg): void;
   onEvent?(msg: EventMsg): void;
+  onRoomState?(msg: RoomStateMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -82,6 +86,8 @@ export interface NetClient {
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
+  sendAdminSetPeace(on: boolean): void;
+  sendAdminSetStructure(kind: string, allowed: boolean): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -155,6 +161,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'event') {
       opts.handlers.onEvent?.(msg);
+      return;
+    }
+    if (msg.t === 'room_state') {
+      opts.handlers.onRoomState?.(msg);
       return;
     }
     if (msg.t === 'ping') {
@@ -249,6 +259,12 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendChat(text): void {
       rawSend(encodeClientMsg(chat(text)));
+    },
+    sendAdminSetPeace(on): void {
+      rawSend(encodeClientMsg(adminSetPeace(on)));
+    },
+    sendAdminSetStructure(kind, allowed): void {
+      rawSend(encodeClientMsg(adminSetStructure(kind, allowed)));
     },
     get ping(): number {
       return ping;

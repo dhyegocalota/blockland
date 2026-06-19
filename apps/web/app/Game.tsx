@@ -5,8 +5,8 @@ import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
-import type { CoopBridge, DebugSnapshot } from '../lib/game-engine';
-import type { Appearance, RosterEntry } from '../lib/coop';
+import { STRUCTURE_KINDS, type CoopBridge, type DebugSnapshot } from '../lib/game-engine';
+import type { Appearance, RoomState, RosterEntry } from '../lib/coop';
 import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
@@ -75,8 +75,18 @@ interface ChatLine {
 
 interface GameApi {
   sendChat(text: string): void;
+  setAdminPeace(on: boolean): void;
+  setAdminStructure(kind: string, allowed: boolean): void;
   debugSnapshot(): DebugSnapshot;
 }
+
+const STRUCTURE_LABEL_KEYS: Record<string, string> = {
+  trophy: 'build.trophy',
+  ball: 'build.ball',
+  figure: 'build.figure',
+  cola: 'build.cola',
+  steve: 'build.steve',
+};
 
 export default function Game() {
   const [brand, setBrand] = useState<Brand | null>(null);
@@ -103,6 +113,9 @@ export default function Game() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [room, setRoom] = useState<RoomState>({ peace: true, blockedStructures: [] });
+  const [adminOpen, setAdminOpen] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
   const loginClearedRef = useRef(false);
@@ -142,6 +155,8 @@ export default function Game() {
             onCount: (count) => setOnline(count),
             onRoster: (players) => setRoster(players),
             onEvent: (event) => pushFeedEntry(event),
+            onAdmin: (admin) => setIsAdmin(admin),
+            onRoomState: (state) => setRoom(state),
             onError: (code) => {
               const key = AUTH_ERROR_KEYS[code];
               if (key) setAuthToast(t(key));
@@ -173,6 +188,14 @@ export default function Game() {
     setChatDraft('');
     setChatOpen(false);
   }, [chatDraft]);
+
+  const toggleRoomPeace = useCallback(() => {
+    gameApiRef.current?.setAdminPeace(!room.peace);
+  }, [room.peace]);
+
+  const toggleStructure = useCallback((kind: string, blocked: boolean) => {
+    gameApiRef.current?.setAdminStructure(kind, blocked);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -388,6 +411,42 @@ export default function Game() {
           </ul>
         )}
       </div>
+
+      {isAdmin && (
+        <div id="adminPanel" className={adminOpen ? 'open' : undefined}>
+          <button id="adminToggle" onClick={() => setAdminOpen((open) => !open)} aria-expanded={adminOpen}>
+            🛡️ {t('game_admin.title')}
+          </button>
+          {adminOpen && (
+            <div id="adminBody">
+              <button
+                id="adminPeace"
+                className={room.peace ? 'on' : undefined}
+                onClick={toggleRoomPeace}
+              >
+                {room.peace ? t('hud.peace_on') : t('hud.peace_off')}
+              </button>
+              <span className="adminLabel">{t('game_admin.structures')}</span>
+              <ul id="adminStructures">
+                {STRUCTURE_KINDS.map((kind) => {
+                  const blocked = room.blockedStructures.includes(kind);
+                  return (
+                    <li key={kind}>
+                      <span>{t(STRUCTURE_LABEL_KEYS[kind])}</span>
+                      <button
+                        className={blocked ? 'blocked' : 'allowed'}
+                        onClick={() => toggleStructure(kind, !blocked)}
+                      >
+                        {blocked ? t('game_admin.blocked') : t('game_admin.allowed')}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {bannerKey && (
         <div id="netBanner" className={severe ? 'severe' : undefined} role="status">{t(bannerKey)}</div>

@@ -47,6 +47,7 @@ const welcome = {
   brand: { name: 'Teocraft', primary: '#fff', logo: null },
   tick_hz: 20,
   spawn: [0, 0, 0],
+  admin: false,
 };
 
 function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
@@ -208,6 +209,32 @@ describe('net client', () => {
 
     socket.receive({ t: 'event', kind: 'rename', name: 'Bea', detail: 'Ana' });
     expect(events).toEqual([{ t: 'event', kind: 'rename', name: 'Bea', detail: 'Ana' }]);
+  });
+
+  it('routes room_state to onRoomState', () => {
+    const states: unknown[] = [];
+    const { client } = makeClient({ handlers: { onRoomState: (m) => states.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const incoming = { t: 'room_state', peace: true, blocked_structures: ['cola', 'steve'] };
+    socket.receive(incoming);
+    expect(states).toEqual([incoming]);
+  });
+
+  it('sendAdminSetPeace and sendAdminSetStructure serialize the right JSON', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    client.sendAdminSetPeace(true);
+    client.sendAdminSetStructure('cola', false);
+    expect(socket.sent.at(-2)).toBe(JSON.stringify({ t: 'admin_set_peace', on: true }));
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_structure', kind: 'cola', allowed: false }));
   });
 
   it('does not reconnect when reconnect is disabled', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chat, edit, encodeClientMsg, join, move, parseServerMsg, pong } from './protocol';
+import { adminSetPeace, adminSetStructure, chat, edit, encodeClientMsg, join, move, parseServerMsg, pong } from './protocol';
 
 describe('protocol factories', () => {
   it('builds a join message', () => {
@@ -19,6 +19,11 @@ describe('protocol factories', () => {
   it('builds pong and chat', () => {
     expect(pong(7)).toEqual({ t: 'pong', nonce: 7 });
     expect(chat('hi')).toEqual({ t: 'chat', text: 'hi' });
+  });
+
+  it('builds admin set-peace and set-structure messages', () => {
+    expect(adminSetPeace(true)).toEqual({ t: 'admin_set_peace', on: true });
+    expect(adminSetStructure('cola', false)).toEqual({ t: 'admin_set_structure', kind: 'cola', allowed: false });
   });
 
   it('round-trips a client message through JSON', () => {

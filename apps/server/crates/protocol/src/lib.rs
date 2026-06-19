@@ -45,6 +45,15 @@ pub enum ClientMsg {
     EditBatch {
         edits: Vec<EditCell>,
     },
+    /// Admin-only: toggle the room-wide peace mode (calms monsters for everyone). Ignored from non-admins.
+    AdminSetPeace {
+        on: bool,
+    },
+    /// Admin-only: allow or block a prebuilt structure kind for the room. Ignored from non-admins.
+    AdminSetStructure {
+        kind: String,
+        allowed: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -75,6 +84,7 @@ pub enum ServerMsg {
         brand: Brand,
         tick_hz: u32,
         spawn: [f32; 3],
+        admin: bool,
     },
     Snapshot {
         #[ts(type = "number")]
@@ -112,6 +122,11 @@ pub enum ServerMsg {
         kind: String,
         name: String,
         detail: String,
+    },
+    /// Room-wide settings an admin controls; broadcast on change and sent once on join.
+    RoomState {
+        peace: bool,
+        blocked_structures: Vec<String>,
     },
 }
 
