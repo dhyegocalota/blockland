@@ -37,7 +37,11 @@ struct Bucket {
 
 impl Bucket {
     fn new(rate: f32) -> Self {
-        Self { tokens: rate, cap: rate, refill_per_sec: rate }
+        Self {
+            tokens: rate,
+            cap: rate,
+            refill_per_sec: rate,
+        }
     }
     fn refill(&mut self, dt: f32) {
         self.tokens = (self.tokens + self.refill_per_sec * dt).min(self.cap);
@@ -91,7 +95,12 @@ const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
 const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
 
 impl Room {
-    pub fn new(hub: Arc<Hub>, tcfg: &TenantCfg, world: String, rx: mpsc::Receiver<RoomCmd>) -> Self {
+    pub fn new(
+        hub: Arc<Hub>,
+        tcfg: &TenantCfg,
+        world: String,
+        rx: mpsc::Receiver<RoomCmd>,
+    ) -> Self {
         let brand = Brand {
             name: tcfg.name.clone(),
             primary: tcfg.primary.clone(),
@@ -105,7 +114,9 @@ impl Room {
                     world_state.load_edits(&items);
                     tracing::info!(tenant = %tcfg.id, edits = items.len(), "world restored");
                 }
-                Err(e) => tracing::error!(tenant = %tcfg.id, error = %e, "failed to decode world blob"),
+                Err(e) => {
+                    tracing::error!(tenant = %tcfg.id, error = %e, "failed to decode world blob")
+                }
             }
         }
         Self {
@@ -125,7 +136,8 @@ impl Room {
 
     pub async fn run(mut self) {
         let dt = 1.0 / self.tick_hz as f32;
-        let mut interval = tokio::time::interval(Duration::from_secs_f64(1.0 / self.tick_hz as f64));
+        let mut interval =
+            tokio::time::interval(Duration::from_secs_f64(1.0 / self.tick_hz as f64));
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
@@ -228,7 +240,13 @@ impl Room {
         p.last_seen = now;
 
         match msg {
-            ClientMsg::Move { x, y, z, yaw, pitch } => {
+            ClientMsg::Move {
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+            } => {
                 if !p.move_b.take() {
                     return;
                 }
@@ -237,10 +255,9 @@ impl Room {
                 let (dx, dy, dz) = (x - p.x, y - p.y, z - p.z);
                 let dist = (dx * dx + dy * dy + dz * dz).sqrt();
                 let allowed = max_speed * dt + 2.0;
-                let in_world = x >= 0.0
-                    && x <= sim::WORLD_SIZE as f32
-                    && z >= 0.0
-                    && z <= sim::WORLD_SIZE as f32
+                let span = 0.0..=sim::WORLD_SIZE as f32;
+                let in_world = span.contains(&x)
+                    && span.contains(&z)
                     && y > -32.0
                     && y < sim::SIZE_Y as f32 + 64.0;
                 if dist <= allowed && in_world && x.is_finite() && y.is_finite() && z.is_finite() {
@@ -253,11 +270,17 @@ impl Room {
                 // Out-of-bounds / too-fast moves are dropped: the next snapshot carries
                 // the authoritative position and the client reconciles.
             }
-            ClientMsg::Edit { op, x, y, z, id: block } => {
+            ClientMsg::Edit {
+                op,
+                x,
+                y,
+                z,
+                id: block,
+            } => {
                 if !p.edit_b.take() {
                     return;
                 }
-                if y < 0 || y >= sim::SIZE_Y {
+                if !(0..sim::SIZE_Y).contains(&y) {
                     return;
                 }
                 let cx = x as f32 + 0.5;
@@ -276,7 +299,13 @@ impl Room {
                         block
                     }
                 };
-                edit_out = Some(ServerMsg::Edit { x, y, z, id: new_id, by: id });
+                edit_out = Some(ServerMsg::Edit {
+                    x,
+                    y,
+                    z,
+                    id: new_id,
+                    by: id,
+                });
             }
             ClientMsg::Chat { text } => {
                 if !p.chat_b.take() {
@@ -286,7 +315,11 @@ impl Room {
                 if text.trim().is_empty() {
                     return;
                 }
-                chat_out = Some(ServerMsg::Chat { from: id, name: p.name.clone(), text });
+                chat_out = Some(ServerMsg::Chat {
+                    from: id,
+                    name: p.name.clone(),
+                    text,
+                });
             }
             ClientMsg::Pong { nonce } => {
                 if nonce == p.ping_nonce {
@@ -296,7 +329,10 @@ impl Room {
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
         }
 
-        if let Some(ServerMsg::Edit { x, y, z, id: nid, .. }) = edit_out.as_ref() {
+        if let Some(ServerMsg::Edit {
+            x, y, z, id: nid, ..
+        }) = edit_out.as_ref()
+        {
             self.world.set(*x, *y, *z, *nid);
             self.dirty = true;
         }
@@ -333,11 +369,13 @@ impl Room {
         }
 
         // Server-initiated ping for authoritative latency measurement.
-        if self.tick % PING_EVERY_TICKS == 0 {
+        if self.tick.is_multiple_of(PING_EVERY_TICKS) {
             for p in self.players.values_mut() {
                 p.ping_nonce = p.ping_nonce.wrapping_add(1);
                 p.ping_sent_at = now;
-                let _ = p.conn.try_send(ServerMsg::Ping { nonce: p.ping_nonce });
+                let _ = p.conn.try_send(ServerMsg::Ping {
+                    nonce: p.ping_nonce,
+                });
             }
         }
 
@@ -356,13 +394,16 @@ impl Room {
                 ping_ms: p.ping_ms,
             })
             .collect();
-        let snap = ServerMsg::Snapshot { tick: self.tick, players: states };
+        let snap = ServerMsg::Snapshot {
+            tick: self.tick,
+            players: states,
+        };
         self.broadcast(&snap);
 
         self.publish_stats(now);
 
         // Persist the world diff at most every PERSIST_SECS, and only when it changed.
-        if self.tick % (PERSIST_SECS * self.tick_hz as u64) == 0 {
+        if self.tick.is_multiple_of(PERSIST_SECS * self.tick_hz as u64) {
             self.flush();
         }
 

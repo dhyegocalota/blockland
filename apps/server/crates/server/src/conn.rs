@@ -20,7 +20,10 @@ pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
     if !hub.try_add_ip(ip) {
         let mut s = socket;
         let _ = s
-            .send(text_msg(err_json("too_many_connections", "Too many connections from this device.")))
+            .send(text_msg(err_json(
+                "too_many_connections",
+                "Too many connections from this device.",
+            )))
             .await;
         let _ = s.send(Message::Close(None)).await;
         return;
@@ -39,8 +42,15 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
         }
         _ => None,
     };
-    let Some(ClientMsg::Join { tenant, world: _, name }) = join else {
-        let _ = sink.send(text_msg(err_json("expected_join", "Invalid handshake."))).await;
+    let Some(ClientMsg::Join {
+        tenant,
+        world: _,
+        name,
+    }) = join
+    else {
+        let _ = sink
+            .send(text_msg(err_json("expected_join", "Invalid handshake.")))
+            .await;
         let _ = sink.send(Message::Close(None)).await;
         return;
     };
@@ -50,7 +60,9 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
     let room_tx = match Hub::get_or_create_room(hub, &tenant, world) {
         Ok(tx) => tx,
         Err(code) => {
-            let _ = sink.send(text_msg(err_json(&code, "Could not join the room."))).await;
+            let _ = sink
+                .send(text_msg(err_json(&code, "Could not join the room.")))
+                .await;
             let _ = sink.send(Message::Close(None)).await;
             return;
         }
@@ -59,7 +71,11 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
     let (conn_tx, mut conn_rx) = mpsc::channel::<ServerMsg>(256);
     let (reply_tx, reply_rx) = oneshot::channel();
     if room_tx
-        .send(RoomCmd::Join { name, conn: conn_tx, reply: reply_tx })
+        .send(RoomCmd::Join {
+            name,
+            conn: conn_tx,
+            reply: reply_tx,
+        })
         .await
         .is_err()
     {
@@ -69,7 +85,9 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
     let pid = match reply_rx.await {
         Ok(Ok(id)) => id,
         Ok(Err(code)) => {
-            let _ = sink.send(text_msg(err_json(&code, "Room full or unavailable."))).await;
+            let _ = sink
+                .send(text_msg(err_json(&code, "Room full or unavailable.")))
+                .await;
             let _ = sink.send(Message::Close(None)).await;
             return;
         }
@@ -102,7 +120,11 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
                     continue;
                 }
                 if let Ok(cm) = serde_json::from_str::<ClientMsg>(t.as_str()) {
-                    if room_tx.send(RoomCmd::Input { id: pid, msg: cm }).await.is_err() {
+                    if room_tx
+                        .send(RoomCmd::Input { id: pid, msg: cm })
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -121,6 +143,9 @@ fn text_msg(s: String) -> Message {
 }
 
 fn err_json(code: &str, msg: &str) -> String {
-    serde_json::to_string(&ServerMsg::Error { code: code.into(), msg: msg.into() })
-        .unwrap_or_else(|_| "{\"t\":\"error\",\"code\":\"internal\",\"msg\":\"\"}".into())
+    serde_json::to_string(&ServerMsg::Error {
+        code: code.into(),
+        msg: msg.into(),
+    })
+    .unwrap_or_else(|_| "{\"t\":\"error\",\"code\":\"internal\",\"msg\":\"\"}".into())
 }

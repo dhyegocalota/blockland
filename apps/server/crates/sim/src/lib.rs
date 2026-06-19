@@ -30,7 +30,7 @@ pub fn height_at(x: i32, z: i32) -> i32 {
 
 /// The procedurally-generated block at a coordinate, ignoring player edits.
 pub fn base_voxel(x: i32, y: i32, z: i32) -> u8 {
-    if y < 0 || y >= SIZE_Y {
+    if !(0..SIZE_Y).contains(&y) {
         return AIR;
     }
     let top = height_at(x, z);
@@ -86,7 +86,10 @@ impl World {
 
     /// All edits as a flat list (for persistence).
     pub fn snapshot(&self) -> Vec<(i32, i32, i32, u8)> {
-        self.edits.iter().map(|((x, y, z), &id)| (*x, *y, *z, id)).collect()
+        self.edits
+            .iter()
+            .map(|((x, y, z), &id)| (*x, *y, *z, id))
+            .collect()
     }
 
     /// Apply a list of edits onto the world (used when restoring from storage).
@@ -156,7 +159,10 @@ fn read_varint(buf: &[u8], pos: &mut usize) -> Result<u64, String> {
 
 /// Encode a set of edits into a compact, compressed blob.
 pub fn encode_edits(items: &[(i32, i32, i32, u8)]) -> Vec<u8> {
-    let mut entries: Vec<(u64, u8)> = items.iter().map(|&(x, y, z, id)| (linear(x, y, z), id)).collect();
+    let mut entries: Vec<(u64, u8)> = items
+        .iter()
+        .map(|&(x, y, z, id)| (linear(x, y, z), id))
+        .collect();
     entries.sort_unstable_by_key(|&(i, _)| i);
 
     let mut raw = Vec::with_capacity(entries.len() * 3 + 8);
@@ -196,7 +202,10 @@ mod tests {
         for x in 0..400 {
             for z in (0..400).step_by(7) {
                 let h = height_at(x, z);
-                assert!(h >= 2 && h <= SIZE_Y - 5, "height {h} out of bounds at {x},{z}");
+                assert!(
+                    (2..=SIZE_Y - 5).contains(&h),
+                    "height {h} out of bounds at {x},{z}"
+                );
             }
         }
     }
@@ -216,9 +225,20 @@ mod tests {
         let top = height_at(x, z);
         assert_eq!(base_voxel(x, 0, z), BEDROCK, "y=0 must be bedrock");
         assert_eq!(base_voxel(x, top, z), 1, "surface must be grass");
-        assert_eq!(base_voxel(x, top + 1, z), AIR, "above a dry surface must be air");
-        assert!(base_voxel(x, top - 1, z) != AIR, "below surface must be solid");
-        assert_eq!(base_voxel(x, SIZE_Y, z), AIR, "out of vertical range is air");
+        assert_eq!(
+            base_voxel(x, top + 1, z),
+            AIR,
+            "above a dry surface must be air"
+        );
+        assert!(
+            base_voxel(x, top - 1, z) != AIR,
+            "below surface must be solid"
+        );
+        assert_eq!(
+            base_voxel(x, SIZE_Y, z),
+            AIR,
+            "out of vertical range is air"
+        );
     }
 
     #[test]
@@ -299,6 +319,10 @@ mod tests {
             }
         }
         let blob = encode_edits(&edits);
-        assert!(blob.len() < edits.len(), "expected compact blob, got {}", blob.len());
+        assert!(
+            blob.len() < edits.len(),
+            "expected compact blob, got {}",
+            blob.len()
+        );
     }
 }

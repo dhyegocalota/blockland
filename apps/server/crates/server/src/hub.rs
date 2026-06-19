@@ -153,7 +153,8 @@ pub struct Hub {
 
 impl Hub {
     pub fn load() -> Self {
-        let admin_token = std::env::var("ADMIN_TOKEN").unwrap_or_else(|_| "dev-admin-secret".into());
+        let admin_token =
+            std::env::var("ADMIN_TOKEN").unwrap_or_else(|_| "dev-admin-secret".into());
         let (tenants, limits) = match std::env::var("TENANTS_FILE").ok() {
             Some(path) => match std::fs::read_to_string(&path) {
                 Ok(text) => match toml::from_str::<FileConfig>(&text) {
@@ -171,7 +172,10 @@ impl Hub {
             None => (default_tenants(), Limits::default()),
         };
 
-        let map = tenants.into_iter().map(|t| (t.id.clone(), t)).collect::<HashMap<_, _>>();
+        let map = tenants
+            .into_iter()
+            .map(|t| (t.id.clone(), t))
+            .collect::<HashMap<_, _>>();
         tracing::info!(tenants = map.len(), "hub loaded");
         Self {
             tenants: map,
@@ -240,7 +244,9 @@ impl Hub {
     pub fn admin_stats(&self) -> AdminStats {
         let mut room_list: Vec<RoomSnapshot> =
             self.room_stats.iter().map(|r| r.value().clone()).collect();
-        room_list.sort_by(|a, b| (a.tenant.as_str(), a.world.as_str()).cmp(&(b.tenant.as_str(), b.world.as_str())));
+        room_list.sort_by(|a, b| {
+            (a.tenant.as_str(), a.world.as_str()).cmp(&(b.tenant.as_str(), b.world.as_str()))
+        });
 
         let online: usize = room_list.iter().map(|r| r.players.len()).sum();
         let tenants = self

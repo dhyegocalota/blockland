@@ -9,11 +9,31 @@ pub type PlayerId = u32;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientMsg {
-    Join { tenant: String, world: String, name: String },
-    Move { x: f32, y: f32, z: f32, yaw: f32, pitch: f32 },
-    Edit { op: EditOp, x: i32, y: i32, z: i32, id: u8 },
-    Pong { nonce: u32 },
-    Chat { text: String },
+    Join {
+        tenant: String,
+        world: String,
+        name: String,
+    },
+    Move {
+        x: f32,
+        y: f32,
+        z: f32,
+        yaw: f32,
+        pitch: f32,
+    },
+    Edit {
+        op: EditOp,
+        x: i32,
+        y: i32,
+        z: i32,
+        id: u8,
+    },
+    Pong {
+        nonce: u32,
+    },
+    Chat {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

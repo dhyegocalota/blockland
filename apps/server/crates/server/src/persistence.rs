@@ -4,7 +4,9 @@
 use std::path::PathBuf;
 
 fn world_dir() -> PathBuf {
-    std::env::var("WORLD_DIR").unwrap_or_else(|_| "./data/worlds".into()).into()
+    std::env::var("WORLD_DIR")
+        .unwrap_or_else(|_| "./data/worlds".into())
+        .into()
 }
 
 fn blob_path(tenant: &str) -> PathBuf {
@@ -26,9 +28,4 @@ pub fn save(tenant: &str, blob: &[u8]) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, blob)
-}
-
-/// Delete a tenant's stored world (a reset). Missing file is treated as success.
-pub fn reset(tenant: &str) {
-    let _ = std::fs::remove_file(blob_path(tenant));
 }
