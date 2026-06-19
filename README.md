@@ -1,58 +1,152 @@
 # 🧱 Blocklandia
 
-Plataforma **white-label** de mundos de blocos 3D pra crianças: construir, caçar bichos, lutar contra monstros, juntar estrelas e voar. Cada cliente é um **tenant** com sua própria marca (nome, cores, avatar, foto-no-bloco). O primeiro tenant é o **Teocraft**, feito pro Teodoro.
+A **white-label** platform of 3D block worlds for kids: build, hunt creatures, fight
+monsters, collect stars and fly. Each customer is a **tenant** with its own branding
+(name, colors, avatar, photo-on-a-block). The first tenant is **Teocraft**, made for
+Teodoro.
+
+The interface defaults to **pt-BR** (en-US is also available) through an i18n layer,
+while each tenant's content (name, tagline, titles, hero) is stored as data.
 
 ## Monorepo
 
 ```
-app/                Next.js (cliente do jogo, single-player) — hospedado na Vercel
-lib/
-  game-engine.js    engine do jogo (voxels, física, criaturas, construções) — brand-driven
-  tenants.js        config white-label (Teocraft + demo); resolve por ?tenant=
-public/             assets por tenant (ex.: /teo-face.png)
-crates/             servidor multiplayer autoritativo (Rust)
-  protocol/         tipos da wire (cliente <-> servidor)
-  sim/              worldgen/voxel/colisão compartilháveis (futuro WASM no cliente)
-  server/           tokio + axum: salas, tick 20Hz, anti-cheat, observabilidade
-Dockerfile          build do servidor
-docker-compose.yml  servidor local com limites de CPU/RAM
-tools/test-client   bots de carga/smoke (Node, sem deps)
+apps/
+  web/                  Next.js 14 (App Router) game client (single-player) — hosted on Vercel
+    app/                routes: game page, /admin panel, /api routes
+    lib/
+      game-engine.js    game engine (voxels, physics, creatures, builds) — brand-driven
+      tenants.js        client-side tenant resolution (?tenant= or subdomain)
+      tenant-store.js   tenant persistence backed by libSQL
+      builtins.js       built-in tenants (seed + offline fallback)
+      i18n/             message catalog and runtime (pt-BR default, en-US available)
+    public/             per-tenant assets (e.g. /tenants/teo/face.png)
+    test/               test stubs/helpers
+  server/               authoritative multiplayer server (Rust workspace)
+    crates/
+      protocol/         wire types (client <-> server)
+      sim/              shareable worldgen/voxel/collision (future client WASM)
+      server/           tokio + axum: rooms, 20Hz tick, anti-cheat, observability
+    tenants.toml        tenants and per-tenant quotas
+    tools/test-client   load/smoke bots (Node, no deps)
+    Dockerfile          server build
+docker-compose.yml      local server with CPU/RAM limits
 ```
 
-## Cliente (web) — Vercel
+## Web client
 
 ```bash
+cd apps/web
 npm install
 npm run dev     # http://localhost:3000
 ```
 
-- Tenant padrão: **Teocraft** (`/`). Outro tenant: `/?tenant=demo`.
-- Pra adicionar um cliente novo, adicione um tenant em `lib/tenants.js` (nome, cores, avatar, foto) — nada do Teo está embutido no core.
+- Default tenant: **Teocraft** (`/`). Another tenant: `/?tenant=demo`.
+- To add a new customer, create a tenant from the `/admin` panel (or add it to
+  `apps/web/lib/builtins.js` to ship it as a built-in) — nothing tenant-specific is baked
+  into the engine.
 
-## Servidor multiplayer (Rust) — local com Docker
+### Tenant resolution
+
+The active tenant is resolved client-side (`apps/web/lib/tenants.js`):
+
+1. `?tenant=<id>` query parameter wins (e.g. `/?tenant=demo`).
+2. Otherwise the first subdomain label is used (e.g. `teo.localhost` → `teo`).
+   `www` and bare `localhost`/`*.vercel.app` hosts are not treated as tenant subdomains.
+3. Otherwise it falls back to `NEXT_PUBLIC_DEFAULT_TENANT` (default `teo`).
+
+The resolved id is fetched from the tenant store via `/api/tenants/<id>`; if the store is
+unreachable it falls back to the built-in tenants.
+
+### Local subdomain tenant access
+
+```
+http://teo.localhost:3000      # Teocraft
+http://demo.localhost:3000     # Demo World
+```
+
+Most browsers resolve `*.localhost` to the loopback address automatically, so no `hosts`
+file changes are needed. If your environment does not, add the subdomains to
+`/etc/hosts` pointing at `127.0.0.1`.
+
+### /admin panel
+
+`http://localhost:3000/admin` manages tenants (create, edit, delete). Log in with the
+value of `ADMIN_KEY` — the same key is sent on every request as the `x-admin-key` header
+(see `apps/web/lib/admin-auth.js`). The admin API lives under `/api/admin/tenants`.
+
+### Tenant store
+
+Tenant content is persisted with libSQL (`apps/web/lib/tenant-store.js`):
+
+- Development: a local file at `apps/web/.data/blocklandia.db` (used when `DATABASE_URL`
+  is unset).
+- Production: a Turso/libSQL URL via `DATABASE_URL` (+ `DATABASE_AUTH_TOKEN`).
+
+The table is created and seeded from the built-in tenants on first run.
+
+## Multiplayer server (Rust) — local with Docker
 
 ```bash
 docker compose up --build game-server
-node tools/test-client.mjs 4 teo lobby     # conecta 4 bots e imprime o veredito
-curl -H "x-admin-token: dev-admin-secret" http://localhost:8080/admin/stats   # quem tá online, onde, ping
+node apps/server/tools/test-client.mjs 4 teo lobby                              # connect 4 bots and print the verdict
+curl -H "x-admin-token: dev-admin-secret" http://localhost:8080/admin/stats    # who is online, where, ping
 ```
 
-Características: servidor é a **fonte da verdade** (tick 20 Hz, valida velocidade/reach, rejeita teleporte), **≤10 players/sala**, salas isoladas por `(tenant, world)`, anti-abuso (token-bucket por player, limite por IP, idle timeout) e observabilidade (`/admin/stats`, `/healthz`, logs). Tenants e limites em `tenants.toml`.
+Highlights: the server is the **source of truth** (20 Hz tick, validates speed/reach,
+rejects teleports), **≤10 players/room**, rooms isolated by `(tenant, world)`, abuse
+controls (per-player token bucket, per-IP limit, idle timeout) and observability
+(`/admin/stats`, `/healthz`, logs). Tenants and quotas live in `tenants.toml`.
 
-> O netcode do cliente (predição + interpolação) e o port da `sim` pra WASM são as próximas fases — o servidor já está pronto e testado.
+Endpoints (`apps/server/crates/server/src/main.rs`):
 
-## ⌨️ Controles (também no jogo, tecla **V**)
+- `GET /healthz` — liveness probe.
+- `GET /admin/stats` — online players, rooms and ping (requires the `x-admin-token` header).
+- `GET /ws` — gameplay WebSocket.
 
-| Ação | Como |
+> The client netcode (prediction + interpolation) and the `sim` WASM port are the next
+> phases — the server is already implemented and tested.
+
+## Environment variables
+
+See `.env.sample` for the full list with comments.
+
+**Web (`apps/web`):**
+
+| Variable | Purpose |
 | --- | --- |
-| Andar | Setas / W A S D · 📱 joystick |
-| Pular · Voar | Espaço · F (voo segue a mira) |
-| Olhar | Mouse · 📱 arrastar na tela |
-| Quebrar / construir | Clique esquerdo / direito · 📱 botões ⛏️/🧱 |
-| Escolher bloco | Teclas 1–9, 0, -, c, x, z, i, k, l, r, j |
-| Construções mágicas | Tecla B (taça, bola, figurinha, refri, Steve) |
-| Modo paz | Tecla P |
+| `ADMIN_KEY` | Secret for the `/admin` panel and `/api/admin/*` routes. |
+| `DATABASE_URL` | libSQL/Turso URL for the tenant store. Unset → local SQLite file. |
+| `DATABASE_AUTH_TOKEN` | Auth token for a remote libSQL/Turso database. |
+| `NEXT_PUBLIC_DEFAULT_TENANT` | Fallback tenant id when none is resolved (default `teo`). |
+
+**Server (`apps/server`):**
+
+| Variable | Purpose |
+| --- | --- |
+| `ADMIN_TOKEN` | Secret for `GET /admin/stats` (sent as the `x-admin-token` header). |
+| `BIND` | Address the server binds to (default `0.0.0.0:8080`). |
+| `RUST_LOG` | Log filter (e.g. `info,server=debug`). |
+| `TENANTS_FILE` | Path to a `tenants.toml` override (default uses the bundled file). |
+
+## Tests
+
+**Server (Rust):**
+
+```bash
+cd apps/server
+cargo test
+```
+
+Unit tests live in `crates/sim` and `crates/server` (anti-cheat, rooms, worldgen).
+The `tools/test-client.mjs` bots provide an end-to-end smoke check against a running
+server (it walks bots under the speed cap and asserts the anti-cheat rejects a teleport).
+
+## CI
+
+No CI workflow is configured yet. The recommended pipeline runs `cargo test` for the
+server workspace and `npm run build` for the web client on every push.
 
 ---
 
-Feito com 💛 — começou como um Minecraft pro Teodoro e virou plataforma.
+Made with 💛 — it started as a Minecraft for Teodoro and became a platform.

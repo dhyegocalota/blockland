@@ -1,4 +1,4 @@
-# White-label tenants. Each tenant gets isolated rooms, its own branding and quotas.
+# White-label tenants: branding only. Limits are fixed and global (one room per tenant).
 # Override at runtime with TENANTS_FILE=/path/to/tenants.toml
 
 [limits]
@@ -17,10 +17,8 @@ id = "teo"
 name = "Teocraft"
 primary = "#ffd23f"
 logo = "/tenants/teo/avatar.png"
-max_rooms = 8
 
 [[tenant]]
 id = "demo"
 name = "Demo World"
 primary = "#3dc6ff"
-max_rooms = 4

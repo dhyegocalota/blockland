@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
@@ -13,5 +14,8 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "three": "0.160.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
   }
 }

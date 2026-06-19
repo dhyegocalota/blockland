@@ -84,6 +84,18 @@ impl World {
         self.edits.len()
     }
 
+    /// All edits as a flat list (for persistence).
+    pub fn snapshot(&self) -> Vec<(i32, i32, i32, u8)> {
+        self.edits.iter().map(|((x, y, z), &id)| (*x, *y, *z, id)).collect()
+    }
+
+    /// Apply a list of edits onto the world (used when restoring from storage).
+    pub fn load_edits(&mut self, items: &[(i32, i32, i32, u8)]) {
+        for &(x, y, z, id) in items {
+            self.edits.insert((x, y, z), id);
+        }
+    }
+
     /// A reasonable spawn near the center of the world.
     pub fn spawn() -> [f32; 3] {
         let cx = WORLD_SIZE / 2;
@@ -91,6 +103,88 @@ impl World {
         let y = height_at(cx, cz) as f32 + 3.0;
         [cx as f32 + 0.5, y, cz as f32 + 0.5]
     }
+}
+
+// ---------- Cheap persistence codec ----------
+// Edits are encoded as sorted linear indices, delta-varint (LEB128) + one id byte, then
+// LZ4-compressed. Tiny on disk and microseconds of CPU; the base terrain is regenerated
+// procedurally, so only player edits are stored.
+
+fn linear(x: i32, y: i32, z: i32) -> u64 {
+    let w = WORLD_SIZE as u64;
+    (x as u64) + (z as u64) * w + (y as u64) * w * w
+}
+
+fn delinear(i: u64) -> (i32, i32, i32) {
+    let w = WORLD_SIZE as u64;
+    let x = (i % w) as i32;
+    let z = ((i / w) % w) as i32;
+    let y = (i / (w * w)) as i32;
+    (x, y, z)
+}
+
+fn write_varint(buf: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let mut byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v != 0 {
+            byte |= 0x80;
+        }
+        buf.push(byte);
+        if v == 0 {
+            break;
+        }
+    }
+}
+
+fn read_varint(buf: &[u8], pos: &mut usize) -> Result<u64, String> {
+    let mut result = 0u64;
+    let mut shift = 0u32;
+    loop {
+        let byte = *buf.get(*pos).ok_or("unexpected end of buffer")?;
+        *pos += 1;
+        result |= ((byte & 0x7f) as u64) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(result);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err("varint too long".into());
+        }
+    }
+}
+
+/// Encode a set of edits into a compact, compressed blob.
+pub fn encode_edits(items: &[(i32, i32, i32, u8)]) -> Vec<u8> {
+    let mut entries: Vec<(u64, u8)> = items.iter().map(|&(x, y, z, id)| (linear(x, y, z), id)).collect();
+    entries.sort_unstable_by_key(|&(i, _)| i);
+
+    let mut raw = Vec::with_capacity(entries.len() * 3 + 8);
+    write_varint(&mut raw, entries.len() as u64);
+    let mut prev = 0u64;
+    for (idx, id) in entries {
+        write_varint(&mut raw, idx - prev);
+        raw.push(id);
+        prev = idx;
+    }
+    lz4_flex::compress_prepend_size(&raw)
+}
+
+/// Recover edits from a blob produced by [`encode_edits`].
+pub fn decode_edits(blob: &[u8]) -> Result<Vec<(i32, i32, i32, u8)>, String> {
+    let raw = lz4_flex::decompress_size_prepended(blob).map_err(|e| e.to_string())?;
+    let mut pos = 0usize;
+    let count = read_varint(&raw, &mut pos)?;
+    let mut out = Vec::with_capacity(count as usize);
+    let mut idx = 0u64;
+    for _ in 0..count {
+        idx += read_varint(&raw, &mut pos)?;
+        let id = *raw.get(pos).ok_or("unexpected end of buffer")?;
+        pos += 1;
+        let (x, y, z) = delinear(idx);
+        out.push((x, y, z, id));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -114,11 +208,15 @@ mod tests {
 
     #[test]
     fn base_voxel_layers() {
-        let (x, z) = (100, 100);
+        // Pick a column above the water line so "above surface" is air, not water.
+        let (x, z) = (0..200)
+            .flat_map(|x| (0..200).map(move |z| (x, z)))
+            .find(|&(x, z)| height_at(x, z) > WATER_LEVEL)
+            .expect("a dry column must exist");
         let top = height_at(x, z);
         assert_eq!(base_voxel(x, 0, z), BEDROCK, "y=0 must be bedrock");
         assert_eq!(base_voxel(x, top, z), 1, "surface must be grass");
-        assert_eq!(base_voxel(x, top + 1, z), AIR, "above surface must be air");
+        assert_eq!(base_voxel(x, top + 1, z), AIR, "above a dry surface must be air");
         assert!(base_voxel(x, top - 1, z) != AIR, "below surface must be solid");
         assert_eq!(base_voxel(x, SIZE_Y, z), AIR, "out of vertical range is air");
     }
@@ -151,5 +249,56 @@ mod tests {
         assert!(s[0] > 0.0 && s[0] < WORLD_SIZE as f32);
         assert!(s[2] > 0.0 && s[2] < WORLD_SIZE as f32);
         assert!(s[1] > 0.0 && s[1] < SIZE_Y as f32 + 8.0);
+    }
+
+    fn sorted(mut v: Vec<(i32, i32, i32, u8)>) -> Vec<(i32, i32, i32, u8)> {
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn codec_roundtrips() {
+        let edits = vec![
+            (0, 0, 0, BEDROCK),
+            (8191, 23, 8191, 8),
+            (100, 5, 200, 19),
+            (16383, 0, 16383, 1),
+            (4096, 12, 9000, 14),
+        ];
+        let blob = encode_edits(&edits);
+        let back = decode_edits(&blob).expect("decode");
+        assert_eq!(sorted(back), sorted(edits));
+    }
+
+    #[test]
+    fn codec_empty() {
+        let blob = encode_edits(&[]);
+        assert!(decode_edits(&blob).unwrap().is_empty());
+    }
+
+    #[test]
+    fn codec_keeps_last_id_per_cell_via_world() {
+        // Encode -> decode -> reload into a world reproduces the same voxels.
+        let mut w = World::new();
+        w.set(10, 5, 10, 8);
+        w.set(11, 6, 12, 0);
+        let blob = encode_edits(&w.snapshot());
+        let mut w2 = World::new();
+        w2.load_edits(&decode_edits(&blob).unwrap());
+        assert_eq!(w2.get(10, 5, 10), 8);
+        assert_eq!(w2.get(11, 6, 12), 0);
+    }
+
+    #[test]
+    fn codec_is_compact() {
+        // A clustered build should compress to well under a byte per edit.
+        let mut edits = Vec::new();
+        for x in 0..40 {
+            for z in 0..40 {
+                edits.push((1000 + x, 8, 1000 + z, 8));
+            }
+        }
+        let blob = encode_edits(&edits);
+        assert!(blob.len() < edits.len(), "expected compact blob, got {}", blob.len());
     }
 }

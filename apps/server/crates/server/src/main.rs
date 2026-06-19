@@ -6,6 +6,7 @@
 
 mod conn;
 mod hub;
+mod persistence;
 mod room;
 
 use std::net::SocketAddr;

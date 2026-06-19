@@ -83,10 +83,12 @@ pub struct Room {
     rx: mpsc::Receiver<RoomCmd>,
     tick: u64,
     empty_since: Option<Instant>,
+    dirty: bool,
 }
 
 const PING_EVERY_TICKS: u64 = 40; // 2s @ 20Hz
 const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
+const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
 
 impl Room {
     pub fn new(hub: Arc<Hub>, tcfg: &TenantCfg, world: String, rx: mpsc::Receiver<RoomCmd>) -> Self {
@@ -95,16 +97,28 @@ impl Room {
             primary: tcfg.primary.clone(),
             logo: tcfg.logo.clone(),
         };
+        // Restore the tenant's persisted world (procedural base + saved edits).
+        let mut world_state = World::new();
+        if let Some(blob) = crate::persistence::load(&tcfg.id) {
+            match sim::decode_edits(&blob) {
+                Ok(items) => {
+                    world_state.load_edits(&items);
+                    tracing::info!(tenant = %tcfg.id, edits = items.len(), "world restored");
+                }
+                Err(e) => tracing::error!(tenant = %tcfg.id, error = %e, "failed to decode world blob"),
+            }
+        }
         Self {
             key: (tcfg.id.clone(), world),
             brand,
             tick_hz: hub.limits.tick_hz,
             max_players: hub.limits.max_players_per_room,
-            world: World::new(),
+            world: world_state,
             players: HashMap::new(),
             rx,
             tick: 0,
             empty_since: Some(Instant::now()),
+            dirty: false,
             hub,
         }
     }
@@ -126,6 +140,13 @@ impl Room {
                         None => break,
                     }
                 }
+            }
+        }
+        // Final synchronous save so nothing is lost when the room closes.
+        if self.dirty {
+            let blob = sim::encode_edits(&self.world.snapshot());
+            if let Err(e) = crate::persistence::save(&self.key.0, &blob) {
+                tracing::error!(tenant = %self.key.0, error = %e, "final world save failed");
             }
         }
         self.hub.remove_room(&self.key);
@@ -277,6 +298,7 @@ impl Room {
 
         if let Some(ServerMsg::Edit { x, y, z, id: nid, .. }) = edit_out.as_ref() {
             self.world.set(*x, *y, *z, *nid);
+            self.dirty = true;
         }
         if let Some(m) = edit_out {
             self.broadcast(&m);
@@ -300,7 +322,7 @@ impl Room {
             if now.duration_since(p.last_seen) > idle {
                 let _ = p.conn.try_send(ServerMsg::Error {
                     code: "idle_timeout".into(),
-                    msg: "Você ficou parado tempo demais.".into(),
+                    msg: "You were idle for too long.".into(),
                 });
                 kicked.push(p.id);
             }
@@ -339,6 +361,11 @@ impl Room {
 
         self.publish_stats(now);
 
+        // Persist the world diff at most every PERSIST_SECS, and only when it changed.
+        if self.tick % (PERSIST_SECS * self.tick_hz as u64) == 0 {
+            self.flush();
+        }
+
         // Garbage-collect an empty room after a grace period.
         if self.players.is_empty() {
             let since = *self.empty_since.get_or_insert(now);
@@ -355,6 +382,21 @@ impl Room {
         for p in self.players.values() {
             let _ = p.conn.try_send(msg.clone());
         }
+    }
+
+    /// Save the world diff off the tick thread (only when it changed).
+    fn flush(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        let tenant = self.key.0.clone();
+        let blob = sim::encode_edits(&self.world.snapshot());
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = crate::persistence::save(&tenant, &blob) {
+                tracing::error!(%tenant, error = %e, "world save failed");
+            }
+        });
     }
 
     fn publish_stats(&self, now: Instant) {

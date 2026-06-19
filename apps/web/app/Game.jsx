@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { resolveTenant } from '../lib/tenants';
+import { t } from '../lib/i18n';
 
 export default function Game() {
   const [brand, setBrand] = useState(null);
@@ -34,10 +35,10 @@ export default function Game() {
         <div id="toast"></div>
         <div id="hotbar"></div>
         <div id="actionRow">
-          <button className="btn" id="helpBtn">❓ Controles</button>
-          <button className="btn" id="buildBtn">🏗️ Construir</button>
-          <button className="btn" id="flyBtn">✈️ Voar</button>
-          <button className="btn on" id="modeBtn">🕊️ Paz: ON</button>
+          <button className="btn" id="helpBtn">{t('hud.controls')}</button>
+          <button className="btn" id="buildBtn">{t('hud.build')}</button>
+          <button className="btn" id="flyBtn">{t('hud.fly')}</button>
+          <button className="btn on" id="modeBtn">{t('hud.peace_on')}</button>
         </div>
       </div>
 
@@ -53,39 +54,39 @@ export default function Game() {
 
       <div id="controls" hidden>
         <div className="panel">
-          <h2>🎮 Controles</h2>
+          <h2>{t('controls.title')}</h2>
           <div className="ctrlGrid">
-            <div className="card"><b>Andar</b> Setas ou W A S D</div>
-            <div className="card"><b>Pular</b> Barra de espaço</div>
-            <div className="card"><b>Voar / Pousar</b> Tecla F (ou botão ✈️)</div>
-            <div className="card"><b>Olhar em volta</b> Mexa o mouse</div>
-            <div className="card"><b>Quebrar / Bater</b> Clique esquerdo 🖱️</div>
-            <div className="card"><b>Construir</b> Clique direito 🖱️</div>
-            <div className="card"><b>Escolher bloco</b> Teclas 1 a 9, 0 e -</div>
-            <div className="card"><b>Caçar 🐷</b> Bata nos bichos</div>
-            <div className="card"><b>Lutar 👾</b> Bata nos monstros</div>
-            <div className="card"><b>Coletar 🎒</b> Quebre blocos</div>
-            <div className="card"><b>Seu rosto 😎</b> Tecla 0</div>
-            <div className="card"><b>Modo paz 🕊️</b> Tecla P (monstros calmos)</div>
-            <div className="card"><b>Construções 🏗️</b> Tecla B (taça e bola!)</div>
-            <div className="card"><b>Ver controles</b> Tecla V</div>
+            <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
+            <div className="card"><b>{t('controls.jump')}</b> {t('controls.jump_keys')}</div>
+            <div className="card"><b>{t('controls.fly_land')}</b> {t('controls.fly_land_keys')}</div>
+            <div className="card"><b>{t('controls.look')}</b> {t('controls.look_keys')}</div>
+            <div className="card"><b>{t('controls.break')}</b> {t('controls.break_keys')}</div>
+            <div className="card"><b>{t('controls.build')}</b> {t('controls.build_keys')}</div>
+            <div className="card"><b>{t('controls.pick_block')}</b> {t('controls.pick_block_keys')}</div>
+            <div className="card"><b>{t('controls.hunt')}</b> {t('controls.hunt_keys')}</div>
+            <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
+            <div className="card"><b>{t('controls.collect')}</b> {t('controls.collect_keys')}</div>
+            <div className="card"><b>{t('controls.your_face')}</b> {t('controls.your_face_keys')}</div>
+            <div className="card"><b>{t('controls.peace_mode')}</b> {t('controls.peace_mode_keys')}</div>
+            <div className="card"><b>{t('controls.structures')}</b> {t('controls.structures_keys')}</div>
+            <div className="card"><b>{t('controls.show_controls')}</b> {t('controls.show_controls_keys')}</div>
           </div>
-          <button id="closeControls">▶ Voltar a jogar</button>
+          <button id="closeControls">{t('controls.back_to_game')}</button>
         </div>
       </div>
 
       <div id="buildMenu" hidden>
         <div className="panel">
-          <h2>🏗️ Construções Mágicas</h2>
-          <p className="buildHint">Escolha uma e ela aparece bem na sua frente! ✨</p>
+          <h2>{t('build.menu_title')}</h2>
+          <p className="buildHint">{t('build.menu_hint')}</p>
           <div className="buildGrid">
-            <button className="buildCard" data-kind="trophy"><span className="emoji">🏆</span><span>Taça da Copa do Mundo</span></button>
-            <button className="buildCard" data-kind="ball"><span className="emoji">⚽</span><span>Bola gigante da Copa 2026</span></button>
-            <button className="buildCard" data-kind="figure"><span className="emoji">🧑‍🦱</span><span>Figurinha craque ⚽</span></button>
-            <button className="buildCard" data-kind="cola"><span className="emoji">🥤</span><span>Refri gigante da Copa</span></button>
-            <button className="buildCard" data-kind="steve"><span className="emoji">🧍</span><span>Estátua do Steve</span></button>
+            <button className="buildCard" data-kind="trophy"><span className="emoji">🏆</span><span>{t('build.trophy')}</span></button>
+            <button className="buildCard" data-kind="ball"><span className="emoji">⚽</span><span>{t('build.ball')}</span></button>
+            <button className="buildCard" data-kind="figure"><span className="emoji">🧑‍🦱</span><span>{t('build.figure')}</span></button>
+            <button className="buildCard" data-kind="cola"><span className="emoji">🥤</span><span>{t('build.cola')}</span></button>
+            <button className="buildCard" data-kind="steve"><span className="emoji">🧍</span><span>{t('build.steve')}</span></button>
           </div>
-          <button id="closeBuild">Fechar</button>
+          <button id="closeBuild">{t('build.close')}</button>
         </div>
       </div>
 
@@ -93,18 +94,18 @@ export default function Game() {
         <img className="avatar" src={brand.avatar} alt={brand.hero} />
         <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
-        <span className="record-badge" id="startRecord">🏆 Recorde: 0</span>
+        <span className="record-badge" id="startRecord">{t('start.record')}</span>
         <div id="help">
-          <div className="card"><b>Andar</b> Setas ou W A S D</div>
-          <div className="card"><b>Pular / Voar</b> Espaço / F</div>
-          <div className="card"><b>Olhar</b> Mexa o mouse</div>
-          <div className="card"><b>Construir</b> Clique direito</div>
-          <div className="card"><b>Bater / Quebrar</b> Clique esquerdo</div>
-          <div className="card"><b>Caçar 🐷</b> Bata nos bichos</div>
-          <div className="card"><b>Lutar 👾</b> Bata nos monstros</div>
-          <div className="card"><b>Trocar bloco</b> Teclas 1 a 9</div>
+          <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
+          <div className="card"><b>{t('start.jump_fly')}</b> {t('start.jump_fly_keys')}</div>
+          <div className="card"><b>{t('start.look')}</b> {t('controls.look_keys')}</div>
+          <div className="card"><b>{t('start.build')}</b> {t('start.build_keys')}</div>
+          <div className="card"><b>{t('start.hit_break')}</b> {t('start.hit_break_keys')}</div>
+          <div className="card"><b>{t('controls.hunt')}</b> {t('controls.hunt_keys')}</div>
+          <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
+          <div className="card"><b>{t('start.swap_block')}</b> {t('start.swap_block_keys')}</div>
         </div>
-        <button id="playBtn">▶ JOGAR</button>
+        <button id="playBtn">{t('start.play')}</button>
       </div>
     </>
   );

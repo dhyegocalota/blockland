@@ -49,13 +49,13 @@ console.log(`spawned ${COUNT} bots -> ${URL} (${TENANT}/${WORLD})`);
 setTimeout(() => {
   const snap = last[0];
   if (!snap) {
-    console.log('FALHOU: bot0 nunca recebeu snapshot');
+    console.log('FAILED: bot0 never received a snapshot');
     process.exit(1);
   }
   const moved = snap.players.filter((p) => Math.abs(p.x - 8192.5) > 0.5 || Math.abs(p.z - 8192.5) > 0.5).length;
   const pinged = snap.players.filter((p) => p.ping_ms > 0).length;
-  console.log('--- VERDITO (visto pelo bot0 via socket do jogo) ---');
-  console.log(`tick=${snap.tick} players=${snap.players.length}/${COUNT} moveram=${moved} com_ping=${pinged}`);
+  console.log('--- VERDICT (as seen by bot0 over the game socket) ---');
+  console.log(`tick=${snap.tick} players=${snap.players.length}/${COUNT} moved=${moved} with_ping=${pinged}`);
   for (const p of snap.players) {
     console.log(`  ${p.name} pos=(${p.x.toFixed(1)},${p.z.toFixed(1)}) yaw=${p.yaw.toFixed(2)} ping=${p.ping_ms}ms`);
   }

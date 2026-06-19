@@ -20,7 +20,7 @@ pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
     if !hub.try_add_ip(ip) {
         let mut s = socket;
         let _ = s
-            .send(text_msg(err_json("too_many_connections", "Muitas conexões deste aparelho.")))
+            .send(text_msg(err_json("too_many_connections", "Too many connections from this device.")))
             .await;
         let _ = s.send(Message::Close(None)).await;
         return;
@@ -39,16 +39,18 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
         }
         _ => None,
     };
-    let Some(ClientMsg::Join { tenant, world, name }) = join else {
-        let _ = sink.send(text_msg(err_json("expected_join", "Handshake inválido."))).await;
+    let Some(ClientMsg::Join { tenant, world: _, name }) = join else {
+        let _ = sink.send(text_msg(err_json("expected_join", "Invalid handshake."))).await;
         let _ = sink.send(Message::Close(None)).await;
         return;
     };
 
-    let room_tx = match Hub::get_or_create_room(hub, &tenant, &world) {
+    // One persistent world per tenant: ignore any client-provided world name.
+    let world = "main";
+    let room_tx = match Hub::get_or_create_room(hub, &tenant, world) {
         Ok(tx) => tx,
         Err(code) => {
-            let _ = sink.send(text_msg(err_json(&code, "Não foi possível entrar na sala."))).await;
+            let _ = sink.send(text_msg(err_json(&code, "Could not join the room."))).await;
             let _ = sink.send(Message::Close(None)).await;
             return;
         }
@@ -67,7 +69,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>) {
     let pid = match reply_rx.await {
         Ok(Ok(id)) => id,
         Ok(Err(code)) => {
-            let _ = sink.send(text_msg(err_json(&code, "Sala cheia ou indisponível."))).await;
+            let _ = sink.send(text_msg(err_json(&code, "Room full or unavailable."))).await;
             let _ = sink.send(Message::Close(None)).await;
             return;
         }

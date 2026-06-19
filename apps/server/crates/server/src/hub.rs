@@ -22,8 +22,6 @@ pub struct TenantCfg {
     pub primary: String,
     #[serde(default)]
     pub logo: Option<String>,
-    #[serde(default = "default_max_rooms")]
-    pub max_rooms: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,9 +64,6 @@ impl Default for Limits {
 
 fn default_primary() -> String {
     "#ffd23f".into()
-}
-fn default_max_rooms() -> usize {
-    8
 }
 fn d_players() -> usize {
     10
@@ -224,14 +219,10 @@ impl Hub {
         let Some(tcfg) = hub.tenants.get(tenant) else {
             return Err("unknown_tenant".into());
         };
+        // One persistent room per tenant (world is always "main").
         let key = (tenant.to_string(), world.to_string());
         if let Some(tx) = hub.rooms.get(&key) {
             return Ok(tx.clone());
-        }
-        // Soft per-tenant room quota (checked before taking the shard lock).
-        let rooms_for_tenant = hub.rooms.iter().filter(|r| r.key().0 == tenant).count();
-        if rooms_for_tenant >= tcfg.max_rooms {
-            return Err("tenant_room_limit".into());
         }
         match hub.rooms.entry(key.clone()) {
             dashmap::mapref::entry::Entry::Occupied(e) => Ok(e.get().clone()),
@@ -288,6 +279,5 @@ fn default_tenants() -> Vec<TenantCfg> {
         name: "Blocklandia".into(),
         primary: "#3dc6ff".into(),
         logo: None,
-        max_rooms: 4,
     }]
 }

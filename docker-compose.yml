@@ -9,8 +9,10 @@ services:
       ADMIN_TOKEN: dev-admin-secret
       BIND: 0.0.0.0:8080
       RUST_LOG: info,server=debug
+      WORLD_DIR: /data/worlds
     volumes:
       - ./apps/server/tenants.toml:/etc/teocraft/tenants.toml:ro
+      - blocklandia-worlds:/data/worlds
     restart: unless-stopped
     # keep an abuser/runaway from eating the host
     mem_limit: 256m
@@ -21,3 +23,6 @@ services:
       interval: 15s
       timeout: 3s
       retries: 3
+
+volumes:
+  blocklandia-worlds:

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PLATFORM_NAME } from './tenants';
+import { t } from './i18n';
 
 export function initGame(brand) {
   if (typeof window === 'undefined') return undefined;
@@ -36,25 +37,25 @@ export function initGame(brand) {
   const AIR = 0;
   const BLOCKS = [
     null,
-    { id: 1, name: 'Grama', key: '1', build: (c) => paint(c, '#6bd06b', '#4fb04f', '#86e886') },
-    { id: 2, name: 'Terra', key: '2', build: (c) => paint(c, '#9c6b43', '#7d5232', '#b3825a') },
-    { id: 3, name: 'Pedra', key: '3', build: (c) => paint(c, '#9b9ba3', '#7d7d85', '#b6b6bd') },
-    { id: 4, name: 'Madeira', key: '4', build: woodTexture },
-    { id: 5, name: 'Folha', key: '5', build: (c) => paint(c, '#54c25a', '#3c9c42', '#74e07a') },
-    { id: 6, name: 'Areia', key: '6', build: (c) => paint(c, '#f0dca0', '#dcc585', '#fbeec0') },
-    { id: 7, name: 'Tijolo', key: '7', build: brickTexture },
-    { id: 8, name: 'Ouro', key: '8', build: goldTexture },
-    { id: 9, name: 'Arco-íris', key: '9', build: rainbowTexture },
+    { id: 1, name: t('block.grass'), key: '1', build: (c) => paint(c, '#6bd06b', '#4fb04f', '#86e886') },
+    { id: 2, name: t('block.dirt'), key: '2', build: (c) => paint(c, '#9c6b43', '#7d5232', '#b3825a') },
+    { id: 3, name: t('block.stone'), key: '3', build: (c) => paint(c, '#9b9ba3', '#7d7d85', '#b6b6bd') },
+    { id: 4, name: t('block.wood'), key: '4', build: woodTexture },
+    { id: 5, name: t('block.leaf'), key: '5', build: (c) => paint(c, '#54c25a', '#3c9c42', '#74e07a') },
+    { id: 6, name: t('block.sand'), key: '6', build: (c) => paint(c, '#f0dca0', '#dcc585', '#fbeec0') },
+    { id: 7, name: t('block.brick'), key: '7', build: brickTexture },
+    { id: 8, name: t('block.gold'), key: '8', build: goldTexture },
+    { id: 9, name: t('block.rainbow'), key: '9', build: rainbowTexture },
     { id: 10, name: brand.faceBlockName, key: '0', build: null },
-    { id: 11, name: 'Água', key: '-', transparent: true, build: (c) => paint(c, '#3aa0ee', '#2f8fdc', '#5cb6f5') },
-    { id: 12, name: 'Branco', key: 'c', build: (c) => paint(c, '#f4f4f8', '#dfe2ea', '#ffffff') },
-    { id: 13, name: 'Preto', key: 'x', build: (c) => paint(c, '#2b2b33', '#16161c', '#3a3a44') },
-    { id: 14, name: 'Diamante', key: 'z', build: diamondTexture },
-    { id: 15, name: 'Avaritia', key: 'i', build: avaritiaTexture },
-    { id: 16, name: 'Bedrock', key: 'k', build: (c) => paint(c, '#565659', '#36363a', '#79797e') },
-    { id: 17, name: 'Celeste', key: 'l', build: (c) => paint(c, '#75aadb', '#5f97cc', '#9cc6ea') },
-    { id: 18, name: 'Vermelho', key: 'r', build: (c) => paint(c, '#e0241f', '#bf1c18', '#f1564f') },
-    { id: 19, name: 'Azul', key: 'j', build: (c) => paint(c, '#33449c', '#27357d', '#4a5cc0') },
+    { id: 11, name: t('block.water'), key: '-', transparent: true, build: (c) => paint(c, '#3aa0ee', '#2f8fdc', '#5cb6f5') },
+    { id: 12, name: t('block.white'), key: 'c', build: (c) => paint(c, '#f4f4f8', '#dfe2ea', '#ffffff') },
+    { id: 13, name: t('block.black'), key: 'x', build: (c) => paint(c, '#2b2b33', '#16161c', '#3a3a44') },
+    { id: 14, name: t('block.diamond'), key: 'z', build: diamondTexture },
+    { id: 15, name: t('block.avaritia'), key: 'i', build: avaritiaTexture },
+    { id: 16, name: t('block.bedrock'), key: 'k', build: (c) => paint(c, '#565659', '#36363a', '#79797e') },
+    { id: 17, name: t('block.celeste'), key: 'l', build: (c) => paint(c, '#75aadb', '#5f97cc', '#9cc6ea') },
+    { id: 18, name: t('block.red'), key: 'r', build: (c) => paint(c, '#e0241f', '#bf1c18', '#f1564f') },
+    { id: 19, name: t('block.blue'), key: 'j', build: (c) => paint(c, '#33449c', '#27357d', '#4a5cc0') },
   ];
   const BEDROCK_ID = 16;
   const CELESTE_ID = 17;
@@ -450,11 +451,11 @@ export function initGame(brand) {
 
   // ---------- Creatures (animals to hunt, monsters to fight) ----------
   const CREATURES = {
-    pig: { kind: 'animal', color: '#ff9bbf', size: [0.8, 0.7, 1.0], hp: 2, speed: 2.2, reward: 2, emoji: '🐷', name: 'Porquinho' },
-    chicken: { kind: 'animal', color: '#fffbe0', size: [0.6, 0.7, 0.6], hp: 1, speed: 2.6, reward: 1, emoji: '🐔', name: 'Galinha' },
-    cow: { kind: 'animal', color: '#d8c5a8', size: [0.9, 0.9, 1.2], hp: 3, speed: 1.8, reward: 3, emoji: '🐮', name: 'Vaquinha' },
-    slime: { kind: 'monster', color: '#5bd86a', size: [0.8, 0.8, 0.8], hp: 2, speed: 2.4, reward: 3, emoji: '👾', name: 'Geleia' },
-    spider: { kind: 'monster', color: '#5a4a6a', size: [1.1, 0.6, 1.1], hp: 3, speed: 3.0, reward: 5, emoji: '🕷️', name: 'Aranha' },
+    pig: { kind: 'animal', color: '#ff9bbf', size: [0.8, 0.7, 1.0], hp: 2, speed: 2.2, reward: 2, emoji: '🐷', name: t('creature.pig') },
+    chicken: { kind: 'animal', color: '#fffbe0', size: [0.6, 0.7, 0.6], hp: 1, speed: 2.6, reward: 1, emoji: '🐔', name: t('creature.chicken') },
+    cow: { kind: 'animal', color: '#d8c5a8', size: [0.9, 0.9, 1.2], hp: 3, speed: 1.8, reward: 3, emoji: '🐮', name: t('creature.cow') },
+    slime: { kind: 'monster', color: '#5bd86a', size: [0.8, 0.8, 0.8], hp: 2, speed: 2.4, reward: 3, emoji: '👾', name: t('creature.slime') },
+    spider: { kind: 'monster', color: '#5a4a6a', size: [1.1, 0.6, 1.1], hp: 3, speed: 3.0, reward: 5, emoji: '🕷️', name: t('creature.spider') },
   };
   const creatures = [];
   const creatureGroup = new THREE.Group();
@@ -539,7 +540,7 @@ export function initGame(brand) {
     if (player.hearts <= 0) napAndRespawn();
   }
   function napAndRespawn() {
-    toast('😴 Você cochilou! Voltando pra base...');
+    toast(t('toast.nap'));
     player.hearts = MAX_HEARTS;
     player.pos.copy(spawnPoint());
     player.vel.set(0, 0, 0);
@@ -574,7 +575,7 @@ export function initGame(brand) {
     spawnPoof(cr.mesh.position, cr.def.color);
     player.stars += cr.def.reward;
     player.bag += 1;
-    toast(`${cr.def.emoji} +${cr.def.reward} ⭐`);
+    toast(t('toast.reward', { emoji: cr.def.emoji, reward: cr.def.reward }));
     blip(660, 0.12); setTimeout(() => blip(990, 0.12), 90);
     updateStats();
     creatureGroup.remove(cr.mesh);
@@ -767,7 +768,7 @@ export function initGame(brand) {
     if (kind === 'cola') stampCola(cx, gy, cz);
     if (kind === 'steve') stampSteve(cx, gy, cz);
     remeshRegion(cx - reach, cx + reach, cz - reach, cz + reach);
-    const messages = { trophy: '🏆 Taça da Copa construída!', ball: '⚽ Bola gigante 2026 construída!', figure: '🃏 Figurinha craque!', cola: '🥤 Refri gigante da Copa!', steve: '🧍 Estátua do Steve!' };
+    const messages = { trophy: t('toast.built_trophy'), ball: t('toast.built_ball'), figure: t('toast.built_figure'), cola: t('toast.built_cola'), steve: t('toast.built_steve') };
     toast(messages[kind]);
     blip(680, 0.12); setTimeout(() => blip(1020, 0.14), 110);
   }
@@ -1015,7 +1016,7 @@ export function initGame(brand) {
   function selectSlot(id) {
     selected = id;
     [...hotbar.children].forEach((s) => s.classList.toggle('active', +s.dataset.id === id));
-    toast(`Bloco: ${blockById(id).name}`);
+    toast(t('toast.block_selected', { name: blockById(id).name }));
   }
 
   const toastEl = document.getElementById('toast');
@@ -1028,7 +1029,7 @@ export function initGame(brand) {
   function toggleFly() {
     player.fly = !player.fly;
     document.getElementById('flyBtn').classList.toggle('on', player.fly);
-    toast(player.fly ? '✈️ Voando!' : '🚶 Andando');
+    toast(player.fly ? t('toast.flying') : t('toast.walking'));
   }
   document.getElementById('flyBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFly(); }, { signal });
 
@@ -1036,12 +1037,12 @@ export function initGame(brand) {
   function togglePeace() {
     peaceful = !peaceful;
     modeBtn.classList.toggle('on', peaceful);
-    modeBtn.textContent = peaceful ? '🕊️ Paz: ON' : '⚔️ Paz: OFF';
-    toast(peaceful ? '🕊️ Modo paz! Monstros não atacam' : '⚔️ Monstros bravos de novo!');
+    modeBtn.textContent = peaceful ? t('hud.peace_on') : t('hud.peace_off');
+    toast(peaceful ? t('toast.peace_on') : t('toast.peace_off'));
   }
   modeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePeace(); }, { signal });
   modeBtn.classList.toggle('on', peaceful);
-  modeBtn.textContent = peaceful ? '🕊️ Paz: ON' : '⚔️ Paz: OFF';
+  modeBtn.textContent = peaceful ? t('hud.peace_on') : t('hud.peace_off');
 
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
@@ -1083,7 +1084,7 @@ export function initGame(brand) {
     buildHotbar(FACE_URL);
     selectSlot(1);
     updateStats();
-    document.getElementById('startRecord').textContent = `🏆 Recorde: ${bestScore()}`;
+    document.getElementById('startRecord').textContent = t('start.record_score', { score: bestScore() });
     last = performance.now();
     rafId = requestAnimationFrame(loop);
   });

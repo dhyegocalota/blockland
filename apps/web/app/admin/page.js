@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { t } from '../../lib/i18n';
 
 const EMPTY = {
   id: '', name: '', hero: '', titleA: '', titleB: '',
@@ -8,16 +9,16 @@ const EMPTY = {
 };
 
 const FIELDS = [
-  ['id', 'ID / subdomínio (a-z, 0-9, -)'],
-  ['name', 'Nome da marca'],
-  ['hero', 'Herói (ex.: nome da criança)'],
-  ['titleA', 'Título — parte branca'],
-  ['titleB', 'Título — parte colorida'],
-  ['primary', 'Cor primária (hex)'],
-  ['avatar', 'URL do avatar'],
-  ['faceTexture', 'URL da textura do rosto'],
-  ['faceBlockName', 'Nome do bloco-rosto'],
-  ['tagline', 'Frase de abertura (aceita <b>)'],
+  ['id', 'admin.field_id'],
+  ['name', 'admin.field_name'],
+  ['hero', 'admin.field_hero'],
+  ['titleA', 'admin.field_titleA'],
+  ['titleB', 'admin.field_titleB'],
+  ['primary', 'admin.field_primary'],
+  ['avatar', 'admin.field_avatar'],
+  ['faceTexture', 'admin.field_face_texture'],
+  ['faceBlockName', 'admin.field_face_block_name'],
+  ['tagline', 'admin.field_tagline'],
 ];
 
 export default function Admin() {
@@ -34,7 +35,7 @@ export default function Admin() {
 
   async function load(k = key) {
     const res = await fetch('/api/admin/tenants', { headers: { 'x-admin-key': k } });
-    if (res.status === 401) { setMsg('Chave inválida'); setAuthed(false); return; }
+    if (res.status === 401) { setMsg(t('admin.invalid_key')); setAuthed(false); return; }
     setTenants(await res.json());
     setAuthed(true);
     setMsg('');
@@ -49,14 +50,14 @@ export default function Admin() {
       body: JSON.stringify(form),
     });
     const data = await res.json();
-    if (!res.ok) { setMsg(`Erro: ${data.error}${data.field ? ' (' + data.field + ')' : ''}`); return; }
-    setMsg(`Salvo: ${data.name}`);
+    if (!res.ok) { setMsg(t('admin.error', { error: `${data.error}${data.field ? ' (' + data.field + ')' : ''}` })); return; }
+    setMsg(t('admin.saved', { name: data.name }));
     setForm(EMPTY);
     load();
   }
 
   async function remove(id) {
-    if (!confirm(`Excluir o tenant "${id}"?`)) return;
+    if (!confirm(t('admin.confirm_delete', { id }))) return;
     await fetch(`/api/admin/tenants/${id}`, { method: 'DELETE', headers: { 'x-admin-key': key } });
     load();
   }
@@ -66,12 +67,12 @@ export default function Admin() {
   if (!authed) {
     return (
       <main style={S.wrap}>
-        <h1 style={S.h1}>🔐 Blocklandia — Admin</h1>
-        <p style={{ color: '#9aa' }}>Entre com a chave de admin.</p>
+        <h1 style={S.h1}>{t('admin.login_title')}</h1>
+        <p style={{ color: '#9aa' }}>{t('admin.login_hint')}</p>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input style={S.input} type="password" placeholder="admin key" value={key}
+          <input style={S.input} type="password" placeholder={t('admin.key_placeholder')} value={key}
             onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
-          <button style={S.btn} onClick={() => load()}>Entrar</button>
+          <button style={S.btn} onClick={() => load()}>{t('admin.enter')}</button>
         </div>
         {msg && <p style={{ color: '#ff7a7a' }}>{msg}</p>}
       </main>
@@ -80,37 +81,37 @@ export default function Admin() {
 
   return (
     <main style={S.wrap}>
-      <h1 style={S.h1}>🧱 Tenants</h1>
+      <h1 style={S.h1}>{t('admin.tenants_title')}</h1>
       {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
 
       <div style={{ display: 'grid', gap: 8, marginBottom: 28 }}>
-        {tenants.map((t) => (
-          <div key={t.id} style={S.row}>
-            <img src={t.avatar} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
+        {tenants.map((tenant) => (
+          <div key={tenant.id} style={S.row}>
+            <img src={tenant.avatar} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
             <div style={{ flex: 1 }}>
-              <b style={{ color: t.primary }}>{t.name}</b>
-              <span style={{ color: '#789', marginLeft: 8 }}>/{t.id} · {t.hero}</span>
+              <b style={{ color: tenant.primary }}>{tenant.name}</b>
+              <span style={{ color: '#789', marginLeft: 8 }}>/{tenant.id} · {tenant.hero}</span>
             </div>
-            <a style={S.link} href={`/?tenant=${t.id}`} target="_blank" rel="noreferrer">abrir</a>
-            <button style={S.small} onClick={() => setForm(t)}>editar</button>
-            <button style={{ ...S.small, color: '#ff7a7a' }} onClick={() => remove(t.id)}>excluir</button>
+            <a style={S.link} href={`/?tenant=${tenant.id}`} target="_blank" rel="noreferrer">{t('admin.open')}</a>
+            <button style={S.small} onClick={() => setForm(tenant)}>{t('admin.edit')}</button>
+            <button style={{ ...S.small, color: '#ff7a7a' }} onClick={() => remove(tenant.id)}>{t('admin.delete')}</button>
           </div>
         ))}
       </div>
 
-      <h2 style={{ ...S.h1, fontSize: 18 }}>{form.id ? `Editar / criar` : 'Novo tenant'}</h2>
+      <h2 style={{ ...S.h1, fontSize: 18 }}>{form.id ? t('admin.edit_create') : t('admin.new_tenant')}</h2>
       <form onSubmit={save} style={{ display: 'grid', gap: 10, maxWidth: 560 }}>
-        {FIELDS.map(([f, label]) => (
+        {FIELDS.map(([f, labelKey]) => (
           <label key={f} style={{ display: 'grid', gap: 4 }}>
-            <span style={{ color: '#9aa', fontSize: 13 }}>{label}</span>
+            <span style={{ color: '#9aa', fontSize: 13 }}>{t(labelKey)}</span>
             {f === 'tagline'
               ? <textarea style={{ ...S.input, height: 70 }} value={form[f]} onChange={set(f)} />
               : <input style={S.input} value={form[f]} onChange={set(f)} />}
           </label>
         ))}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button style={S.btn} type="submit">Salvar tenant</button>
-          <button style={S.small} type="button" onClick={() => setForm(EMPTY)}>Limpar</button>
+          <button style={S.btn} type="submit">{t('admin.save_tenant')}</button>
+          <button style={S.small} type="button" onClick={() => setForm(EMPTY)}>{t('admin.clear')}</button>
         </div>
       </form>
     </main>
