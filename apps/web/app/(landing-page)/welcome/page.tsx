@@ -5,8 +5,8 @@
 // the admin panel used to refuse a tenant subdomain it redirects here.
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import Script from 'next/script';
-import { currentLocale } from '../../lib/i18n';
-import { PLATFORM_NAME } from '../../lib/builtins';
+import { currentLocale } from '../../../lib/i18n';
+import { PLATFORM_NAME } from '../../../lib/builtins';
 
 const CONTACT_EMAIL = 'dhyego@logicbit.com.br';
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
