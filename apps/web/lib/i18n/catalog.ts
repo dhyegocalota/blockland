@@ -119,6 +119,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.admin_badge': '👑 Você é admin',
     'lobby.moderator_badge': '🧒 Você é moderador',
     'lobby.offline_badge': '📵 Offline — só dá pra jogar sozinho',
+    'lobby.mode_label': 'Como você quer jogar?',
+    'lobby.mode_offline_hint': '📵 Sem internet: só dá pra jogar sozinho agora.',
 
     // Start screen — name input
     'start.name_label': 'Seu nome',
@@ -456,6 +458,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.admin_badge': '👑 You are admin',
     'lobby.moderator_badge': '🧒 You are a moderator',
     'lobby.offline_badge': '📵 Offline — single-player only',
+    'lobby.mode_label': 'How do you want to play?',
+    'lobby.mode_offline_hint': '📵 No internet: solo play only for now.',
 
     // Start screen — name input
     'start.name_label': 'Your name',

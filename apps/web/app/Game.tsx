@@ -393,57 +393,81 @@ export default function Game() {
       </div>
 
       <div id="start">
-        <img className="avatar" src={brand.avatar} alt={brand.hero} />
-        <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
-        <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
-        <span className="record-badge" id="startRecord">{t('start.record')}</span>
-        {lobbyAdmin && <span className="admin-badge" id="startAdmin">{t('lobby.admin_badge')}</span>}
-        {lobbyModerator && <span className="admin-badge mod" id="startMod">{t('lobby.moderator_badge')}</span>}
-        {offline && <span className="offline-badge" id="startOffline">{t('lobby.offline_badge')}</span>}
-        <LobbyPresence tenant={brand.id} />
-        <label id="nameField">
-          {t('start.name_label')}
-          <input
-            id="nameInput"
-            value={name}
-            maxLength={16}
-            placeholder={t('start.name_placeholder')}
-            onChange={(e) => onNameChange(e.target.value)}
-          />
-        </label>
-        {loggedIn && (
-          <div id="sessionActions">
-            <button id="logoutBtn" className="ghost" onClick={logout}>{t('login.logout')}</button>
+        <div className="startSky" aria-hidden="true">
+          <span className="cloud cloud-a">☁️</span>
+          <span className="cloud cloud-b">☁️</span>
+          <span className="cloud cloud-c">☁️</span>
+        </div>
+
+        <div className="startHero">
+          <img className="avatar" src={brand.avatar} alt={brand.hero} />
+          <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
+          <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
+          <div className="startBadges">
+            <span className="record-badge" id="startRecord">{t('start.record')}</span>
+            {lobbyAdmin && <span className="admin-badge" id="startAdmin">{t('lobby.admin_badge')}</span>}
+            {lobbyModerator && <span className="admin-badge mod" id="startMod">{t('lobby.moderator_badge')}</span>}
+            {offline && <span className="offline-badge" id="startOffline">{t('lobby.offline_badge')}</span>}
           </div>
-        )}
-        <div id="lookField">
-          <span className="lookTitle">{t('customize.title')}</span>
-          <label>{t('customize.skin')}<input type="color" value={look.skin} onChange={(e) => onLookChange('skin', e.target.value)} /></label>
-          <label>{t('customize.shirt')}<input type="color" value={look.shirt} onChange={(e) => onLookChange('shirt', e.target.value)} /></label>
-          <label>{t('customize.hair')}<input type="color" value={look.hair} onChange={(e) => onLookChange('hair', e.target.value)} /></label>
         </div>
-        <button
-          id="startHelpBtn"
-          className="ghost"
-          onClick={() => { const c = document.getElementById('controls'); if (c) c.hidden = false; }}
-        >
-          {t('start.instructions')}
-        </button>
-        <div id="modeToggle">
+
+        <div className="startPanel">
+          <LobbyPresence tenant={brand.id} />
+
+          <label id="nameField">
+            {t('start.name_label')}
+            <input
+              id="nameInput"
+              value={name}
+              maxLength={16}
+              placeholder={t('start.name_placeholder')}
+              onChange={(e) => onNameChange(e.target.value)}
+            />
+          </label>
+          {loggedIn && (
+            <div id="sessionActions">
+              <button id="logoutBtn" className="ghost" onClick={logout}>{t('login.logout')}</button>
+            </div>
+          )}
+
+          <div id="lookField">
+            <span className="lookTitle">{t('customize.title')}</span>
+            <label>{t('customize.skin')}<input type="color" value={look.skin} onChange={(e) => onLookChange('skin', e.target.value)} /></label>
+            <label>{t('customize.shirt')}<input type="color" value={look.shirt} onChange={(e) => onLookChange('shirt', e.target.value)} /></label>
+            <label>{t('customize.hair')}<input type="color" value={look.hair} onChange={(e) => onLookChange('hair', e.target.value)} /></label>
+          </div>
+
+          <div id="modeField">
+            <span className="modeTitle">{t('lobby.mode_label')}</span>
+            <div id="modeToggle">
+              <button
+                className={solo ? '' : 'on'}
+                disabled={offline}
+                title={offline ? t('lobby.offline_badge') : undefined}
+                onClick={() => { soloRef.current = false; setSolo(false); }}
+              >
+                {t('start.mode_multi')}
+              </button>
+              <button className={solo ? 'on' : ''} onClick={() => { soloRef.current = true; setSolo(true); }}>
+                {t('start.mode_solo')}
+              </button>
+            </div>
+            {offline && <span className="modeOfflineHint">{t('lobby.mode_offline_hint')}</span>}
+          </div>
+
+          <button id="playBtn">{t('start.play')}</button>
+
           <button
-            className={solo ? '' : 'on'}
-            disabled={offline}
-            title={offline ? t('lobby.offline_badge') : undefined}
-            onClick={() => { soloRef.current = false; setSolo(false); }}
+            id="startHelpBtn"
+            className="ghost"
+            onClick={() => { const c = document.getElementById('controls'); if (c) c.hidden = false; }}
           >
-            {t('start.mode_multi')}
-          </button>
-          <button className={solo ? 'on' : ''} onClick={() => { soloRef.current = true; setSolo(true); }}>
-            {t('start.mode_solo')}
+            {t('start.instructions')}
           </button>
         </div>
-        <button id="playBtn">{t('start.play')}</button>
+
         <Leaderboard tenant={brand.id} />
+
         <footer id="startFooter">
           <a className="wantGame" href="/welcome">{t('lobby.want_game')}</a>
           <a className="credit" href={AUTHOR_URL} target="_blank" rel="noopener noreferrer">{t('lobby.credit')}</a>
