@@ -1219,6 +1219,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
         return r ? { id: r.creature.id, t: r.t } : null;
       },
       hitId: (id: number) => coop?.sendHit(id),
+      digHit: (x: number, y: number, z: number) => coop?.sendDig(x, y, z),
+      voxel: (x: number, y: number, z: number) => getVoxel(x, y, z),
+      surfaceY: (x: number, z: number) => groundHeight(x, z),
+      bag: () => player.bag,
     };
   }
   return cleanup;
