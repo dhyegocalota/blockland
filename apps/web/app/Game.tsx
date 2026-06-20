@@ -104,6 +104,7 @@ export default function Game() {
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [lobbyAdmin, setLobbyAdmin] = useState(false);
+  const [isTouch, setIsTouch] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
   const soloRef = useRef(false);
@@ -118,6 +119,19 @@ export default function Game() {
     lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
     inputRef: chatInputRef, openChat, sendChat, closeChat, pushChatLine,
   } = useChat({ gameApi: gameApiRef, chatEnabled: room.chatEnabled });
+
+  // Touch devices have no keyboard: the controls help must show the joystick/buttons, not key caps.
+  useEffect(() => {
+    setIsTouch(window.matchMedia('(pointer: coarse)').matches);
+  }, []);
+
+  // Offline (no game server reachable): multiplayer is impossible, so lock the player into solo and
+  // make it visible in the lobby — the "with friends" button is disabled, never silently no-ops.
+  useEffect(() => {
+    if (!offline) return;
+    soloRef.current = true;
+    setSolo(true);
+  }, [offline]);
 
   // First-time players get a random look (persisted so it stays stable); done after mount to avoid a
   // hydration mismatch on the color inputs.
@@ -595,7 +609,7 @@ export default function Game() {
           <div><span>{t('debug.ping')}</span><b>{debugData.ping}ms</b></div>
           <div><span>{t('debug.state')}</span><b>{debugData.state}</b></div>
           <div><span>{t('debug.online')}</span><b>{debugData.online}</b></div>
-          <div><span>{t('debug.pos')}</span><b>{debugData.x}, {debugData.y}, {debugData.z}</b></div>
+          <div><span>{t('debug.pos')}</span><b>{debugData.x.toFixed(2)}, {debugData.y.toFixed(2)}, {debugData.z.toFixed(2)}</b></div>
           <div><span>{t('debug.chunks')}</span><b>{debugData.chunks}</b></div>
           <div><span>{t('debug.tenant')}</span><b>{debugData.tenant}</b></div>
         </div>
@@ -614,22 +628,34 @@ export default function Game() {
       <div id="controls" hidden>
         <div className="panel">
           <h2>{t('controls.title')}</h2>
-          <div className="ctrlGrid">
-            <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
-            <div className="card"><b>{t('controls.jump')}</b> {t('controls.jump_keys')}</div>
-            <div className="card"><b>{t('controls.fly_land')}</b> {t('controls.fly_land_keys')}</div>
-            <div className="card"><b>{t('controls.look')}</b> {t('controls.look_keys')}</div>
-            <div className="card"><b>{t('controls.break')}</b> {t('controls.break_keys')}</div>
-            <div className="card"><b>{t('controls.build')}</b> {t('controls.build_keys')}</div>
-            <div className="card"><b>{t('controls.pick_block')}</b> {t('controls.pick_block_keys')}</div>
-            <div className="card"><b>{t('controls.hunt')}</b> {t('controls.hunt_keys')}</div>
-            <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
-            <div className="card"><b>{t('controls.collect')}</b> {t('controls.collect_keys')}</div>
-            <div className="card"><b>{t('controls.your_face')}</b> {t('controls.your_face_keys')}</div>
-            <div className="card"><b>{t('controls.peace_mode')}</b> {t('controls.peace_mode_keys')}</div>
-            <div className="card"><b>{t('controls.structures')}</b> {t('controls.structures_keys')}</div>
-            <div className="card"><b>{t('controls.show_controls')}</b> {t('controls.show_controls_keys')}</div>
-          </div>
+          {isTouch ? (
+            <div className="ctrlGrid">
+              <div className="card"><b>{t('controls.t_move')}</b> {t('controls.t_move_d')}</div>
+              <div className="card"><b>{t('controls.t_jump')}</b> {t('controls.t_jump_d')}</div>
+              <div className="card"><b>{t('controls.t_down')}</b> {t('controls.t_down_d')}</div>
+              <div className="card"><b>{t('controls.t_look')}</b> {t('controls.t_look_d')}</div>
+              <div className="card"><b>{t('controls.t_build')}</b> {t('controls.t_build_d')}</div>
+              <div className="card"><b>{t('controls.t_break')}</b> {t('controls.t_break_d')}</div>
+              <div className="card"><b>{t('controls.t_block')}</b> {t('controls.t_block_d')}</div>
+            </div>
+          ) : (
+            <div className="ctrlGrid">
+              <div className="card"><b>{t('controls.move')}</b> {t('controls.move_keys')}</div>
+              <div className="card"><b>{t('controls.jump')}</b> {t('controls.jump_keys')}</div>
+              <div className="card"><b>{t('controls.fly_land')}</b> {t('controls.fly_land_keys')}</div>
+              <div className="card"><b>{t('controls.look')}</b> {t('controls.look_keys')}</div>
+              <div className="card"><b>{t('controls.break')}</b> {t('controls.break_keys')}</div>
+              <div className="card"><b>{t('controls.build')}</b> {t('controls.build_keys')}</div>
+              <div className="card"><b>{t('controls.pick_block')}</b> {t('controls.pick_block_keys')}</div>
+              <div className="card"><b>{t('controls.hunt')}</b> {t('controls.hunt_keys')}</div>
+              <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
+              <div className="card"><b>{t('controls.collect')}</b> {t('controls.collect_keys')}</div>
+              <div className="card"><b>{t('controls.your_face')}</b> {t('controls.your_face_keys')}</div>
+              <div className="card"><b>{t('controls.peace_mode')}</b> {t('controls.peace_mode_keys')}</div>
+              <div className="card"><b>{t('controls.structures')}</b> {t('controls.structures_keys')}</div>
+              <div className="card"><b>{t('controls.show_controls')}</b> {t('controls.show_controls_keys')}</div>
+            </div>
+          )}
           <button id="closeControls">{t('controls.close')}</button>
         </div>
       </div>
@@ -655,6 +681,7 @@ export default function Game() {
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">{t('start.record')}</span>
         {lobbyAdmin && <span className="admin-badge" id="startAdmin">{t('lobby.admin_badge')}</span>}
+        {offline && <span className="offline-badge" id="startOffline">{t('lobby.offline_badge')}</span>}
         <LobbyPresence tenant={brand.id} />
         <label id="nameField">
           {t('start.name_label')}
@@ -685,7 +712,12 @@ export default function Game() {
           {t('start.instructions')}
         </button>
         <div id="modeToggle">
-          <button className={solo ? '' : 'on'} onClick={() => { soloRef.current = false; setSolo(false); }}>
+          <button
+            className={solo ? '' : 'on'}
+            disabled={offline}
+            title={offline ? t('lobby.offline_badge') : undefined}
+            onClick={() => { soloRef.current = false; setSolo(false); }}
+          >
             {t('start.mode_multi')}
           </button>
           <button className={solo ? 'on' : ''} onClick={() => { soloRef.current = true; setSolo(true); }}>

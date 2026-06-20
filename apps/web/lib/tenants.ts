@@ -10,14 +10,23 @@ export type Brand = Tenant;
 // The app's own root domain; tenants live on subdomains of it (teo.<ROOT_DOMAIN>). Defaults to
 // localhost for dev (tenants are teo.localhost); set NEXT_PUBLIC_ROOT_DOMAIN in production. Knowing
 // the root, a host is a tenant iff it ends with `.<ROOT_DOMAIN>` — no per-platform special cases.
-// The tenant subdomain prefix for the current host, or null when this IS the app root (admin and the
-// default tenant live here). Single source of truth for tenant-vs-root.
-export function tenantSubdomain(): string | null {
+// The tenant subdomain prefix for a host, or null when the host IS the app root (admin and the
+// default tenant live there). Pure, so the server (metadata, manifest) shares it with the client.
+export function tenantSubdomainOf(host: string): string | null {
   const root = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost';
-  const host = window.location.hostname;
   if (host === root || host === `www.${root}`) return null;
   if (host.endsWith(`.${root}`)) return host.slice(0, -(root.length + 1)).toLowerCase();
   return null;
+}
+
+// The tenant for the current browser host (client-only; reads window).
+export function tenantSubdomain(): string | null {
+  return tenantSubdomainOf(window.location.hostname);
+}
+
+// The resolved tenant id for a host, falling back to the default tenant on the app root.
+export function tenantIdFromHost(host: string): string {
+  return tenantSubdomainOf(host) ?? DEFAULT_TENANT;
 }
 
 export function tenantIdFromLocation(): string {

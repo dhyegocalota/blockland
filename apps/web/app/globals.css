@@ -105,8 +105,17 @@ canvas { display: block; }
 }
 #start .admin-badge {
   z-index: 2; background: linear-gradient(var(--gold), #e0a800); color: #2a1a4a; font-weight: 900;
-  font-size: 17px; padding: 8px 20px; border-radius: 16px; border: 3px solid #fff;
-  box-shadow: 0 4px 14px #0004; letter-spacing: .3px;
+  font-size: 20px; padding: 10px 26px; border-radius: 18px; border: 3px solid #fff;
+  box-shadow: 0 6px 22px #ffd23f66, 0 4px 14px #0005; letter-spacing: .4px; text-transform: uppercase;
+  animation: adminPulse 1.6s ease-in-out infinite;
+}
+@keyframes adminPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 6px 22px #ffd23f66, 0 4px 14px #0005; }
+  50% { transform: scale(1.05); box-shadow: 0 8px 30px #ffd23faa, 0 4px 14px #0005; }
+}
+#start .offline-badge {
+  z-index: 2; background: rgba(42,26,74,.85); color: #ff9d6e; font-weight: 900; font-size: 15px;
+  padding: 8px 18px; border-radius: 16px; border: 3px solid #ff5d2e;
 }
 #playBtn {
   z-index: 2; font-family: inherit; font-size: 30px; font-weight: 900; color: #fff;
@@ -122,6 +131,7 @@ canvas { display: block; }
 }
 #modeToggle button.on { background: linear-gradient(#b6f5b6, #6bd06b); border-color: #fff; }
 #modeToggle button:active { transform: translateY(2px); }
+#modeToggle button:disabled { opacity: .45; filter: grayscale(.6); cursor: not-allowed; transform: none; }
 #lobbyPresence {
   z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 1px;
   background: rgba(42,26,74,.7); border: 2px solid var(--gold); border-radius: 14px;
@@ -531,8 +541,9 @@ body.is-touch #buildMenu h2 { font-size: 22px; margin-bottom: 8px; }
 body.is-touch #buildMenu .buildHint { margin: 6px 0 12px; font-size: 13px; }
 /* Lift chat + feed clear above the on-screen joystick (left:14px bottom:14px ~108px tall) so taps
    on the joystick never land on the chat input or log. */
-body.is-touch #chat { left: 14px; bottom: 178px; }
-body.is-touch #feed { left: 14px; bottom: 250px; }
+/* Clear the touch joystick (portrait: top edge ~226px) so chat/feed never sit on top of it. */
+body.is-touch #chat { left: 14px; bottom: 244px; }
+body.is-touch #feed { left: 14px; bottom: 324px; }
 
 /* landscape phones: spread controls so nothing stacks on top of each other */
 @media (orientation: landscape) {
@@ -546,4 +557,7 @@ body.is-touch #feed { left: 14px; bottom: 250px; }
   body.is-touch #touchButtons { right: 12px; bottom: 12px; grid-template-columns: 64px 64px; gap: 9px; }
   body.is-touch .tbtn { width: 64px; height: 64px; font-size: 26px; }
   body.is-touch #hotbar { bottom: 6px; max-width: 46vw; }
+  /* The landscape joystick is shorter (top edge ~122px), so chat/feed can sit lower than in portrait. */
+  body.is-touch #chat { bottom: 138px; }
+  body.is-touch #feed { bottom: 210px; }
 }
