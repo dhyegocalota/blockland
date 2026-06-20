@@ -96,7 +96,7 @@ const COPY = {
     ] as Qa[],
     founderTitle: 'Quem está por trás disso',
     founderStory: [
-      'Oi, eu sou o Dhyego. Sou desenvolvedor — e, antes de tudo, pai.',
+      'Oi, eu sou o Dhyego. Sou desenvolvedor — e, antes de tudo, marido e pai.',
       'Esse joguinho nasceu de uma vontade simples: deixar meu filho construir, explorar e brincar online com os amigos sem que eu ficasse com o coração na mão. Procurei um lugar assim e não encontrei. Então resolvi construir um — do jeito que eu, como pai, gostaria de achar.',
       'Cada detalhe aqui passou por uma pergunta: "eu deixaria meu filho nesse mundo?". Quando a resposta era não, não entrava.',
     ],
@@ -168,7 +168,7 @@ const COPY = {
     ] as Qa[],
     founderTitle: 'Who is behind this',
     founderStory: [
-      'Hi, I am Dhyego. I am a developer — and, above all, a dad.',
+      'Hi, I am Dhyego. I am a developer — and, above all, a husband and a dad.',
       'This little game came from a simple wish: to let my son build, explore and play online with his friends without me holding my breath the whole time. I looked for a place like that and could not find one. So I built it — the way I, as a dad, would want to find it.',
       'Every detail here went through one question: "would I let my own kid into this world?" When the answer was no, it did not make it in.',
     ],
@@ -443,7 +443,7 @@ const S: Record<string, CSSProperties> = {
     ...card, display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center',
   },
   founderPhoto: {
-    width: 'clamp(120px, 32vw, 184px)', height: 'clamp(120px, 32vw, 184px)', borderRadius: 24,
+    width: 'clamp(150px, 38vw, 210px)', aspectRatio: '3 / 4', borderRadius: 24,
     objectFit: 'cover', border: '5px solid #ffd23f', boxShadow: '0 10px 30px #0003', flexShrink: 0,
   },
   founderText: { flex: 1, minWidth: 240 },

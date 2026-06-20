@@ -7,7 +7,7 @@ import type { CSSProperties } from 'react';
 import { currentLocale } from '../../../lib/i18n';
 import { PLATFORM_NAME } from '../../../lib/builtins';
 
-const CONTACT_EMAIL = 'dhyego@logicbit.com.br';
+const CONTACT_EMAIL = 'legal@logicbit.com.br';
 const COMPANY_NAME = 'Logic Bit';
 const COMPANY_CNPJ = '32.555.315/0001-91';
 const COMPANY_ADDRESS = 'R. Rio Grande do Norte, 1435 — Sala 708, Savassi, Belo Horizonte/MG, CEP 30.130-138';
