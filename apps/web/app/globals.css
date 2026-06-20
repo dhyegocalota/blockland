@@ -119,6 +119,10 @@ canvas { display: block; }
   0%, 100% { transform: scale(1); box-shadow: 0 6px 22px #ffd23f66, 0 4px 14px #0005; }
   50% { transform: scale(1.05); box-shadow: 0 8px 30px #ffd23faa, 0 4px 14px #0005; }
 }
+#start .admin-badge.mod {
+  background: linear-gradient(#7ec8ff, #3a9be0); color: #10243a; animation: none; font-size: 17px;
+  box-shadow: 0 4px 14px #0005;
+}
 #start .offline-badge {
   z-index: 2; background: rgba(42,26,74,.85); color: #ff9d6e; font-weight: 900; font-size: 15px;
   padding: 8px 18px; border-radius: 16px; border: 3px solid #ff5d2e;
@@ -210,6 +214,24 @@ canvas { display: block; }
   padding: 12px 38px; cursor: pointer; box-shadow: 0 7px 0 #c43d18; transition: transform .1s;
 }
 #offlinePlay:active { transform: translateY(5px); box-shadow: 0 2px 0 #c43d18; }
+
+/* Kicked / banned / room-closed: a blocking overlay that sends the player back to the lobby. */
+#kickOverlay {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .72); backdrop-filter: blur(7px); padding: 16px;
+}
+#kickOverlay .panel {
+  background: linear-gradient(#ffffff, #ffe8e0); border: 6px solid #fff; border-radius: 28px;
+  padding: 26px 28px; max-width: 460px; width: 100%; text-align: center; box-shadow: 0 24px 60px #0007;
+  animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
+}
+#kickOverlay h2 { color: var(--ink); font-size: clamp(20px, 5vw, 27px); font-weight: 900; margin-bottom: 20px; }
+#kickOverlay button {
+  font-family: inherit; font-size: 20px; font-weight: 900; color: #fff;
+  background: linear-gradient(#ff8a3d, #ff5d2e); border: 5px solid #fff; border-radius: 20px;
+  padding: 12px 34px; cursor: pointer; box-shadow: 0 7px 0 #c43d18; transition: transform .1s;
+}
+#kickOverlay button:active { transform: translateY(5px); box-shadow: 0 2px 0 #c43d18; }
 
 /* ---------- Build menu ---------- */
 #buildMenu {

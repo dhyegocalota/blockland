@@ -117,6 +117,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.want_game': '🧡 Quero um jogo desse pro meu filho também',
     'lobby.credit': 'Feito com 🧡 por Dhyego Calota',
     'lobby.admin_badge': '👑 Você é admin',
+    'lobby.moderator_badge': '🧒 Você é moderador',
     'lobby.offline_badge': '📵 Offline — só dá pra jogar sozinho',
 
     // Start screen — name input
@@ -162,8 +163,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.reconnecting': '📡 Reconectando...',
     'coop.offline': '🚫 Sem conexão — jogando sozinho',
     'coop.banned': '⛔ Você foi banido deste mundo',
-    'coop.kicked': '👋 Você foi removido por inatividade',
+    'coop.kicked': '👋 Você foi removido da sala',
     'coop.room_closed': '🌙 Este mundo foi fechado',
+    'coop.back_to_lobby': '🏠 Voltar ao início',
     'coop.ping': '📶 {ping}ms',
 
     // Offline mode (bundled tenant, no data API)
@@ -439,6 +441,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.want_game': '🧡 I want a game like this for my kid too',
     'lobby.credit': 'Built with 🧡 by Dhyego Calota',
     'lobby.admin_badge': '👑 You are admin',
+    'lobby.moderator_badge': '🧒 You are a moderator',
     'lobby.offline_badge': '📵 Offline — single-player only',
 
     // Start screen — name input
@@ -484,8 +487,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.reconnecting': '📡 Reconnecting...',
     'coop.offline': '🚫 No connection — playing solo',
     'coop.banned': '⛔ You were banned from this world',
-    'coop.kicked': '👋 You were removed for being idle',
+    'coop.kicked': '👋 You were removed from the room',
     'coop.room_closed': '🌙 This world has been closed',
+    'coop.back_to_lobby': '🏠 Back to start',
     'coop.ping': '📶 {ping}ms',
 
     // Offline mode (bundled tenant, no data API)

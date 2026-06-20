@@ -24,13 +24,13 @@ function viStubLocalStorage(): void {
 
 describe('session', () => {
   it('round-trips a saved session', () => {
-    saveSession({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true });
-    expect(loadSession()).toEqual({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true });
+    saveSession({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true, is_moderator: false });
+    expect(loadSession()).toEqual({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true, is_moderator: false });
   });
 
   it('defaults is_admin to false for legacy sessions without the flag', () => {
     store.set(SESSION_KEY, '{"tenant":"teo","name":"Ann","claim":"cl"}');
-    expect(loadSession()).toEqual({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: false });
+    expect(loadSession()).toEqual({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: false, is_moderator: false });
   });
 
   it('returns null for missing or malformed data', () => {
@@ -42,13 +42,13 @@ describe('session', () => {
   });
 
   it('clears the session', () => {
-    saveSession({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: false });
+    saveSession({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: false, is_moderator: false });
     clearSession();
     expect(loadSession()).toBeNull();
   });
 
   it('resolveClaim only returns the claim for the matching tenant + name', () => {
-    saveSession({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: false });
+    saveSession({ tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: false, is_moderator: false });
     expect(resolveClaim('teo', 'Ann')).toBe('cl');
     expect(resolveClaim('demo', 'Ann')).toBe('');
     expect(resolveClaim('teo', 'Bob')).toBe('');

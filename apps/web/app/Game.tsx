@@ -106,6 +106,7 @@ export default function Game() {
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [lobbyAdmin, setLobbyAdmin] = useState(false);
+  const [lobbyModerator, setLobbyModerator] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
   const [infiniteResources, setInfiniteResources] = useState(true);
 
@@ -270,6 +271,7 @@ export default function Game() {
     const ownsSession = !!session && session.tenant === brand.id;
     setLoggedIn(ownsSession);
     setLobbyAdmin(ownsSession && session?.is_admin === true);
+    setLobbyModerator(ownsSession && session?.is_moderator === true);
   }, [brand, loginStep]);
 
   useEffect(() => {
@@ -355,12 +357,12 @@ export default function Game() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tenant: brand.id, name: name.trim(), code: loginCode.trim() }),
       });
-      const data = (await res.json()) as { ok: boolean; tenant?: string; name?: string; claim?: string; is_admin?: boolean };
+      const data = (await res.json()) as { ok: boolean; tenant?: string; name?: string; claim?: string; is_admin?: boolean; is_moderator?: boolean };
       if (!data.ok || !data.tenant || !data.name || !data.claim) {
         setLoginError(t('login.error_code'));
         return;
       }
-      saveSession({ tenant: data.tenant, name: data.name, claim: data.claim, is_admin: data.is_admin === true });
+      saveSession({ tenant: data.tenant, name: data.name, claim: data.claim, is_admin: data.is_admin === true, is_moderator: data.is_moderator === true });
       finishLogin();
     } catch {
       setLoginError(t('login.error_generic'));
@@ -511,8 +513,17 @@ export default function Game() {
         </div>
       )}
 
-      {bannerKey && (
-        <div id="netBanner" className={severe ? 'severe' : undefined} role="status">{t(bannerKey)}</div>
+      {bannerKey && !severe && (
+        <div id="netBanner" role="status">{t(bannerKey)}</div>
+      )}
+
+      {bannerKey && severe && (
+        <div id="kickOverlay" role="alertdialog" aria-modal="true">
+          <div className="panel">
+            <h2>{t(bannerKey)}</h2>
+            <button onClick={() => window.location.reload()}>{t('coop.back_to_lobby')}</button>
+          </div>
+        </div>
       )}
 
       {authToast && (
@@ -700,6 +711,7 @@ export default function Game() {
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">{t('start.record')}</span>
         {lobbyAdmin && <span className="admin-badge" id="startAdmin">{t('lobby.admin_badge')}</span>}
+        {lobbyModerator && <span className="admin-badge mod" id="startMod">{t('lobby.moderator_badge')}</span>}
         {offline && <span className="offline-badge" id="startOffline">{t('lobby.offline_badge')}</span>}
         <LobbyPresence tenant={brand.id} />
         <label id="nameField">

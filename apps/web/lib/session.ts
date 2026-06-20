@@ -8,6 +8,7 @@ export interface Session {
   name: string;
   claim: string;
   is_admin: boolean;
+  is_moderator: boolean;
 }
 
 export function loadSession(): Session | null {
@@ -22,6 +23,7 @@ export function loadSession(): Session | null {
       name: parsed.name,
       claim: parsed.claim,
       is_admin: parsed.is_admin === true,
+      is_moderator: parsed.is_moderator === true,
     };
   } catch {
     return null;

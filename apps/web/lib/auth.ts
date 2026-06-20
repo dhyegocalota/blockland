@@ -25,6 +25,7 @@ export interface AuthVerifyResult {
   name: string;
   claim: string;
   is_admin: boolean;
+  is_moderator: boolean;
 }
 
 export interface AuthVerifyFailure {

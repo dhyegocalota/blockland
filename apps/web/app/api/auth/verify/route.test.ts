@@ -20,11 +20,11 @@ afterEach(() => vi.clearAllMocks());
 
 describe('POST /api/auth/verify', () => {
   it('verifies by token when one is given', async () => {
-    verifyTokenMock.mockResolvedValue({ ok: true, tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true });
+    verifyTokenMock.mockResolvedValue({ ok: true, tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true, is_moderator: false });
     const res = await POST(post({ token: 'tok' }));
     expect(verifyTokenMock).toHaveBeenCalledWith('tok');
     expect(verifyCodeMock).not.toHaveBeenCalled();
-    expect(await res.json()).toEqual({ ok: true, tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true });
+    expect(await res.json()).toEqual({ ok: true, tenant: 'teo', name: 'Ann', claim: 'cl', is_admin: true, is_moderator: false });
   });
 
   it('verifies by code when no token is given', async () => {
