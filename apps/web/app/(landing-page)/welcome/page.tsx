@@ -282,8 +282,8 @@ const S: Record<string, CSSProperties> = {
     animation: 'bl-bob 3s ease-in-out infinite', filter: 'drop-shadow(0 10px 0 #2a1a4a33)',
   },
   brand: {
-    fontSize: 'clamp(44px, 12vw, 84px)', fontWeight: 900, color: '#fff', lineHeight: 0.95, margin: '4px 0 0',
-    textShadow: '0 6px 0 #2a1a4a, 0 0 26px #ffd23f', letterSpacing: 1,
+    fontSize: 'clamp(44px, 12vw, 84px)', fontWeight: 900, color: '#ffd23f', lineHeight: 0.95, margin: '4px 0 0',
+    textShadow: '0 6px 0 #2a1a4a, 0 0 26px #ffffff66', letterSpacing: 1,
   },
   headline: { fontSize: 'clamp(22px, 5vw, 34px)', fontWeight: 900, lineHeight: 1.15, margin: '16px 0 0' },
   subhead: { fontSize: 'clamp(15px, 3.4vw, 19px)', fontWeight: 700, color: '#42365a', marginTop: 14, lineHeight: 1.5 },
