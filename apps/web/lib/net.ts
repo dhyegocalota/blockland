@@ -52,6 +52,7 @@ type EventMsg = Extract<ServerMsg, { t: 'event' }>;
 type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
 type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
+type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -64,6 +65,7 @@ export interface NetHandlers {
   onRoomState?(msg: RoomStateMsg): void;
   onHurt?(msg: HurtMsg): void;
   onRole?(msg: RoleMsg): void;
+  onAttack?(msg: AttackMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -194,6 +196,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'role') {
       opts.handlers.onRole?.(msg);
+      return;
+    }
+    if (msg.t === 'attack') {
+      opts.handlers.onAttack?.(msg);
       return;
     }
     if (msg.t === 'ping') {

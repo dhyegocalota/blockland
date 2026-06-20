@@ -52,6 +52,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
   kill: '⚔️',
   reset: '🌍',
   server_down: '⚠️',
+  admin: '🛡️',
 };
 
 function feedText(entry: FeedEntry): string {
@@ -60,6 +61,13 @@ function feedText(entry: FeedEntry): string {
   if (entry.kind === 'rename') return entry.name;
   if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });
   if (entry.kind === 'server_down') return t('feed.server_down');
+  if (entry.kind === 'admin') {
+    const parts = entry.detail ? entry.detail.split('|') : [];
+    const action = parts[0];
+    const target = parts[1];
+    if (target) return t(`feed.admin_${action}`, { name: entry.name, target });
+    return t(`feed.admin_${action}`, { name: entry.name });
+  }
   return t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name });
 }
 

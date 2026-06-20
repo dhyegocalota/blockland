@@ -602,6 +602,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   function attackRemotePlayer(p: CoopPlayer): void {
     coop?.sendAttackPlayer(p.id);
+    spawnPoof(new THREE.Vector3(p.x, p.y, p.z), '#ff5555');
     blip(300, 0.08);
     debug('engine', 'attack player', { id: p.id });
   }

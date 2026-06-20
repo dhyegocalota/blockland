@@ -113,6 +113,7 @@ interface ServerCreature {
 const SERVER_GROUND_OFFSET = 0.5;
 const CREATURE_FLASH_COLOR = 0xff3333;
 const CREATURE_FLASH_MS = 120;
+const PLAYER_HIT_COLOR = '#ff5555';
 
 // What the engine raycasts against to aim an attack: world position, the wire id to send in `hit`,
 // and the hit sphere radius derived from the creature's model size.
@@ -457,6 +458,10 @@ export function createCoop(opts: CoopOptions): CoopController {
           opts.hud.onEvent({ kind: 'server_down', name: msg.name });
           return;
         }
+        if (msg.kind === 'admin') {
+          opts.hud.onEvent({ kind: 'admin', name: msg.name, detail: msg.detail });
+          return;
+        }
         if (msg.kind === 'rename') renameAvatar(msg.detail, msg.name);
         opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },
@@ -478,6 +483,25 @@ export function createCoop(opts: CoopOptions): CoopController {
       onRole: (msg) => {
         opts.hud.onRole({ admin: msg.admin, moderator: msg.moderator });
         debug('coop', 'role changed', { admin: msg.admin, moderator: msg.moderator });
+      },
+      // Another player's attack landed: play the same hit effect (flash + puff) every client sees.
+      onAttack: (msg) => {
+        if (msg.kind === 'creature') {
+          const cr = creatures.get(msg.id);
+          if (!cr) return;
+          cr.body.material.emissive.setHex(CREATURE_FLASH_COLOR);
+          window.setTimeout(() => {
+            const still = creatures.get(msg.id);
+            if (still) still.body.material.emissive.setHex(0x000000);
+          }, CREATURE_FLASH_MS);
+          const at = cr.group.position;
+          opts.onCreaturePoof({ x: at.x, y: at.y, z: at.z, color: creatureDefFor(cr.kind).color });
+          return;
+        }
+        const avatar = avatars.get(msg.id);
+        if (!avatar) return;
+        const at = avatar.group.position;
+        opts.onCreaturePoof({ x: at.x, y: at.y + PLAYER_HEIGHT / 2, z: at.z, color: PLAYER_HIT_COLOR });
       },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });

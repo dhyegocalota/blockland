@@ -274,6 +274,18 @@ impl Db {
                 (),
             )
             .await?;
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS waitlist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL UNIQUE,
+                    name TEXT,
+                    phone TEXT,
+                    created_at INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
 
         let mut rows = self
             .conn
@@ -563,7 +575,11 @@ impl Db {
             .conn
             .execute(
                 "UPDATE accounts SET is_admin = ?2, is_moderator = ?3 WHERE account_id = ?1",
-                params![account_id, role.is_admin() as i64, role.is_moderator() as i64],
+                params![
+                    account_id,
+                    role.is_admin() as i64,
+                    role.is_moderator() as i64
+                ],
             )
             .await?;
         Ok(changed > 0)
@@ -872,6 +888,39 @@ impl Db {
                 name: row.get::<String>(1)?,
                 detail: row.get::<String>(2)?,
             });
+        }
+        Ok(out)
+    }
+
+    /// Record an interested parent on the pre-launch waitlist. Re-submitting the same email refreshes
+    /// their name/phone instead of failing, so the public form is idempotent.
+    pub async fn add_waitlist_entry(
+        &self,
+        email: &str,
+        name: Option<&str>,
+        phone: Option<&str>,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO waitlist (email, name, phone, created_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(email) DO UPDATE SET
+                    name = excluded.name, phone = excluded.phone, created_at = excluded.created_at",
+                params![email, name, phone, now_ms()],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// The emails currently on the waitlist, oldest-first. Test-only for now.
+    #[cfg(test)]
+    pub(crate) async fn waitlist_emails(&self) -> Result<Vec<String>, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query("SELECT email FROM waitlist ORDER BY id ASC", ())
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row.get::<String>(0)?);
         }
         Ok(out)
     }
@@ -1344,5 +1393,22 @@ mod tests {
             .map(|e| (e.name.as_str(), e.detail.as_str()))
             .collect();
         assert_eq!(pairs, vec![("Annie", "Ann"), ("AnnieB", "Annie")]);
+    }
+
+    #[tokio::test]
+    async fn waitlist_stores_optional_fields_and_dedupes_by_email() {
+        let db = memory_db().await;
+        db.add_waitlist_entry("ann@x.com", Some("Ann"), Some("+5511900000000"))
+            .await
+            .unwrap();
+        db.add_waitlist_entry("bob@x.com", None, None).await.unwrap();
+        // Re-submitting the same email refreshes the row instead of adding a duplicate.
+        db.add_waitlist_entry("ann@x.com", Some("Annie"), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.waitlist_emails().await.unwrap(),
+            vec!["ann@x.com".to_string(), "bob@x.com".to_string()]
+        );
     }
 }

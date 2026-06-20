@@ -94,6 +94,7 @@ async fn main() {
         .route("/internal/auth/verify", post(internal_auth_verify))
         .route("/internal/auth/logout", post(internal_auth_logout))
         .route("/internal/auth/rename", post(internal_auth_rename))
+        .route("/internal/waitlist", post(internal_waitlist))
         .route(
             "/internal/uploads",
             post(uploads::internal_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),

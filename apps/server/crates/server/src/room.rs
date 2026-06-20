@@ -158,7 +158,7 @@ pub struct Room {
     next_creature_id: u32,
 }
 
-const PING_EVERY_TICKS: u64 = 40; // 2s @ 20Hz
+const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
 const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
 const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
 
@@ -682,6 +682,7 @@ impl Room {
         p.last_seen = Instant::now();
         let is_admin = p.is_admin;
         let is_moderator = p.is_moderator;
+        let actor = p.name.clone();
         // Moderators (kids) may flip the harmless toggles; only admins (parents) may toggle chat.
         if !is_admin && !is_moderator {
             tracing::debug!(%id, "room setting ignored: not a moderator/admin");
@@ -691,37 +692,51 @@ impl Room {
             tracing::debug!(%id, "chat toggle ignored: moderators cannot toggle chat");
             return;
         }
-        let changed = match msg {
+        let (changed, action): (bool, &str) = match msg {
             ClientMsg::AdminSetPeace { on } => {
                 let changed = self.peace != on;
                 self.peace = on;
-                changed
+                (changed, if on { "peace_on" } else { "peace_off" })
             }
             ClientMsg::AdminSetStructure { kind, allowed } => {
                 let Some(kind) = valid_structure_kind(&kind) else {
                     return;
                 };
-                if allowed {
+                let changed = if allowed {
                     self.blocked_structures.remove(&kind)
                 } else {
                     self.blocked_structures.insert(kind)
-                }
+                };
+                (
+                    changed,
+                    if allowed {
+                        "structure_allowed"
+                    } else {
+                        "structure_blocked"
+                    },
+                )
             }
             ClientMsg::AdminSetPvp { on } => {
                 let changed = self.pvp != on;
                 self.pvp = on;
-                changed
+                (changed, if on { "pvp_on" } else { "pvp_off" })
             }
             ClientMsg::AdminSetChat { on } => {
                 let changed = self.chat_enabled != on;
                 self.chat_enabled = on;
-                changed
+                (changed, if on { "chat_on" } else { "chat_off" })
             }
-            _ => false,
+            _ => (false, ""),
         };
         if changed {
             let state = self.room_state();
             self.broadcast(&state);
+            // Surface every admin/moderator action in the feed for everyone.
+            self.broadcast(&ServerMsg::Event {
+                kind: "admin".into(),
+                name: actor,
+                detail: action.to_string(),
+            });
             tracing::info!(tenant = %self.key.0, peace = self.peace, pvp = self.pvp, chat = self.chat_enabled, blocked = self.blocked_structures.len(), "room settings changed");
         }
     }
@@ -738,10 +753,12 @@ impl Room {
             tracing::debug!(%admin_id, "admin command ignored: not an admin");
             return;
         }
+        let admin_name = admin.name.clone();
         let Some(target) = self.players.get(&target_id) else {
             return;
         };
         let target_ip = target.ip;
+        let target_name = target.name.clone();
         let (code, message) = if ban {
             ("banned", "Your access has been revoked.")
         } else {
@@ -756,6 +773,11 @@ impl Room {
         }
         self.players.remove(&target_id);
         self.broadcast(&ServerMsg::Left { id: target_id });
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("{}|{}", if ban { "ban" } else { "kick" }, target_name),
+        });
         tracing::info!(tenant = %self.key.0, %admin_id, %target_id, ban, "player removed by admin");
     }
 
@@ -789,7 +811,12 @@ impl Room {
     /// Change an online player's role. Admins (parents) may grant any role; moderators (kids) may only
     /// add or remove other moderators (never touch an admin, never grant admin). The change takes
     /// effect live (the target's flags + a Role message) and is persisted to the account.
-    fn on_admin_set_role(&mut self, actor_id: PlayerId, target_id: PlayerId, wire_role: protocol::Role) {
+    fn on_admin_set_role(
+        &mut self,
+        actor_id: PlayerId,
+        target_id: PlayerId,
+        wire_role: protocol::Role,
+    ) {
         let role = Role::from(wire_role);
         let Some(actor) = self.players.get_mut(&actor_id) else {
             return;
@@ -797,6 +824,7 @@ impl Room {
         actor.last_seen = Instant::now();
         let actor_is_admin = actor.is_admin;
         let actor_is_moderator = actor.is_moderator;
+        let actor_name = actor.name.clone();
         let may_grant = actor_is_admin || (actor_is_moderator && role != Role::Admin);
         if !may_grant {
             tracing::debug!(%actor_id, "set-role ignored: insufficient authority");
@@ -816,9 +844,20 @@ impl Room {
         target.is_admin = role.is_admin();
         target.is_moderator = role.is_moderator();
         let target_account = target.account_id.clone();
+        let target_name = target.name.clone();
         let _ = target.conn.try_send(ServerMsg::Role {
             admin: role.is_admin(),
             moderator: role.is_moderator(),
+        });
+        let role_word = match role {
+            Role::Admin => "role_admin",
+            Role::Moderator => "role_moderator",
+            Role::Player => "role_player",
+        };
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: actor_name,
+            detail: format!("{role_word}|{target_name}"),
         });
         let db = self.hub.db.clone();
         tokio::spawn(async move {
@@ -856,6 +895,14 @@ impl Room {
             return;
         }
         let _ = target.conn.try_send(ServerMsg::Hurt { by: attacker_name });
+        // Everyone but the attacker sees the same hit effect on the target.
+        self.broadcast_except(
+            attacker_id,
+            &ServerMsg::Attack {
+                kind: "player".into(),
+                id: target_id,
+            },
+        );
         tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
     }
 
@@ -995,6 +1042,17 @@ impl Room {
         }
     }
 
+    /// Broadcast to everyone except one player (e.g. the attacker, who already played the hit effect
+    /// locally for instant feedback — the others see it via this).
+    fn broadcast_except(&self, except: PlayerId, msg: &ServerMsg) {
+        for p in self.players.values() {
+            if p.id == except {
+                continue;
+            }
+            let _ = p.conn.try_send(msg.clone());
+        }
+    }
+
     /// Keep a capped creature population near active players and advance each one. Despawn creatures
     /// no player is close to; spawn up to the cap around a random player on a slow cadence.
     fn simulate_creatures(&mut self, dt: f32) {
@@ -1059,6 +1117,14 @@ impl Room {
         }
         let kind = self.creatures[index].kind;
         self.creatures[index].hp = self.creatures[index].hp.saturating_sub(1);
+        // Everyone but the attacker sees the same flash on the creature (the attacker plays it locally).
+        self.broadcast_except(
+            attacker_id,
+            &ServerMsg::Attack {
+                kind: "creature".into(),
+                id: creature_id,
+            },
+        );
         if self.creatures[index].hp > 0 {
             return;
         }
@@ -1641,7 +1707,13 @@ mod tests {
         assert_eq!(room.world.edit_count(), 1, "a plain player cannot reset");
 
         // The admin promotes the kid to moderator.
-        room.on_input(1, ClientMsg::AdminSetRole { id: 2, role: protocol::Role::Moderator });
+        room.on_input(
+            1,
+            ClientMsg::AdminSetRole {
+                id: 2,
+                role: protocol::Role::Moderator,
+            },
+        );
         assert!(room.players.get(&2).unwrap().is_moderator);
 
         // Now the moderator may reset the world (a harmless toggle)...
@@ -1657,16 +1729,40 @@ mod tests {
     async fn a_moderator_cannot_grant_admin() {
         let mut room = test_room().await;
         add_player(&mut room, 1, true);
-        room.on_input(1, ClientMsg::AdminSetRole { id: 2, role: protocol::Role::Moderator });
+        room.on_input(
+            1,
+            ClientMsg::AdminSetRole {
+                id: 2,
+                role: protocol::Role::Moderator,
+            },
+        );
         add_player(&mut room, 2, false);
         room.players.get_mut(&2).unwrap().is_moderator = true;
         add_player(&mut room, 3, false);
 
-        room.on_input(2, ClientMsg::AdminSetRole { id: 3, role: protocol::Role::Admin });
-        assert!(!room.players.get(&3).unwrap().is_admin, "a moderator cannot grant admin");
+        room.on_input(
+            2,
+            ClientMsg::AdminSetRole {
+                id: 3,
+                role: protocol::Role::Admin,
+            },
+        );
+        assert!(
+            !room.players.get(&3).unwrap().is_admin,
+            "a moderator cannot grant admin"
+        );
 
-        room.on_input(2, ClientMsg::AdminSetRole { id: 3, role: protocol::Role::Moderator });
-        assert!(room.players.get(&3).unwrap().is_moderator, "a moderator may add another moderator");
+        room.on_input(
+            2,
+            ClientMsg::AdminSetRole {
+                id: 3,
+                role: protocol::Role::Moderator,
+            },
+        );
+        assert!(
+            room.players.get(&3).unwrap().is_moderator,
+            "a moderator may add another moderator"
+        );
     }
 
     #[tokio::test]

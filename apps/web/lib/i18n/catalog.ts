@@ -185,6 +185,19 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.kill': '{name} derrotou um {detail}',
     'feed.reset': '🌍 {name} resetou o mundo',
     'feed.server_down': '⚠️ Servidor vai reiniciar — volte em instantes',
+    'feed.admin_peace_on': '{name} acalmou os monstros',
+    'feed.admin_peace_off': '{name} soltou os monstros',
+    'feed.admin_pvp_on': '{name} ligou o PvP',
+    'feed.admin_pvp_off': '{name} desligou o PvP',
+    'feed.admin_chat_on': '{name} ligou o chat',
+    'feed.admin_chat_off': '{name} desligou o chat',
+    'feed.admin_structure_allowed': '{name} liberou uma construção',
+    'feed.admin_structure_blocked': '{name} bloqueou uma construção',
+    'feed.admin_kick': '{name} expulsou {target}',
+    'feed.admin_ban': '{name} baniu {target}',
+    'feed.admin_role_admin': '{name} tornou {target} admin',
+    'feed.admin_role_moderator': '{name} tornou {target} moderador',
+    'feed.admin_role_player': '{name} tornou {target} jogador comum',
 
     // Change name (logged-in rename)
 
@@ -509,6 +522,19 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.kill': '{name} beat a {detail}',
     'feed.reset': '🌍 {name} reset the world',
     'feed.server_down': '⚠️ Server is restarting — back in a moment',
+    'feed.admin_peace_on': '{name} calmed the monsters',
+    'feed.admin_peace_off': '{name} unleashed the monsters',
+    'feed.admin_pvp_on': '{name} turned PvP on',
+    'feed.admin_pvp_off': '{name} turned PvP off',
+    'feed.admin_chat_on': '{name} turned chat on',
+    'feed.admin_chat_off': '{name} turned chat off',
+    'feed.admin_structure_allowed': '{name} allowed a build',
+    'feed.admin_structure_blocked': '{name} blocked a build',
+    'feed.admin_kick': '{name} kicked {target}',
+    'feed.admin_ban': '{name} banned {target}',
+    'feed.admin_role_admin': '{name} made {target} an admin',
+    'feed.admin_role_moderator': '{name} made {target} a moderator',
+    'feed.admin_role_player': '{name} made {target} a player',
 
     // Change name (logged-in rename)
 

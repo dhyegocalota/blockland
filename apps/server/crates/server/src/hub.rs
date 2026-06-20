@@ -92,7 +92,7 @@ fn d_players() -> usize {
     10
 }
 fn d_tick() -> u32 {
-    20
+    30
 }
 fn d_ip() -> u32 {
     6

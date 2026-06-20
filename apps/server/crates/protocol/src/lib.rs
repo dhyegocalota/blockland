@@ -182,6 +182,12 @@ pub enum ServerMsg {
         admin: bool,
         moderator: bool,
     },
+    /// A hit landed on a target so every client plays the same attack effect (flash + puff). `kind`
+    /// is "creature" or "player"; `id` is that target's id. Broadcast to everyone but the attacker.
+    Attack {
+        kind: String,
+        id: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
