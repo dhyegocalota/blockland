@@ -324,6 +324,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   let peaceful = true;
   let pvp = false;
   let chatEnabled = true;
+  // Block resources: mining a block banks one of its kind, placing spends one. Infinite by default
+  // (solo sandbox + admins build freely); a co-op join flips this off for non-admin players via
+  // onAdmin, so only regular multiplayer players are constrained. Magic structures are exempt.
+  let infiniteResources = true;
+  const inventory = new Map<number, number>();
+  const ownedCount = (id: number): number => {
+    const have = inventory.get(id);
+    if (have === undefined) return 0;
+    return have;
+  };
   const blockedStructures = new Set<string>();
   let coop: CoopController | null = null;
   let fps = 0;
@@ -667,6 +677,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
     sendCoopEdit('break', r.hit[0], r.hit[1], r.hit[2], AIR);
     player.bag += 1;
+    inventory.set(removed, ownedCount(removed) + 1);
+    updateHotbarCounts();
     updateStats();
     blip(220, 0.08);
     debug('engine', 'break block', { x: r.hit[0], y: r.hit[1], z: r.hit[2], id: removed });
@@ -677,6 +689,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const [px, py, pz] = r.place;
     if (!inBounds(px, py, pz) || getVoxel(px, py, pz) !== AIR) return;
     if (overlapsPlayer(px, py, pz)) return;
+    if (!infiniteResources && ownedCount(selected) <= 0) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
+    if (!infiniteResources) { inventory.set(selected, ownedCount(selected) - 1); updateHotbarCounts(); }
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
     sendCoopEdit('place', px, py, pz, selected);
@@ -995,8 +1009,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       slot.appendChild(swatch);
       const key = document.createElement('span'); key.className = 'key'; key.textContent = b.key; slot.appendChild(key);
       const name = document.createElement('span'); name.className = 'name'; name.textContent = blockName(b); slot.appendChild(name);
+      const count = document.createElement('span'); count.className = 'count'; slot.appendChild(count);
       slot.addEventListener('click', () => selectSlot(b.id), { signal });
       hotbar.appendChild(slot);
+    }
+    updateHotbarCounts();
+  }
+  // Admins build freely, so their slots show no counter; regular players see how many of each block
+  // they have banked (∞ would be misleading, so it is simply hidden when resources are infinite).
+  function updateHotbarCounts(): void {
+    for (const slot of [...hotbar.children] as HTMLElement[]) {
+      const id = Number(slot.dataset.id);
+      const badge = slot.querySelector<HTMLElement>('.count');
+      if (!badge) continue;
+      badge.textContent = infiniteResources ? '' : String(ownedCount(id));
     }
   }
   function selectSlot(id: number): void {
@@ -1083,6 +1109,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
         player.stars = score;
         updateStats();
         bridge.hud.onScore(score);
+      },
+      onAdmin: (admin) => {
+        infiniteResources = admin;
+        updateHotbarCounts();
+        bridge.hud.onAdmin(admin);
       },
     };
     coop = createCoop({
