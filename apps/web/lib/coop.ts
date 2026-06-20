@@ -445,6 +445,10 @@ export function createCoop(opts: CoopOptions): CoopController {
           window.setTimeout(() => window.location.reload(), RESET_RELOAD_DELAY_MS);
           return;
         }
+        if (msg.kind === 'server_down') {
+          opts.hud.onEvent({ kind: 'server_down', name: msg.name });
+          return;
+        }
         if (msg.kind === 'rename') renameAvatar(msg.detail, msg.name);
         opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },

@@ -51,6 +51,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
   rename: '✏️',
   kill: '⚔️',
   reset: '🌍',
+  server_down: '⚠️',
 };
 
 function feedText(entry: FeedEntry): string {
@@ -58,6 +59,7 @@ function feedText(entry: FeedEntry): string {
   if (entry.kind === 'rename' && entry.detail) return t('feed.renamed', { old: entry.detail, name: entry.name });
   if (entry.kind === 'rename') return entry.name;
   if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });
+  if (entry.kind === 'server_down') return t('feed.server_down');
   return t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name });
 }
 

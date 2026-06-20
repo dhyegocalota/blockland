@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
 import { pushFeed, type FeedEntry, type FeedEvent } from '../feed';
-import { CHAT_FADE_MS } from '../chat';
 
-// Owns the transient multiplayer event feed: folds incoming events into the capped, dedup'd list
-// (pushFeed) and fades each entry out after a delay. `pushFeedEntry` is handed to the engine bridge.
+// Owns the multiplayer event feed as a persistent rolling log of the last few events (pushFeed caps
+// + dedups). It does NOT fade: the server replays a recent backlog on join, so a player who just
+// entered still sees what happened — even while nobody was online. `pushFeedEntry` feeds the bridge.
 export function useFeed() {
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const nextEntryId = useRef(0);
@@ -11,7 +11,6 @@ export function useFeed() {
   const pushFeedEntry = useCallback((event: FeedEvent) => {
     const id = nextEntryId.current++;
     setEntries((current) => pushFeed({ entries: current, event, id, now: Date.now() }));
-    setTimeout(() => setEntries((current) => current.filter((entry) => entry.id !== id)), CHAT_FADE_MS);
   }, []);
 
   return { entries, pushFeedEntry };

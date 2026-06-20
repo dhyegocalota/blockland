@@ -2,7 +2,7 @@
 // keep the visible feed small and spam-free. coop.ts derives the raw transitions; Game.tsx folds
 // them into the visible list. No three.js / DOM here — just data, so it is fully unit-tested.
 
-export type FeedEventKind = 'join' | 'leave' | 'chat' | 'rename' | 'kill' | 'reset';
+export type FeedEventKind = 'join' | 'leave' | 'chat' | 'rename' | 'kill' | 'reset' | 'server_down';
 
 export interface FeedEvent {
   kind: FeedEventKind;

@@ -176,6 +176,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.renamed': '{old} agora é {name}',
     'feed.kill': '{name} derrotou um {detail}',
     'feed.reset': '🌍 {name} resetou o mundo',
+    'feed.server_down': '⚠️ Servidor vai reiniciar — volte em instantes',
 
     // Change name (logged-in rename)
 
@@ -490,6 +491,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.renamed': '{old} is now {name}',
     'feed.kill': '{name} beat a {detail}',
     'feed.reset': '🌍 {name} reset the world',
+    'feed.server_down': '⚠️ Server is restarting — back in a moment',
 
     // Change name (logged-in rename)
 

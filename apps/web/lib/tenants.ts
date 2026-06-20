@@ -24,11 +24,6 @@ export function tenantSubdomain(): string | null {
   return tenantSubdomainOf(window.location.hostname);
 }
 
-// The resolved tenant id for a host, falling back to the default tenant on the app root.
-export function tenantIdFromHost(host: string): string {
-  return tenantSubdomainOf(host) ?? DEFAULT_TENANT;
-}
-
 export function tenantIdFromLocation(): string {
   const params = new URLSearchParams(window.location.search);
   const q = params.get('tenant');

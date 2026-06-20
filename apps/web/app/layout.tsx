@@ -5,21 +5,27 @@ import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 import ServiceWorker from './ServiceWorker';
 import { getTenant } from '../lib/api';
-import { tenantIdFromHost } from '../lib/tenants';
+import { tenantSubdomainOf } from '../lib/tenants';
 
 const THEME_COLOR = '#22c55e';
 
 const DESCRIPTION =
   'Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.';
+const BLOCKLAND_METADATA: Metadata = {
+  title: 'Blockland',
+  description: DESCRIPTION,
+  manifest: '/manifest.webmanifest',
+};
 
-// Per-tenant title + favicon: resolve the tenant from the request host so each white-label
-// subdomain shows its own name and avatar (PWA install + browser tab), not a generic one.
+// Per-tenant title + favicon: only an actual tenant subdomain (teo.<root>) shows its own name +
+// avatar. The app root (and its global pages like /admin, /welcome) stays generic "Blockland" — it
+// must NOT inherit the default tenant's branding.
 export async function generateMetadata(): Promise<Metadata> {
   const host = headers().get('host');
-  const tenant = host ? await getTenant(tenantIdFromHost(host)) : null;
-  if (!tenant) {
-    return { title: 'Blockland', description: DESCRIPTION, manifest: '/manifest.webmanifest' };
-  }
+  const subdomain = host ? tenantSubdomainOf(host) : null;
+  if (!subdomain) return BLOCKLAND_METADATA;
+  const tenant = await getTenant(subdomain);
+  if (!tenant) return BLOCKLAND_METADATA;
   return {
     title: tenant.name,
     description: DESCRIPTION,

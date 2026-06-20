@@ -1,7 +1,7 @@
 // Per-tenant PWA manifest: resolve the tenant from the request host so each white-label subdomain
 // installs with its own name + avatar. Falls back to the generic Blockland branding off the app root.
 import { getTenant } from '../../lib/api';
-import { tenantIdFromHost } from '../../lib/tenants';
+import { tenantSubdomainOf } from '../../lib/tenants';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,7 +12,8 @@ const DEFAULT_ICON = '/icons/icon-192.png';
 
 export async function GET(req: Request) {
   const host = req.headers.get('host');
-  const tenant = host ? await getTenant(tenantIdFromHost(host)) : null;
+  const subdomain = host ? tenantSubdomainOf(host) : null;
+  const tenant = subdomain ? await getTenant(subdomain) : null;
   const name = tenant ? tenant.name : 'Blockland';
   const icon = tenant ? tenant.avatar : DEFAULT_ICON;
   const manifest = {

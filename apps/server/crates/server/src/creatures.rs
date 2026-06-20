@@ -149,12 +149,19 @@ impl Creature {
         }
         self.pos[0] = next_x;
         self.pos[2] = next_z;
-        self.pos[1] = next_ground;
+        // Step up a single block instantly, but EASE down bigger drops at a falling speed instead of
+        // snapping straight to the new ground — a whole-block vertical snap every step reads as a
+        // teleport (and a flicker through blocks) on the interpolating client.
+        let drop = (next_ground - self.pos[1]).max(-MAX_FALL_SPEED * dt);
+        self.pos[1] += drop.min(MAX_CLIMB);
     }
 }
 
 /// Tallest step a creature may climb in a single move (one block).
 const MAX_CLIMB: f32 = 1.0;
+/// How fast a creature falls when it walks off a ledge (blocks per second), so drops are smooth
+/// instead of an instant vertical teleport.
+const MAX_FALL_SPEED: f32 = 10.0;
 
 fn ground_y(x: f32, z: f32, height_at: &impl Fn(i32, i32) -> i32) -> f32 {
     height_at(x.floor() as i32, z.floor() as i32) as f32 + GROUND_OFFSET
@@ -315,6 +322,31 @@ mod tests {
         cow.advance(&[], false, 0.5, 5, slope);
         let column = slope(cow.pos[0].floor() as i32, cow.pos[2].floor() as i32);
         assert_eq!(cow.pos[1], column as f32 + GROUND_OFFSET);
+    }
+
+    #[test]
+    fn eases_off_a_ledge_instead_of_teleporting_down() {
+        // A 15-block cliff just ahead: a hostile slime walks off chasing the player, but no single
+        // 20Hz tick may drop more than the fall cap — it falls smoothly instead of snapping down.
+        let terrain = |x: i32, _z: i32| if x >= 1 { 5 } else { 20 };
+        let mut slime = Creature::spawn(1, CreatureKind::Slime, 0.5, 0.5, terrain);
+        // Within CHASE_RADIUS so the hostile keeps walking toward (and off) the ledge each tick.
+        let player = [[10.0_f32, 0.5_f32]];
+        let dt = 0.05;
+        for _ in 0..400 {
+            let before = slime.pos[1];
+            slime.advance(&player, false, dt, 1, terrain);
+            assert!(
+                slime.pos[1] >= before - MAX_FALL_SPEED * dt - 1e-3,
+                "single-tick drop too large: {before} -> {}",
+                slime.pos[1]
+            );
+        }
+        assert!(
+            (slime.pos[1] - (5.0 + GROUND_OFFSET)).abs() < 0.2,
+            "settles on the lower ground, y={}",
+            slime.pos[1]
+        );
     }
 
     #[test]
