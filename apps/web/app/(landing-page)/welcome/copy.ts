@@ -34,10 +34,10 @@ export const COPY = {
     ],
     valueTitle: 'O que você ganha',
     valueStack: [
-      { emoji: '🔒', text: 'Mundo fechado: só entra quem você aprova. Sem estranhos, ponto final.' },
+      { emoji: '🔒', text: 'Você controla quem entra: pode exigir sua aprovação pra cada novo jogador, e expulsar ou banir na hora.' },
       { emoji: '💬', text: 'Sem chat tóxico: nada de mensagem de gente que você não conhece.' },
       { emoji: '🚫', text: 'Sem anúncio e sem compra escondida: zero loot box, zero susto na fatura.' },
-      { emoji: '👀', text: 'Você no controle: aprova os amigos e acompanha tudo pelo seu celular.' },
+      { emoji: '👀', text: 'Você no controle: aprova jogadores, expulsa, bane e acompanha tudo pelo seu celular.' },
       { emoji: '👫', text: 'Até 10 amigos no mesmo mundo, ao vivo: primos e colegas brincando juntos de verdade.' },
       { emoji: '🌐', text: 'Sem download: abre no navegador e instala no celular ou tablet em segundos.' },
       { emoji: '🧱', text: 'Diversão que constrói: cria, explora, caça monstrinhos e junta estrelas.' },
@@ -54,7 +54,7 @@ export const COPY = {
       },
       {
         q: 'Seguro de verdade ou só promessa?',
-        a: 'Mundo privado e fechado por padrão: ninguém entra sem a sua aprovação. Sem chat com desconhecidos, sem anúncio, sem compra escondida. Você decide quem brinca com seu filho.',
+        a: 'Mundo privado e seu: você decide quem brinca. Pode exigir sua aprovação pra cada novo jogador e expulsar ou banir na hora — além de zero chat com desconhecidos, zero anúncio e zero compra escondida.',
       },
     ] as Qa[],
     guarantee:
@@ -76,7 +76,7 @@ export const COPY = {
     faqTitle: 'Perguntas dos pais',
     faq: [
       { q: 'Precisa baixar alguma coisa?', a: 'Não. Abre direto no navegador do celular, tablet ou computador. Se quiser, dá pra instalar o atalho na tela inicial em um toque.' },
-      { q: 'Meu filho vai falar com estranhos?', a: 'Não. O mundo é privado e fechado — só entram os amigos que você aprovar. Sem chat com gente desconhecida.' },
+      { q: 'Meu filho vai falar com estranhos?', a: 'O mundo é privado e seu. Você pode exigir aprovação pra cada novo jogador e expulsar ou banir quando quiser — e não existe chat com gente desconhecida.' },
       { q: 'Quanto vai custar quando lançar?', a: 'Menos que uma pizza por mês para a família toda (até 3-4 crianças), com 7 dias grátis sem cartão pra testar. Quem entra na lista agora trava uma condição especial de membro fundador.' },
       { q: 'A partir de que idade dá pra usar?', a: 'Foi feito pra crianças: controles simples e tudo num mundo seguro. Você acompanha e aprova tudo pelo seu celular.' },
     ] as Qa[],
@@ -108,7 +108,7 @@ export const COPY = {
     ],
     valueTitle: 'What you get',
     valueStack: [
-      { emoji: '🔒', text: 'Private world: only people you approve get in. No strangers, full stop.' },
+      { emoji: '🔒', text: 'You control who joins: you can require your approval for each new player, and kick or ban anytime.' },
       { emoji: '💬', text: 'No toxic chat: no messages from people you do not know.' },
       { emoji: '🚫', text: 'No ads and no hidden purchases: zero loot boxes, zero surprise charges.' },
       { emoji: '👀', text: 'You in control: approve the friends and follow it all from your phone.' },
@@ -128,7 +128,7 @@ export const COPY = {
       },
       {
         q: 'Truly safe or just a promise?',
-        a: 'Private and closed by default: nobody gets in without your approval. No chat with strangers, no ads, no hidden purchases. You decide who plays with your kid.',
+        a: 'Your own private world: you decide who plays. You can require your approval for every new player and kick or ban anytime — plus no chat with strangers, no ads, no hidden purchases.',
       },
     ] as Qa[],
     guarantee:
@@ -150,7 +150,7 @@ export const COPY = {
     faqTitle: 'Parents ask',
     faq: [
       { q: 'Do I need to download anything?', a: 'No. It opens right in the browser on phone, tablet or computer. If you want, you can add the shortcut to the home screen in one tap.' },
-      { q: 'Will my kid talk to strangers?', a: 'No. The world is private and closed — only the friends you approve get in. No chat with unknown people.' },
+      { q: 'Will my kid talk to strangers?', a: 'The world is private and yours. You can require approval for each new player and kick or ban anytime — and there is no chat with unknown people.' },
       { q: 'How much will it cost at launch?', a: 'Less than a pizza a month for the whole family (up to 3-4 kids), with 7 days free and no card to try it. Joining now locks a special founder deal.' },
       { q: 'What age is it for?', a: 'Built for kids: simple controls and everything inside a safe world. You follow and approve it all from your phone.' },
     ] as Qa[],
