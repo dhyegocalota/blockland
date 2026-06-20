@@ -18,6 +18,8 @@ import { creatureDefFor } from './engine/creature-snapshot';
 import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './engine/textures';
 import { meshChunkBuckets } from './engine/meshing';
 import { sphereCastClosest } from './engine/sphere-cast';
+import { moveVector } from './engine/movement';
+import { canMonsterReachPlayer, HURT_BURIED_PROBE } from './engine/hurt';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer } from './coop';
 import type { EditCell, EditOp } from './protocol';
 
@@ -515,11 +517,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const feet = player.pos.y - EYE_HEIGHT;
     for (const cr of coop.getCreatures()) {
       if (creatureDefFor(cr.kind).kind !== 'monster') continue;
-      if (Math.hypot(player.pos.x - cr.x, player.pos.z - cr.z) >= 1.2) continue;
-      // You can only be hit by a monster you can actually see: it must be at your level (never lurking
-      // below the floor) and out in the open (not buried inside a block).
-      if (cr.y < feet - 0.5 || cr.y > feet + PLAYER_HEIGHT) continue;
-      if (isSolid(Math.floor(cr.x), Math.floor(cr.y + 0.4), Math.floor(cr.z))) continue;
+      const buried = isSolid(Math.floor(cr.x), Math.floor(cr.y + HURT_BURIED_PROBE), Math.floor(cr.z));
+      const reaches = canMonsterReachPlayer({
+        monster: { x: cr.x, y: cr.y, z: cr.z },
+        playerX: player.pos.x, playerFeetY: feet, playerZ: player.pos.z,
+        playerHeight: PLAYER_HEIGHT, buried,
+      });
+      if (!reaches) continue;
       hurtPlayer();
       return;
     }
@@ -777,24 +781,15 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   addEventListener('keyup', (e) => { keys[e.code] = false; }, { signal });
 
   function update(dt: number): void {
-    const flat = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
-    const right = new THREE.Vector3(flat.z, 0, -flat.x);
-    const forward = player.fly
-      ? new THREE.Vector3(Math.sin(player.yaw) * Math.cos(player.pitch), Math.sin(player.pitch), Math.cos(player.yaw) * Math.cos(player.pitch))
-      : flat;
-    const move = new THREE.Vector3();
-    if (keys.KeyW || keys.ArrowUp) move.add(forward);
-    if (keys.KeyS || keys.ArrowDown) move.sub(forward);
-    if (keys.KeyD || keys.ArrowRight) move.sub(right);
-    if (keys.KeyA || keys.ArrowLeft) move.add(right);
-    if (joystick.active) {
-      move.add(forward.clone().multiplyScalar(-joystick.y));
-      move.add(right.clone().multiplyScalar(-joystick.x));
-    }
-    if (move.lengthSq() > 0) move.normalize();
+    const move = moveVector({
+      yaw: player.yaw, pitch: player.pitch, fly: player.fly,
+      forward: !!(keys.KeyW || keys.ArrowUp), back: !!(keys.KeyS || keys.ArrowDown),
+      right: !!(keys.KeyD || keys.ArrowRight), left: !!(keys.KeyA || keys.ArrowLeft),
+      joystickActive: joystick.active, joystickX: joystick.x, joystickY: joystick.y,
+    });
 
     if (player.fly) {
-      player.vel.copy(move).multiplyScalar(FLY_SPEED);
+      player.vel.set(move.x, move.y, move.z).multiplyScalar(FLY_SPEED);
       if (keys.Space) player.vel.y = FLY_SPEED;
       if (keys.ShiftLeft || keys.ShiftRight) player.vel.y = -FLY_SPEED;
     } else {
