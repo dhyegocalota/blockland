@@ -525,8 +525,8 @@ body.is-touch #buildMenu h2 { font-size: 22px; margin-bottom: 8px; }
 body.is-touch #buildMenu .buildHint { margin: 6px 0 12px; font-size: 13px; }
 /* Lift chat + feed clear above the on-screen joystick (left:14px bottom:14px ~108px tall) so taps
    on the joystick never land on the chat input or log. */
-body.is-touch #chat { bottom: 140px; }
-body.is-touch #feed { bottom: 196px; }
+body.is-touch #chat { left: 14px; bottom: 178px; }
+body.is-touch #feed { left: 14px; bottom: 250px; }
 
 /* landscape phones: spread controls so nothing stacks on top of each other */
 @media (orientation: landscape) {

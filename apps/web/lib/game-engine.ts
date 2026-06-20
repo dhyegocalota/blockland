@@ -507,11 +507,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   function hurtFromServerCreatures(dt: number): void {
     player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
     if (peaceful || player.hurtCooldown > 0 || !coop) return;
+    const feet = player.pos.y - EYE_HEIGHT;
     for (const cr of coop.getCreatures()) {
       if (creatureDefFor(cr.kind).kind !== 'monster') continue;
-      const dist = Math.hypot(player.pos.x - cr.x, player.pos.z - cr.z);
-      const verticalGap = Math.abs(player.pos.y - EYE_HEIGHT - cr.y);
-      if (dist < 1.2 && verticalGap < 1.6) { hurtPlayer(); return; }
+      if (Math.hypot(player.pos.x - cr.x, player.pos.z - cr.z) >= 1.2) continue;
+      // You can only be hit by a monster you can actually see: it must be at your level (never lurking
+      // below the floor) and out in the open (not buried inside a block).
+      if (cr.y < feet - 0.5 || cr.y > feet + PLAYER_HEIGHT) continue;
+      if (isSolid(Math.floor(cr.x), Math.floor(cr.y + 0.4), Math.floor(cr.z))) continue;
+      hurtPlayer();
+      return;
     }
   }
   function napAndRespawn(): void {

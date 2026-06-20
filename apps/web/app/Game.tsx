@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
@@ -218,8 +219,10 @@ export default function Game() {
 
   const openChat = useCallback(() => {
     if (!room.chatEnabled) return;
-    setChatOpen(true);
-    requestAnimationFrame(() => chatInputRef.current?.focus());
+    // Render the input synchronously so focus() runs inside the same user gesture — that's what makes
+    // the mobile keyboard pop up immediately.
+    flushSync(() => setChatOpen(true));
+    chatInputRef.current?.focus();
   }, [room.chatEnabled]);
 
   const sendChat = useCallback(() => {
