@@ -19,7 +19,9 @@ export async function POST(req: Request) {
   const tenant = String(body.tenant ?? '').trim();
   const name = String(body.name ?? '').trim();
   const email = String(body.email ?? '').trim();
-  if (!tenant || !name || !email) {
+  // Email alone is enough to log in (the server resolves the account by email); a name is optional and
+  // only needed to register a brand-new account.
+  if (!tenant || !email) {
     return Response.json({ ok: false, error: 'invalid' }, { status: 400 });
   }
 

@@ -54,11 +54,25 @@ use uploads::MAX_UPLOAD_BYTES;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    // Error reporting: with SENTRY_DSN set, panics and every `tracing::error!` are sent to Sentry;
+    // unset, sentry::init is a no-op. The guard must live for the whole process.
+    let _sentry = sentry::init((
+        std::env::var("SENTRY_DSN").ok(),
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            send_default_pii: true,
+            ..Default::default()
+        },
+    ));
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    tracing_subscriber::registry()
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,server=debug".into()),
         )
+        .with(tracing_subscriber::fmt::layer())
+        .with(sentry_tracing::layer())
         .init();
 
     let database = Arc::new(Db::open().await.expect("open database"));
@@ -445,6 +459,7 @@ async fn internal_leaderboard(
 #[derive(Deserialize)]
 struct AuthRequestReq {
     tenant: String,
+    #[serde(default)]
     name: String,
     email: String,
 }
@@ -461,7 +476,13 @@ async fn internal_auth_request(
     let Ok(req) = serde_json::from_slice::<AuthRequestReq>(&body) else {
         return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
     };
-    match auth::request(&state.hub.db, &req.tenant, &req.name, &req.email).await {
+    // No name typed -> email-only login (look the account up by email); otherwise the name+email flow.
+    let result = if req.name.trim().is_empty() {
+        auth::request_by_email(&state.hub.db, &req.tenant, &req.email).await
+    } else {
+        auth::request(&state.hub.db, &req.tenant, &req.name, &req.email).await
+    };
+    match result {
         Ok(auth::RequestResult::Ok {
             token,
             code,
@@ -476,6 +497,9 @@ async fn internal_auth_request(
         }
         Ok(auth::RequestResult::Invalid) => {
             Json(serde_json::json!({ "ok": false, "error": "invalid" })).into_response()
+        }
+        Ok(auth::RequestResult::Unknown) => {
+            Json(serde_json::json!({ "ok": false, "error": "unknown_email" })).into_response()
         }
         Err(e) => internal_error(e),
     }

@@ -337,7 +337,7 @@ export function useGame() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(session),
-      }).catch(() => undefined);
+      }).catch((error) => warn('api', 'logout request failed', { error: String(error) }));
     }
     clearSession();
     loginClearedRef.current = false;

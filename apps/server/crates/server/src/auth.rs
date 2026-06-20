@@ -26,6 +26,8 @@ pub enum RequestResult {
     },
     NotOwner,
     Invalid,
+    /// Email-only login for an address that has no account yet — the client must collect a name.
+    Unknown,
 }
 
 /// The active session handed back after a magic link is verified.
@@ -71,6 +73,39 @@ pub async fn request(
         token,
         code,
         name,
+        email,
+    })
+}
+
+/// Begin a login from an EMAIL alone (no name typed): look the account up by email and reuse its
+/// current name. Returns `Unknown` when the email has no account yet (the client then asks for a name
+/// and falls back to the name+email flow). Lets returning players log in with just their email.
+pub async fn request_by_email(
+    db: &Db,
+    tenant: &str,
+    email: &str,
+) -> Result<RequestResult, libsql::Error> {
+    let Some(email) = valid_email(email) else {
+        return Ok(RequestResult::Invalid);
+    };
+    let Some(account) = db.get_account_by_email(tenant, &email).await? else {
+        return Ok(RequestResult::Unknown);
+    };
+    let token = gen_token();
+    let code = gen_code();
+    db.create_magic_link(
+        &token,
+        &code,
+        tenant,
+        &account.name,
+        &email,
+        MAGIC_LINK_TTL_MS,
+    )
+    .await?;
+    Ok(RequestResult::Ok {
+        token,
+        code,
+        name: account.name,
         email,
     })
 }

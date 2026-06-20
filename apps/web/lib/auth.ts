@@ -40,7 +40,7 @@ async function postAuth(path: string, body: unknown): Promise<unknown> {
 
 export async function authRequest(params: {
   tenant: string;
-  name: string;
+  name?: string;
   email: string;
 }): Promise<AuthRequestResult | AuthRequestFailure> {
   return (await postAuth('/internal/auth/request', params)) as AuthRequestResult | AuthRequestFailure;

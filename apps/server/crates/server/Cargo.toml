@@ -22,6 +22,8 @@ sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
 async-trait = "0.1"
+sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "rustls", "reqwest"] }
+sentry-tracing = "0.34"
 s3 = { package = "rust-s3", version = "0.35", default-features = false, features = ["tokio-rustls-tls"] }
 
 [dev-dependencies]
