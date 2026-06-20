@@ -20,6 +20,20 @@ import { meshChunkBuckets } from './engine/meshing';
 import { sphereCastClosest } from './engine/sphere-cast';
 import { moveVector } from './engine/movement';
 import { canMonsterReachPlayer, HURT_BURIED_PROBE } from './engine/hurt';
+import { BlockInventory, hotbarCountLabel } from './engine/inventory';
+import { parseSavedPosition, serializeSavedPosition } from './engine/saved-position';
+import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from './engine/poofs';
+import { nextFrame, smoothFps } from './engine/frame-cap';
+import {
+  chunkDistanceSquared, chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
+} from './engine/chunk-grid';
+import { STRUCTURE_KINDS, type StructureKind, structureReach, structureTarget } from './engine/structure-build';
+import { bestScore, heartsLabel, roundCoordinate } from './engine/scoreboard';
+import { STARTING_ROSTER, spawnPosition } from './engine/creature-spawn';
+import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './engine/creature-combat';
+import { chooseCoopTarget, chooseLocalTarget } from './engine/attack-target';
+import { groundHeight as groundHeightAt } from './engine/terrain-column';
+import { readJoystick } from './engine/joystick';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer } from './coop';
 import type { EditCell, EditOp, Role } from './protocol';
 
@@ -54,8 +68,7 @@ interface Poof {
   life: number;
 }
 
-export type StructureKind = 'trophy' | 'ball' | 'figure' | 'cola' | 'steve';
-export const STRUCTURE_KINDS: StructureKind[] = ['trophy', 'ball', 'figure', 'cola', 'steve'];
+export { STRUCTURE_KINDS, type StructureKind } from './engine/structure-build';
 
 interface GameWindow extends Window {
   __blGameBooted?: boolean;
@@ -210,44 +223,40 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   const meshQueue: QueuedChunk[] = [];
   const queuedKeys = new Set<number>();
   function updateChunks(force?: boolean): void {
-    const pcx = Math.floor(player.pos.x / CHUNK), pcz = Math.floor(player.pos.z / CHUNK);
-    if (!force && pcx === lastPlayerChunkX && pcz === lastPlayerChunkZ) return;
-    lastPlayerChunkX = pcx; lastPlayerChunkZ = pcz;
-    for (let dz = -LOAD_R; dz <= LOAD_R; dz++)
-      for (let dx = -LOAD_R; dx <= LOAD_R; dx++) {
-        const cx = pcx + dx, cz = pcz + dz;
-        if (cx < 0 || cz < 0 || cx >= chunksX || cz >= chunksZ) continue;
-        const key = chunkKey(cx, cz);
-        if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key) || queuedKeys.has(key)) continue;
-        queuedKeys.add(key);
-        meshQueue.push({ cx, cz, key });
-      }
-    meshQueue.sort((a, b) => ((a.cx - pcx) ** 2 + (a.cz - pcz) ** 2) - ((b.cx - pcx) ** 2 + (b.cz - pcz) ** 2));
+    const center = playerChunk(player.pos);
+    if (!force && center.cx === lastPlayerChunkX && center.cz === lastPlayerChunkZ) return;
+    lastPlayerChunkX = center.cx; lastPlayerChunkZ = center.cz;
+    for (const { cx, cz } of chunksInRadius({ center, radius: LOAD_R, chunksX, chunksZ })) {
+      const key = chunkKey(cx, cz);
+      if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key) || queuedKeys.has(key)) continue;
+      queuedKeys.add(key);
+      meshQueue.push({ cx, cz, key });
+    }
+    meshQueue.sort((a, b) =>
+      chunkDistanceSquared({ chunk: a, center }) - chunkDistanceSquared({ chunk: b, center }));
     for (const [key, meshes] of chunkMeshes) {
-      const cx = Math.floor(Number(key) / chunksZ), cz = Number(key) % chunksZ;
-      if (Math.abs(cx - pcx) > LOAD_R + 1 || Math.abs(cz - pcz) > LOAD_R + 1) {
-        meshes.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
-        chunkMeshes.delete(key);
-      }
+      const chunk = decodeChunkKey({ key: Number(key), chunksZ });
+      if (!chunkOutsideKeepRange({ chunk, center, radius: LOAD_R })) continue;
+      meshes.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
+      chunkMeshes.delete(key);
     }
   }
   function processMeshQueue(budget: number): void {
     let done = 0;
-    const lastCx = Number(lastPlayerChunkX), lastCz = Number(lastPlayerChunkZ);
+    const center = { cx: Number(lastPlayerChunkX), cz: Number(lastPlayerChunkZ) };
     while (done < budget && meshQueue.length) {
       const next = meshQueue.shift();
       if (!next) break;
       const { cx, cz, key } = next;
       queuedKeys.delete(key);
       if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key)) continue;
-      if (Math.abs(cx - lastCx) > LOAD_R + 1 || Math.abs(cz - lastCz) > LOAD_R + 1) continue;
+      if (chunkOutsideKeepRange({ chunk: { cx, cz }, center, radius: LOAD_R })) continue;
       meshChunk(cx, cz);
       done++;
     }
   }
   function remeshRegion(minX: number, maxX: number, minZ: number, maxZ: number): void {
-    const cx0 = Math.max(0, Math.floor(minX / CHUNK)), cx1 = Math.min(chunksX - 1, Math.floor(maxX / CHUNK));
-    const cz0 = Math.max(0, Math.floor(minZ / CHUNK)), cz1 = Math.min(chunksZ - 1, Math.floor(maxZ / CHUNK));
+    const { cx0, cx1, cz0, cz1 } = remeshChunkRange({ minX, maxX, minZ, maxZ, chunksX, chunksZ });
     for (let cz = cz0; cz <= cz1; cz++)
       for (let cx = cx0; cx <= cx1; cx++) meshChunk(cx, cz);
   }
@@ -302,18 +311,12 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // instead of the spawn point.
   const POS_KEY = `bl-pos:${brand.id}`;
   const loadSavedPos = (): THREE.Vector3 | null => {
-    try {
-      const raw = localStorage.getItem(POS_KEY);
-      if (!raw) return null;
-      const p = JSON.parse(raw) as { x: number; y: number; z: number };
-      if (typeof p.x !== 'number' || typeof p.y !== 'number' || typeof p.z !== 'number') return null;
-      return new THREE.Vector3(p.x, p.y, p.z);
-    } catch {
-      return null;
-    }
+    const saved = parseSavedPosition(localStorage.getItem(POS_KEY));
+    if (!saved) return null;
+    return new THREE.Vector3(saved.x, saved.y, saved.z);
   };
   const savePos = (): void => {
-    localStorage.setItem(POS_KEY, JSON.stringify({ x: player.pos.x, y: player.pos.y, z: player.pos.z }));
+    localStorage.setItem(POS_KEY, serializeSavedPosition(player.pos));
   };
 
   const savedPos = loadSavedPos();
@@ -332,12 +335,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // (solo sandbox + admins build freely); a co-op join flips this off for non-admin players via
   // onAdmin, so only regular multiplayer players are constrained. Magic structures are exempt.
   let infiniteResources = true;
-  const inventory = new Map<number, number>();
-  const ownedCount = (id: number): number => {
-    const have = inventory.get(id);
-    if (have === undefined) return 0;
-    return have;
-  };
+  const inventory = new BlockInventory();
   const blockedStructures = new Set<string>();
   let coop: CoopController | null = null;
   let fps = 0;
@@ -402,10 +400,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     coop?.sendEdit(op, x, y, z, id);
   }
   function debugSnapshot(): DebugSnapshot {
-    const round = (n: number): number => Math.round(n * 100) / 100;
     const base = {
       fps: Math.round(fps),
-      x: round(player.pos.x), y: round(player.pos.y), z: round(player.pos.z),
+      x: roundCoordinate(player.pos.x), y: roundCoordinate(player.pos.y), z: roundCoordinate(player.pos.z),
       chunks: chunkMeshes.size,
       tenant: brand.id,
     };
@@ -434,8 +431,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   function groundHeight(x: number, z: number): number {
     const gx = Math.floor(x), gz = Math.floor(z);
-    for (let y = SIZE_Y - 1; y >= 0; y--) if (isSolid(gx, y, gz)) return y + 1;
-    return 0;
+    return groundHeightAt({ isSolidAt: (y) => isSolid(gx, y, gz) });
   }
   function makeFaceMaterial(color: string): THREE.MeshLambertMaterial {
     const c = makeCanvas();
@@ -447,13 +443,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     g.fillRect(5, 10, 1, 1); g.fillRect(10, 10, 1, 1);
     return new THREE.MeshLambertMaterial({ map: textureFromCanvas(c) });
   }
-  const SPAWN_RANGE = 80;
   function spawnCreature(typeKey: string): void {
     const def = CREATURE_DEFS[typeKey];
     if (!def) throw new Error(`unknown creature ${typeKey}`);
-    const cx = SIZE_X / 2, cz = SIZE_Z / 2;
-    const x = Math.max(2, Math.min(SIZE_X - 2, cx + (Math.random() - 0.5) * 2 * SPAWN_RANGE));
-    const z = Math.max(2, Math.min(SIZE_Z - 2, cz + (Math.random() - 0.5) * 2 * SPAWN_RANGE));
+    const { x, z } = spawnPosition({ sizeX: SIZE_X, sizeZ: SIZE_Z, random: Math.random });
     const body = new THREE.Mesh(new THREE.BoxGeometry(...def.size), makeFaceMaterial(def.color));
     const mesh = new THREE.Group();
     mesh.add(body);
@@ -467,11 +460,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     });
   }
   function populateCreatures(): void {
-    for (let i = 0; i < 3; i++) spawnCreature('pig');
-    for (let i = 0; i < 2; i++) spawnCreature('chicken');
-    for (let i = 0; i < 2; i++) spawnCreature('cow');
-    for (let i = 0; i < 2; i++) spawnCreature('slime');
-    spawnCreature('spider');
+    for (const kind of STARTING_ROSTER) spawnCreature(kind);
   }
   function updateCreatures(dt: number): void {
     player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
@@ -491,16 +480,17 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       });
       cr.dir = motion.dir; cr.timer = motion.timer;
 
-      cr.mesh.position.x += Math.sin(cr.dir) * cr.def.speed * dt;
-      cr.mesh.position.z += Math.cos(cr.dir) * cr.def.speed * dt;
-      cr.mesh.position.x = Math.max(1, Math.min(SIZE_X - 1, cr.mesh.position.x));
-      cr.mesh.position.z = Math.max(1, Math.min(SIZE_Z - 1, cr.mesh.position.z));
-      cr.mesh.position.y = groundHeight(cr.mesh.position.x, cr.mesh.position.z) + cr.def.size[1] / 2 + Math.abs(Math.sin(cr.bob)) * 0.12;
+      const stepped = stepCreaturePosition({
+        x: cr.mesh.position.x, z: cr.mesh.position.z, dir: cr.dir, speed: cr.def.speed, dt, sizeX: SIZE_X, sizeZ: SIZE_Z,
+      });
+      cr.mesh.position.x = stepped.x;
+      cr.mesh.position.z = stepped.z;
+      cr.mesh.position.y = groundHeight(cr.mesh.position.x, cr.mesh.position.z) + cr.def.size[1] / 2 + bobOffset(cr.bob);
       cr.mesh.rotation.y = cr.dir;
       cr.body.material.emissive = new THREE.Color(cr.flash > 0 ? '#ff0000' : '#000000');
 
       const verticalGap = Math.abs(player.pos.y - EYE_HEIGHT - cr.mesh.position.y);
-      if (hostile && dist < 1.0 && verticalGap < 1.6 && player.hurtCooldown === 0) hurtPlayer();
+      if (hostile && player.hurtCooldown === 0 && creatureBitesPlayer({ horizontalDistance: dist, verticalGap })) hurtPlayer();
     }
   }
   function hurtPlayer(): void {
@@ -548,10 +538,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   function hitCreature(cr: Creature): void {
     cr.hp -= 1;
-    cr.flash = 0.18;
+    cr.flash = FLASH_TIME;
     blip(cr.def.kind === 'monster' ? 300 : 880, 0.08);
-    const knock = new THREE.Vector3().subVectors(cr.mesh.position, player.pos).setY(0).normalize().multiplyScalar(1.2);
-    cr.mesh.position.add(knock);
+    const knock = knockbackVector({ creatureX: cr.mesh.position.x, creatureZ: cr.mesh.position.z, playerX: player.pos.x, playerZ: player.pos.z });
+    cr.mesh.position.x += knock.x;
+    cr.mesh.position.z += knock.z;
     debug('engine', 'hit creature', { kind: cr.typeKey, hp: cr.hp, x: Math.round(cr.mesh.position.x), z: Math.round(cr.mesh.position.z) });
     if (cr.hp > 0) return;
     defeatCreature(cr);
@@ -610,21 +601,23 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Poof particles ----------
   const poofs: Poof[] = [];
   function spawnPoof(pos: THREE.Vector3, color: string): void {
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < POOF_COUNT; i++) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), new THREE.MeshBasicMaterial({ color }));
       m.position.copy(pos);
       scene.add(m);
-      poofs.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 4, Math.random() * 4 + 1, (Math.random() - 0.5) * 4), life: 0.7 });
+      const v = spawnPoofVelocity(Math.random);
+      poofs.push({ mesh: m, vel: new THREE.Vector3(v.x, v.y, v.z), life: POOF_LIFE });
     }
   }
   function updatePoofs(dt: number): void {
     for (let i = poofs.length - 1; i >= 0; i--) {
       const p = poofs[i];
-      p.life -= dt;
-      p.vel.y -= 9 * dt;
+      const step = stepPoof({ life: p.life, velocityY: p.vel.y, dt });
+      p.life = step.life;
+      p.vel.y = step.velocityY;
       p.mesh.position.addScaledVector(p.vel, dt);
-      p.mesh.scale.multiplyScalar(1 - dt * 1.5);
-      if (p.life <= 0) { scene.remove(p.mesh); p.mesh.geometry.dispose(); poofs.splice(i, 1); }
+      p.mesh.scale.multiplyScalar(step.scaleFactor);
+      if (step.dead) { scene.remove(p.mesh); p.mesh.geometry.dispose(); poofs.splice(i, 1); }
     }
   }
 
@@ -644,15 +637,15 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
 
   // ---------- Scoreboard ----------
-  function bestScore(): number {
+  function storedBest(): number {
     const stored = localStorage.getItem(BEST_KEY);
     return stored ? Number(stored) : 0;
   }
   function updateStats(): void {
-    el('hearts').textContent = '❤️'.repeat(player.hearts) + '🖤'.repeat(MAX_HEARTS - player.hearts);
+    el('hearts').textContent = heartsLabel({ hearts: player.hearts, maxHearts: MAX_HEARTS });
     el('stars').textContent = `⭐ ${player.stars}`;
     el('bag').textContent = `🎒 ${player.bag}`;
-    const best = Math.max(player.stars, bestScore());
+    const best = bestScore({ stars: player.stars, stored: storedBest() });
     localStorage.setItem(BEST_KEY, String(best));
     el('record').textContent = `🏆 ${best}`;
   }
@@ -667,18 +660,23 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Build / break ----------
   function primaryAction(): void {
     const block = raycastVoxel();
-    const blockDist = block ? new THREE.Vector3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
+    const blockDistance = block ? new THREE.Vector3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
     if (coop) {
       const playerHit = raycastRemotePlayer();
       const serverHit = raycastServerCreature();
-      if (playerHit && playerHit.t <= blockDist && (!serverHit || playerHit.t <= serverHit.t)) { attackRemotePlayer(playerHit.player); return; }
-      if (serverHit && serverHit.t <= blockDist) { hitServerCreature(serverHit.creature); return; }
-      if (block) breakBlock(block);
+      const target = chooseCoopTarget({
+        playerT: playerHit ? playerHit.t : null, creatureT: serverHit ? serverHit.t : null,
+        blockDistance, hasBlock: !!block,
+      });
+      if (target === 'player' && playerHit) { attackRemotePlayer(playerHit.player); return; }
+      if (target === 'creature' && serverHit) { hitServerCreature(serverHit.creature); return; }
+      if (target === 'block' && block) breakBlock(block);
       return;
     }
     const creatureHit = raycastCreature();
-    if (creatureHit && creatureHit.t <= blockDist) { hitCreature(creatureHit.creature); return; }
-    if (block) breakBlock(block);
+    const target = chooseLocalTarget({ creatureT: creatureHit ? creatureHit.t : null, blockDistance, hasBlock: !!block });
+    if (target === 'creature' && creatureHit) { hitCreature(creatureHit.creature); return; }
+    if (target === 'block' && block) breakBlock(block);
   }
   function breakBlock(r: VoxelHit): void {
     const removed = getVoxel(r.hit[0], r.hit[1], r.hit[2]);
@@ -686,7 +684,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
     sendCoopEdit('break', r.hit[0], r.hit[1], r.hit[2], AIR);
     player.bag += 1;
-    inventory.set(removed, ownedCount(removed) + 1);
+    inventory.bank(removed);
     updateHotbarCounts();
     updateStats();
     blip(220, 0.08);
@@ -698,8 +696,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const [px, py, pz] = r.place;
     if (!inBounds(px, py, pz) || getVoxel(px, py, pz) !== AIR) return;
     if (overlapsPlayer(px, py, pz)) return;
-    if (!infiniteResources && ownedCount(selected) <= 0) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
-    if (!infiniteResources) { inventory.set(selected, ownedCount(selected) - 1); updateHotbarCounts(); }
+    if (!infiniteResources && !inventory.canPlace(selected)) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
+    if (!infiniteResources) { inventory.spend(selected); updateHotbarCounts(); }
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
     sendCoopEdit('place', px, py, pz, selected);
@@ -719,19 +717,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Magic structures ----------
   function buildStructure(kind: StructureKind): void {
     if (blockedStructures.has(kind)) { toast(t('build.blocked')); return; }
-    const margin = 12;
     const aim = raycastVoxel(90);
-    let targetX: number, targetZ: number;
-    if (aim) {
-      targetX = aim.hit[0]; targetZ = aim.hit[2];
-    } else {
-      const forwardX = Math.sin(player.yaw), forwardZ = Math.cos(player.yaw);
-      targetX = player.pos.x + forwardX * 24; targetZ = player.pos.z + forwardZ * 24;
-    }
-    const cx = Math.max(margin, Math.min(SIZE_X - margin, Math.round(targetX)));
-    const cz = Math.max(margin, Math.min(SIZE_Z - margin, Math.round(targetZ)));
+    const { cx, cz } = structureTarget({
+      aim: aim ? { x: aim.hit[0], z: aim.hit[2] } : null,
+      playerX: player.pos.x, playerZ: player.pos.z, yaw: player.yaw,
+    });
     const gy = groundHeight(cx, cz);
-    const reach = kind === 'ball' ? 9 : kind === 'cola' ? 6 : 4;
+    const reach = structureReach(kind);
     const cells: EditCell[] = [];
     // Skip any cell that would land on a player so a structure can never trap someone.
     const collect = (x: number, y: number, z: number, id: number): void => {
@@ -873,12 +865,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const knob = el('joyKnob');
     const setKnob = (dx: number, dy: number): void => { knob.style.transform = `translate(${dx}px, ${dy}px)`; };
     const moveJoy = (t: Touch): void => {
-      let dx = t.clientX - joystick.cx, dy = t.clientY - joystick.cy;
-      const len = Math.hypot(dx, dy) || 1;
-      const clamped = Math.min(len, joystick.r);
-      dx = dx / len * clamped; dy = dy / len * clamped;
-      joystick.x = dx / joystick.r; joystick.y = dy / joystick.r;
-      setKnob(dx, dy);
+      const reading = readJoystick({ touchX: t.clientX, touchY: t.clientY, centerX: joystick.cx, centerY: joystick.cy, radius: joystick.r });
+      joystick.x = reading.moveX; joystick.y = reading.moveY;
+      setKnob(reading.knobX, reading.knobY);
     };
     joyEl.addEventListener('touchstart', (e) => {
       const t = e.changedTouches[0];
@@ -1022,7 +1011,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       const id = Number(slot.dataset.id);
       const badge = slot.querySelector<HTMLElement>('.count');
       if (!badge) continue;
-      badge.textContent = infiniteResources ? '' : String(ownedCount(id));
+      badge.textContent = hotbarCountLabel({ infiniteResources, count: inventory.count(id) });
     }
   }
   function selectSlot(id: number): void {
@@ -1055,9 +1044,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }, { signal });
 
   // ---------- Loop ----------
-  // Cap the render/update rate so 120Hz+ displays (and most phones) don't burn battery running at
-  // their native refresh; the modulo carry keeps the cadence steady instead of drifting.
-  const FRAME_MS = 1000 / 60;
   const POS_SAVE_MS = 2000;
   let started = false;
   let last = performance.now();
@@ -1065,11 +1051,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   function loop(now: number): void {
     if (disposed) return;
     rafId = requestAnimationFrame(loop);
-    const elapsed = now - last;
-    if (elapsed < FRAME_MS) return;
-    last = now - (elapsed % FRAME_MS);
-    const dt = Math.min(elapsed / 1000, 0.05);
-    if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
+    const frame = nextFrame({ now, last });
+    if (frame.skip) return;
+    last = frame.last;
+    const dt = frame.dt;
+    fps = smoothFps({ fps, dt });
     if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (coop) hurtFromServerCreatures(dt); else updateCreatures(dt); updatePoofs(dt); }
     if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
     if (started && now - lastPosSave > POS_SAVE_MS) { savePos(); lastPosSave = now; }
@@ -1147,7 +1133,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     buildHotbar(FACE_URL);
     selectSlot(1);
     updateStats();
-    el('startRecord').textContent = t('start.record_score', { score: bestScore() });
+    el('startRecord').textContent = t('start.record_score', { score: storedBest() });
     last = performance.now();
     rafId = requestAnimationFrame(loop);
     debug('engine', 'boot complete', {
