@@ -387,6 +387,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     syncBuildMenu();
     debug('engine', 'room state applied', { peace, blocked: blocked.length, pvp: pvpOn, chat: chatOn });
   }
+  // Offline there is no server room: admin toggles mutate the local state directly and refresh the HUD
+  // (online always routes through coop instead, so the two paths never mix).
+  const currentRoom = () => ({ peace: peaceful, blockedStructures: [...blockedStructures], pvp, chatEnabled });
+  function applyLocalRoom(next: { peace: boolean; blockedStructures: string[]; pvp: boolean; chatEnabled: boolean }): void {
+    applyRoomState(next);
+    bridge?.hud.onRoomState(next);
+  }
   // A pvp hit from another player costs one heart, reusing the same damage + death path as monsters.
   function applyHurt(by: string): void {
     if (player.hurtCooldown > 0) return;
@@ -411,13 +418,18 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   bridge?.bind({
     sendChat: (text) => { if (chatEnabled) coop?.sendChat(text); },
-    setAdminPeace: (on) => coop?.sendAdminSetPeace(on),
-    setAdminStructure: (kind, allowed) => coop?.sendAdminSetStructure(kind, allowed),
-    setAdminPvp: (on) => coop?.sendAdminSetPvp(on),
-    setAdminChat: (on) => coop?.sendAdminSetChat(on),
+    setAdminPeace: (on) => { if (coop) { coop.sendAdminSetPeace(on); return; } applyLocalRoom({ ...currentRoom(), peace: on }); },
+    setAdminStructure: (kind, allowed) => {
+      if (coop) { coop.sendAdminSetStructure(kind, allowed); return; }
+      const blocked = new Set(blockedStructures);
+      if (allowed) blocked.delete(kind); else blocked.add(kind);
+      applyLocalRoom({ ...currentRoom(), blockedStructures: [...blocked] });
+    },
+    setAdminPvp: (on) => { if (coop) { coop.sendAdminSetPvp(on); return; } applyLocalRoom({ ...currentRoom(), pvp: on }); },
+    setAdminChat: (on) => { if (coop) { coop.sendAdminSetChat(on); return; } applyLocalRoom({ ...currentRoom(), chatEnabled: on }); },
     kickPlayer: (id) => coop?.sendAdminKick(id),
     banPlayer: (id) => coop?.sendAdminBan(id),
-    resetWorld: () => coop?.sendAdminResetWorld(),
+    resetWorld: () => { if (coop) { coop.sendAdminResetWorld(); return; } resetLocalWorld(); },
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
     setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
     returnToSpawn: () => { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); savePos(); },
@@ -1075,13 +1087,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     blip(660, 0.12); setTimeout(() => blip(880, 0.14), 120);
     startCoop();
   }
+  // Offline / single-player: there is no server to grant admin, so every offline player IS admin and
+  // controls the room locally. Online never calls this (coop is set), so the modes can't collide.
+  function grantOfflineAdmin(): void {
+    bridge?.hud.onRole({ admin: true, moderator: false });
+    bridge?.hud.onRoomState(currentRoom());
+  }
   function startCoop(): void {
     if (coop) return;
-    if (!serverUrl) { debug('coop', 'single-player (no server url)'); return; }
+    if (!serverUrl) { debug('coop', 'single-player (no server url)'); grantOfflineAdmin(); return; }
     if (!bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
     if (bridge.resolveOffline()) {
       debug('coop', 'single-player (chosen)');
       if (!creatures.length) populateCreatures();
+      grantOfflineAdmin();
       return;
     }
     const name = bridge.resolveName();
