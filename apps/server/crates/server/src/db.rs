@@ -496,6 +496,21 @@ impl Db {
         Ok(out)
     }
 
+    /// How many accounts a tenant has. Used to make the first registered account its admin.
+    pub async fn account_count(&self, tenant: &str) -> Result<i64, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT COUNT(*) AS n FROM accounts WHERE tenant = ?1",
+                params![tenant],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => row.get::<i64>(0),
+            None => Ok(0),
+        }
+    }
+
     /// Find-or-create the account for `(tenant, email)`, then adopt `name` as its display name only
     /// if that name is free in the tenant; otherwise keep the current name and report not renamed.
     pub async fn claim_account(
@@ -534,11 +549,20 @@ impl Db {
             });
         }
         let account_id = gen_account_id();
+        // The first registered account of a tenant becomes its admin automatically.
+        let first_in_tenant = self.account_count(tenant).await? == 0;
         self.conn
             .execute(
-                "INSERT INTO accounts (account_id, tenant, email, name, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![account_id.clone(), tenant, email, name, now_ms()],
+                "INSERT INTO accounts (account_id, tenant, email, name, is_admin, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    account_id.clone(),
+                    tenant,
+                    email,
+                    name,
+                    first_in_tenant as i64,
+                    now_ms()
+                ],
             )
             .await?;
         Ok(ClaimedAccount {
@@ -974,8 +998,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn first_registered_account_of_a_tenant_is_admin() {
+        let db = memory_db().await;
+        let first = db.claim_account("teo", "ann@x.com", "Ann").await.unwrap();
+        assert!(db.is_admin(&first.account_id).await.unwrap());
+        let second = db.claim_account("teo", "bob@x.com", "Bob").await.unwrap();
+        assert!(!db.is_admin(&second.account_id).await.unwrap());
+        // The count is per tenant: another tenant's first account is admin too.
+        let other = db.claim_account("demo", "zoe@x.com", "Zoe").await.unwrap();
+        assert!(db.is_admin(&other.account_id).await.unwrap());
+    }
+
+    #[tokio::test]
     async fn admin_flag_defaults_off_and_grants_then_revokes() {
         let db = memory_db().await;
+        // The first account is auto-admin, so seed one before the account under test.
+        account(&db, "teo", "first@x.com", "First").await;
         let ann = account(&db, "teo", "ann@x.com", "Ann").await;
         assert!(!db.is_admin(&ann).await.unwrap());
         let before = db.get_account_by_id(&ann).await.unwrap().unwrap();
@@ -993,6 +1031,8 @@ mod tests {
     #[tokio::test]
     async fn set_admin_reports_unknown_name_and_isolates_tenants() {
         let db = memory_db().await;
+        // Seed the auto-admin first account so "Ann" is a plain (non-admin) account.
+        account(&db, "teo", "first@x.com", "First").await;
         account(&db, "teo", "ann@x.com", "Ann").await;
         assert!(!db.set_admin_by_name("teo", "Nobody", true).await.unwrap());
         // A same-named account in another tenant is not affected.
@@ -1013,6 +1053,8 @@ mod tests {
         account(&db, "teo", "ann@x.com", "Ann").await;
         account(&db, "teo", "bob@x.com", "Bob").await;
         account(&db, "demo", "zoe@x.com", "Zoe").await;
+        // Ann is the tenant's first account (auto-admin); clear it so only Bob is admin here.
+        db.set_admin_by_name("teo", "Ann", false).await.unwrap();
         db.set_admin_by_name("teo", "Bob", true).await.unwrap();
 
         let accounts = db.list_accounts("teo").await.unwrap();

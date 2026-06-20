@@ -146,6 +146,9 @@ pub struct Room {
     // gate the in-game build menu. A sorted set keeps the broadcast list deterministic.
     peace: bool,
     blocked_structures: BTreeSet<String>,
+    // Player-vs-player combat (default off) and the room chat (default on), both admin-controlled.
+    pvp: bool,
+    chat_enabled: bool,
     // Server-authoritative creature population and the monotonic id counter that names each one.
     creatures: Vec<Creature>,
     next_creature_id: u32,
@@ -193,6 +196,8 @@ impl Room {
             dirty: false,
             peace: false,
             blocked_structures: BTreeSet::new(),
+            pvp: false,
+            chat_enabled: true,
             creatures: Vec::new(),
             next_creature_id: 1,
             hub,
@@ -453,8 +458,29 @@ impl Room {
 
         // Admin-only room settings mutate `self` directly, so they're handled before the per-player
         // borrow below. Never trust the client: ignore unless the sender is a known room admin.
-        if let ClientMsg::AdminSetPeace { .. } | ClientMsg::AdminSetStructure { .. } = msg {
+        if let ClientMsg::AdminSetPeace { .. }
+        | ClientMsg::AdminSetStructure { .. }
+        | ClientMsg::AdminSetPvp { .. }
+        | ClientMsg::AdminSetChat { .. } = msg
+        {
             self.on_admin_setting(id, msg);
+            return;
+        }
+
+        // Admin kick/ban remove another player, so they touch the whole player map and are handled
+        // before the single-player borrow below.
+        if let ClientMsg::AdminKick { id: target } | ClientMsg::AdminBan { id: target } = msg {
+            self.on_admin_remove(id, target, matches!(msg, ClientMsg::AdminBan { .. }));
+            return;
+        }
+
+        // A PvP attack reads both the attacker and the target, so it is handled before the single
+        // borrow below as well.
+        if let ClientMsg::AttackPlayer { id: target } = msg {
+            if let Some(p) = self.players.get_mut(&id) {
+                p.last_seen = now;
+            }
+            self.on_attack_player(id, target);
             return;
         }
 
@@ -548,6 +574,9 @@ impl Room {
                 });
             }
             ClientMsg::Chat { text } => {
+                if !self.chat_enabled {
+                    return;
+                }
                 if !p.chat_b.take() {
                     return;
                 }
@@ -587,6 +616,11 @@ impl Room {
             }
             ClientMsg::AdminSetPeace { .. }
             | ClientMsg::AdminSetStructure { .. }
+            | ClientMsg::AdminSetPvp { .. }
+            | ClientMsg::AdminSetChat { .. }
+            | ClientMsg::AdminKick { .. }
+            | ClientMsg::AdminBan { .. }
+            | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. } => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
         }
@@ -644,13 +678,86 @@ impl Room {
                     self.blocked_structures.insert(kind)
                 }
             }
+            ClientMsg::AdminSetPvp { on } => {
+                let changed = self.pvp != on;
+                self.pvp = on;
+                changed
+            }
+            ClientMsg::AdminSetChat { on } => {
+                let changed = self.chat_enabled != on;
+                self.chat_enabled = on;
+                changed
+            }
             _ => false,
         };
         if changed {
             let state = self.room_state();
             self.broadcast(&state);
-            tracing::info!(tenant = %self.key.0, peace = self.peace, blocked = self.blocked_structures.len(), "room settings changed");
+            tracing::info!(tenant = %self.key.0, peace = self.peace, pvp = self.pvp, chat = self.chat_enabled, blocked = self.blocked_structures.len(), "room settings changed");
         }
+    }
+
+    /// Admin-gated removal of another player: kick disconnects them (they may rejoin); ban also blocks
+    /// their address so they cannot return. Never trust the client: ignore unless the sender is an
+    /// admin. Sends the leaving player an Error so their client knows why, then broadcasts Left.
+    fn on_admin_remove(&mut self, admin_id: PlayerId, target_id: PlayerId, ban: bool) {
+        let Some(admin) = self.players.get_mut(&admin_id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%admin_id, "admin command ignored: not an admin");
+            return;
+        }
+        let Some(target) = self.players.get(&target_id) else {
+            return;
+        };
+        let target_ip = target.ip;
+        let (code, message) = if ban {
+            ("banned", "Your access has been revoked.")
+        } else {
+            ("kicked", "You were removed from the room by an admin.")
+        };
+        let _ = target.conn.try_send(ServerMsg::Error {
+            code: code.into(),
+            msg: message.into(),
+        });
+        if ban {
+            self.hub.bans.ban(target_ip);
+        }
+        self.players.remove(&target_id);
+        self.broadcast(&ServerMsg::Left { id: target_id });
+        tracing::info!(tenant = %self.key.0, %admin_id, %target_id, ban, "player removed by admin");
+    }
+
+    /// A PvP melee attack on another player. Ignored unless pvp is on and the attacker is within melee
+    /// range of the target; the server never damages server-side (the client owns hearts) and only
+    /// tells the target it was hit so it takes one heart of damage.
+    fn on_attack_player(&mut self, attacker_id: PlayerId, target_id: PlayerId) {
+        if !self.pvp {
+            return;
+        }
+        if attacker_id == target_id {
+            return;
+        }
+        let Some(attacker) = self.players.get(&attacker_id) else {
+            return;
+        };
+        let (attacker_x, attacker_y, attacker_z) = (attacker.x, attacker.y, attacker.z);
+        let attacker_name = attacker.name.clone();
+        let Some(target) = self.players.get(&target_id) else {
+            return;
+        };
+        let dist = ((target.x - attacker_x).powi(2)
+            + (target.y - attacker_y).powi(2)
+            + (target.z - attacker_z).powi(2))
+        .sqrt();
+        if dist > MELEE_RANGE {
+            tracing::debug!(%attacker_id, %target_id, dist, "pvp attack rejected: out of range");
+            return;
+        }
+        let _ = target.conn.try_send(ServerMsg::Hurt { by: attacker_name });
+        tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
     }
 
     /// Snapshot the room-wide settings as the wire message broadcast on change and sent on join.
@@ -658,6 +765,8 @@ impl Room {
         ServerMsg::RoomState {
             peace: self.peace,
             blocked_structures: self.blocked_structures.iter().cloned().collect(),
+            pvp: self.pvp,
+            chat_enabled: self.chat_enabled,
         }
     }
 
@@ -1021,9 +1130,44 @@ mod tests {
             if let ServerMsg::RoomState {
                 peace,
                 blocked_structures,
+                ..
             } = msg
             {
                 latest = Some((peace, blocked_structures));
+            }
+        }
+        latest
+    }
+
+    /// The latest broadcast (pvp, chat_enabled) pair, ignoring peace/structure fields.
+    fn drain_pvp_chat(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(bool, bool)> {
+        let mut latest = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::RoomState {
+                pvp, chat_enabled, ..
+            } = msg
+            {
+                latest = Some((pvp, chat_enabled));
+            }
+        }
+        latest
+    }
+
+    fn drain_left(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<PlayerId> {
+        let mut out = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::Left { id } = msg {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    fn drain_hurt(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<String> {
+        let mut latest = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::Hurt { by } = msg {
+                latest = Some(by);
             }
         }
         latest
@@ -1119,6 +1263,133 @@ mod tests {
 
         room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: false });
         assert_eq!(drain_room_state(&mut admin_rx), None);
+    }
+
+    #[tokio::test]
+    async fn admin_toggles_pvp_and_chat_and_broadcasts() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        let mut other_rx = add_player(&mut room, 2, false);
+        assert!(!room.pvp);
+        assert!(room.chat_enabled);
+
+        room.on_input(1, ClientMsg::AdminSetPvp { on: true });
+        assert!(room.pvp);
+        assert_eq!(drain_pvp_chat(&mut admin_rx), Some((true, true)));
+        assert_eq!(drain_pvp_chat(&mut other_rx), Some((true, true)));
+
+        room.on_input(1, ClientMsg::AdminSetChat { on: false });
+        assert!(!room.chat_enabled);
+        assert_eq!(drain_pvp_chat(&mut admin_rx), Some((true, false)));
+    }
+
+    #[tokio::test]
+    async fn non_admin_pvp_and_chat_toggles_are_ignored() {
+        let mut room = test_room().await;
+        let mut other_rx = add_player(&mut room, 2, false);
+
+        room.on_input(2, ClientMsg::AdminSetPvp { on: true });
+        room.on_input(2, ClientMsg::AdminSetChat { on: false });
+        assert!(!room.pvp);
+        assert!(room.chat_enabled);
+        assert_eq!(drain_pvp_chat(&mut other_rx), None);
+    }
+
+    #[tokio::test]
+    async fn chat_is_dropped_when_disabled() {
+        let mut room = test_room().await;
+        let mut listener_rx = add_player(&mut room, 2, false);
+        let _sender_rx = add_player(&mut room, 1, false);
+        room.chat_enabled = false;
+
+        room.on_input(1, ClientMsg::Chat { text: "hi".into() });
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+            .filter(|m| matches!(m, ServerMsg::Chat { .. }))
+            .collect();
+        assert!(chats.is_empty(), "a disabled room must drop chat");
+    }
+
+    #[tokio::test]
+    async fn admin_kick_removes_target_and_broadcasts_left() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        let mut target_rx = add_player(&mut room, 2, false);
+
+        room.on_input(1, ClientMsg::AdminKick { id: 2 });
+        assert!(
+            !room.players.contains_key(&2),
+            "the kicked player is removed"
+        );
+        assert!(room.players.contains_key(&1));
+        assert!(drain_left(&mut admin_rx).contains(&2));
+        let target_msgs: Vec<ServerMsg> =
+            std::iter::from_fn(|| target_rx.try_recv().ok()).collect();
+        assert!(target_msgs
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Error { code, .. } if code == "kicked")));
+    }
+
+    #[tokio::test]
+    async fn non_admin_kick_is_ignored() {
+        let mut room = test_room().await;
+        let _other_rx = add_player(&mut room, 2, false);
+        let _target_rx = add_player(&mut room, 3, false);
+
+        room.on_input(2, ClientMsg::AdminKick { id: 3 });
+        assert!(room.players.contains_key(&3), "a non-admin cannot kick");
+    }
+
+    #[tokio::test]
+    async fn admin_ban_bans_the_ip_and_removes_target() {
+        // Point the ban store at a throwaway file so the test never writes the real bans list.
+        let mut bans_file = std::env::temp_dir();
+        bans_file.push(format!("room-ban-test-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&bans_file);
+        std::env::set_var("BANS_FILE", &bans_file);
+
+        let mut room = test_room().await;
+        let _admin_rx = add_player(&mut room, 1, true);
+        let _target_rx = add_player(&mut room, 2, false);
+        let target_ip: IpAddr = "203.0.113.9".parse().unwrap();
+        room.players.get_mut(&2).unwrap().ip = target_ip;
+
+        room.on_input(1, ClientMsg::AdminBan { id: 2 });
+        assert!(
+            !room.players.contains_key(&2),
+            "the banned player is removed"
+        );
+        assert!(room.hub.bans.is_banned(target_ip), "the ip is banned");
+
+        std::env::remove_var("BANS_FILE");
+        let _ = std::fs::remove_file(&bans_file);
+    }
+
+    #[tokio::test]
+    async fn pvp_off_never_hurts_a_player() {
+        let mut room = test_room().await;
+        let _attacker_rx = add_player(&mut room, 1, false);
+        let mut target_rx = add_player(&mut room, 2, false);
+
+        room.on_input(1, ClientMsg::AttackPlayer { id: 2 });
+        assert_eq!(drain_hurt(&mut target_rx), None, "no pvp means no damage");
+    }
+
+    #[tokio::test]
+    async fn pvp_on_hurts_target_in_range_only() {
+        let mut room = test_room().await;
+        let mut attacker_rx = add_player(&mut room, 1, false);
+        let mut target_rx = add_player(&mut room, 2, false);
+        room.pvp = true;
+        // Target on top of the attacker (both at origin), well within MELEE_RANGE.
+        room.on_input(1, ClientMsg::AttackPlayer { id: 2 });
+        assert_eq!(drain_hurt(&mut target_rx), Some("p1".into()));
+        // The attacker never receives a Hurt of its own.
+        assert_eq!(drain_hurt(&mut attacker_rx), None);
+
+        // A far target is out of range and takes no damage.
+        room.players.get_mut(&2).unwrap().x = 100.0;
+        room.on_input(1, ClientMsg::AttackPlayer { id: 2 });
+        assert_eq!(drain_hurt(&mut target_rx), None);
     }
 
     fn drain_kill_event(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(String, String)> {

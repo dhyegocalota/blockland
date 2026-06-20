@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { adminSetPeace, adminSetStructure, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
+import { adminBan, adminKick, adminSetChat, adminSetPeace, adminSetPvp, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
 
 describe('protocol factories', () => {
   it('builds a join message', () => {
@@ -29,6 +29,14 @@ describe('protocol factories', () => {
   it('builds admin set-peace and set-structure messages', () => {
     expect(adminSetPeace(true)).toEqual({ t: 'admin_set_peace', on: true });
     expect(adminSetStructure('cola', false)).toEqual({ t: 'admin_set_structure', kind: 'cola', allowed: false });
+  });
+
+  it('builds pvp/chat toggles, kick/ban and attack-player messages', () => {
+    expect(adminSetPvp(true)).toEqual({ t: 'admin_set_pvp', on: true });
+    expect(adminSetChat(false)).toEqual({ t: 'admin_set_chat', on: false });
+    expect(adminKick(3)).toEqual({ t: 'admin_kick', id: 3 });
+    expect(adminBan(4)).toEqual({ t: 'admin_ban', id: 4 });
+    expect(attackPlayer(5)).toEqual({ t: 'attack_player', id: 5 });
   });
 
   it('round-trips a client message through JSON', () => {

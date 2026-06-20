@@ -230,9 +230,21 @@ describe('net client', () => {
     socket.open();
     socket.receive(welcome);
 
-    const incoming = { t: 'room_state', peace: true, blocked_structures: ['cola', 'steve'] };
+    const incoming = { t: 'room_state', peace: true, blocked_structures: ['cola', 'steve'], pvp: false, chat_enabled: true };
     socket.receive(incoming);
     expect(states).toEqual([incoming]);
+  });
+
+  it('routes hurt to onHurt', () => {
+    const hits: unknown[] = [];
+    const { client } = makeClient({ handlers: { onHurt: (m) => hits.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'hurt', by: 'Maria' });
+    expect(hits).toEqual([{ t: 'hurt', by: 'Maria' }]);
   });
 
   it('sendAdminSetPeace and sendAdminSetStructure serialize the right JSON', () => {
@@ -246,6 +258,25 @@ describe('net client', () => {
     client.sendAdminSetStructure('cola', false);
     expect(socket.sent.at(-2)).toBe(JSON.stringify({ t: 'admin_set_peace', on: true }));
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_structure', kind: 'cola', allowed: false }));
+  });
+
+  it('serializes pvp/chat/kick/ban admin and attack_player messages', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    client.sendAdminSetPvp(true);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_pvp', on: true }));
+    client.sendAdminSetChat(false);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_chat', on: false }));
+    client.sendAdminKick(3);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_kick', id: 3 }));
+    client.sendAdminBan(4);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_ban', id: 4 }));
+    client.sendAttackPlayer(5);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'attack_player', id: 5 }));
   });
 
   it('does not reconnect when reconnect is disabled', () => {

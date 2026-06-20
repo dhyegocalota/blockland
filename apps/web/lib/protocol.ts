@@ -50,6 +50,16 @@ export const adminSetStructure = (kind: string, allowed: boolean): ClientMsg => 
   allowed,
 });
 
+export const adminSetPvp = (on: boolean): ClientMsg => ({ t: 'admin_set_pvp', on });
+
+export const adminSetChat = (on: boolean): ClientMsg => ({ t: 'admin_set_chat', on });
+
+export const adminKick = (id: number): ClientMsg => ({ t: 'admin_kick', id });
+
+export const adminBan = (id: number): ClientMsg => ({ t: 'admin_ban', id });
+
+export const attackPlayer = (id: number): ClientMsg => ({ t: 'attack_player', id });
+
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 
 export const parseServerMsg = (data: string): ServerMsg => JSON.parse(data) as ServerMsg;

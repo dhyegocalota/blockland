@@ -76,6 +76,10 @@ interface GameApi {
   sendChat(text: string): void;
   setAdminPeace(on: boolean): void;
   setAdminStructure(kind: string, allowed: boolean): void;
+  setAdminPvp(on: boolean): void;
+  setAdminChat(on: boolean): void;
+  kickPlayer(id: number): void;
+  banPlayer(id: number): void;
   debugSnapshot(): DebugSnapshot;
 }
 
@@ -114,7 +118,7 @@ export default function Game() {
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [room, setRoom] = useState<RoomState>({ peace: true, blockedStructures: [] });
+  const [room, setRoom] = useState<RoomState>({ peace: true, blockedStructures: [], pvp: false, chatEnabled: true });
   const [adminOpen, setAdminOpen] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
@@ -202,9 +206,10 @@ export default function Game() {
   }, [brand, pushChatLine, pushFeedEntry]);
 
   const openChat = useCallback(() => {
+    if (!room.chatEnabled) return;
     setChatOpen(true);
     requestAnimationFrame(() => chatInputRef.current?.focus());
-  }, []);
+  }, [room.chatEnabled]);
 
   const sendChat = useCallback(() => {
     const text = chatDraft.trim();
@@ -221,6 +226,22 @@ export default function Game() {
     gameApiRef.current?.setAdminStructure(kind, allowed);
   }, []);
 
+  const toggleRoomPvp = useCallback(() => {
+    gameApiRef.current?.setAdminPvp(!room.pvp);
+  }, [room.pvp]);
+
+  const toggleRoomChat = useCallback(() => {
+    gameApiRef.current?.setAdminChat(!room.chatEnabled);
+  }, [room.chatEnabled]);
+
+  const kickPlayer = useCallback((id: number) => {
+    gameApiRef.current?.kickPlayer(id);
+  }, []);
+
+  const banPlayer = useCallback((id: number) => {
+    gameApiRef.current?.banPlayer(id);
+  }, []);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.code === 'F3') { event.preventDefault(); setDebugOpen((open) => !open); return; }
@@ -232,6 +253,13 @@ export default function Game() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [chatOpen, openChat]);
+
+  // When an admin disables the room chat, close any open input and drop the draft.
+  useEffect(() => {
+    if (room.chatEnabled) return;
+    setChatOpen(false);
+    setChatDraft('');
+  }, [room.chatEnabled]);
 
   useEffect(() => {
     if (!debugOpen) return;
@@ -461,6 +489,32 @@ export default function Game() {
               >
                 {room.peace ? t('game_admin.monsters_calm') : t('game_admin.monsters_attack')}
               </button>
+              <button
+                id="adminPvp"
+                className={room.pvp ? 'on' : undefined}
+                onClick={toggleRoomPvp}
+              >
+                {room.pvp ? t('game_admin.pvp_on') : t('game_admin.pvp_off')}
+              </button>
+              <button
+                id="adminChat"
+                className={room.chatEnabled ? undefined : 'on'}
+                onClick={toggleRoomChat}
+              >
+                {room.chatEnabled ? t('game_admin.chat_on') : t('game_admin.chat_off')}
+              </button>
+              <span className="adminLabel">{t('game_admin.players')}</span>
+              <ul id="adminPlayers">
+                {roster.filter((player) => !player.self).map((player) => (
+                  <li key={player.id}>
+                    <span>{player.name}</span>
+                    <span className="adminPlayerActions">
+                      <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>
+                      <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
               <span className="adminLabel">{t('game_admin.structures')}</span>
               <ul id="adminStructures">
                 {STRUCTURE_KINDS.map((kind) => {
@@ -561,7 +615,7 @@ export default function Game() {
         ))}
       </div>
 
-      <div id="chat">
+      <div id="chat" hidden={!room.chatEnabled}>
         <div id="chatLog">
           {chatLines.map((line) => (
             <div className="chatLine" key={line.id}>{t('chat.line', { name: line.name, text: line.text })}</div>

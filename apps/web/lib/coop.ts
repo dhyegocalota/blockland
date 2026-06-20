@@ -6,7 +6,7 @@
 // React layer through the injected callbacks rather than touching the DOM here.
 
 import type * as THREE from 'three';
-import { EYE_HEIGHT, PLAYER_HEIGHT } from './engine/constants';
+import { EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS } from './engine/constants';
 import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
 import { debug } from './log';
@@ -50,6 +50,8 @@ export interface RosterEntry extends RosterMember {
 export interface RoomState {
   peace: boolean;
   blockedStructures: string[];
+  pvp: boolean;
+  chatEnabled: boolean;
 }
 
 export interface CoopHud {
@@ -80,6 +82,7 @@ export interface CoopOptions {
   applyRemoteEdit(args: { x: number; y: number; z: number; id: number }): void;
   applyRemoteEditBatch(edits: EditCell[]): void;
   applyRoomState(room: RoomState): void;
+  applyHurt(by: string): void;
 }
 
 interface Avatar {
@@ -110,6 +113,16 @@ export interface CoopCreature {
   radius: number;
 }
 
+// A remote player the engine can raycast against to aim a pvp attack: its wire id (sent in
+// `attack_player`), world position and a hit sphere sized to the avatar.
+export interface CoopPlayer {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+}
+
 export interface CoopController {
   sendMove(pose: LocalPose, now: number): void;
   sendEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
@@ -118,9 +131,15 @@ export interface CoopController {
   sendHit(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
+  sendAdminSetPvp(on: boolean): void;
+  sendAdminSetChat(on: boolean): void;
+  sendAdminKick(id: number): void;
+  sendAdminBan(id: number): void;
+  sendAttackPlayer(id: number): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
+  getPlayers(): CoopPlayer[];
   readonly ping: number;
   readonly state: NetState;
   readonly onlineCount: number;
@@ -414,10 +433,19 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },
       onRoomState: (msg) => {
-        const room: RoomState = { peace: msg.peace, blockedStructures: msg.blocked_structures };
+        const room: RoomState = {
+          peace: msg.peace,
+          blockedStructures: msg.blocked_structures,
+          pvp: msg.pvp,
+          chatEnabled: msg.chat_enabled,
+        };
         opts.applyRoomState(room);
         opts.hud.onRoomState(room);
-        debug('coop', 'room state', { peace: msg.peace, blocked: msg.blocked_structures.length });
+        debug('coop', 'room state', { peace: msg.peace, blocked: msg.blocked_structures.length, pvp: msg.pvp, chat: msg.chat_enabled });
+      },
+      onHurt: (msg) => {
+        opts.applyHurt(msg.by);
+        debug('coop', 'hurt', { by: msg.by });
       },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });
@@ -451,6 +479,21 @@ export function createCoop(opts: CoopOptions): CoopController {
     sendAdminSetStructure(kind, allowed): void {
       net.sendAdminSetStructure(kind, allowed);
     },
+    sendAdminSetPvp(on): void {
+      net.sendAdminSetPvp(on);
+    },
+    sendAdminSetChat(on): void {
+      net.sendAdminSetChat(on);
+    },
+    sendAdminKick(id): void {
+      net.sendAdminKick(id);
+    },
+    sendAdminBan(id): void {
+      net.sendAdminBan(id);
+    },
+    sendAttackPlayer(id): void {
+      net.sendAttackPlayer(id);
+    },
     update(now): void {
       for (const avatar of avatars.values()) {
         const pose = avatar.interp.sampleAt(now);
@@ -480,6 +523,15 @@ export function createCoop(opts: CoopOptions): CoopController {
         y: c.group.position.y,
         z: c.group.position.z,
         radius: c.radius,
+      }));
+    },
+    getPlayers(): CoopPlayer[] {
+      return [...avatars.entries()].map(([id, a]) => ({
+        id,
+        x: a.group.position.x,
+        y: a.group.position.y + PLAYER_HEIGHT / 2,
+        z: a.group.position.z,
+        radius: Math.max(PLAYER_RADIUS, PLAYER_HEIGHT / 2),
       }));
     },
     get ping(): number {

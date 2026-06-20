@@ -63,6 +63,13 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.blocked': 'Bloqueada',
     'game_admin.monsters_calm': '🕊️ Monstros calmos',
     'game_admin.monsters_attack': '👹 Monstros atacam',
+    'game_admin.pvp_on': '⚔️ Combate ligado',
+    'game_admin.pvp_off': '🛡️ Combate desligado',
+    'game_admin.chat_on': '💬 Chat ligado',
+    'game_admin.chat_off': '🔇 Chat desligado',
+    'game_admin.players': 'Jogadores',
+    'game_admin.kick': 'Expulsar',
+    'game_admin.ban': 'Banir',
 
     // Start screen
     'start.record': '🏆 Recorde: 0',
@@ -339,6 +346,13 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.blocked': 'Blocked',
     'game_admin.monsters_calm': '🕊️ Monsters calm',
     'game_admin.monsters_attack': '👹 Monsters attack',
+    'game_admin.pvp_on': '⚔️ Combat on',
+    'game_admin.pvp_off': '🛡️ Combat off',
+    'game_admin.chat_on': '💬 Chat on',
+    'game_admin.chat_off': '🔇 Chat off',
+    'game_admin.players': 'Players',
+    'game_admin.kick': 'Kick',
+    'game_admin.ban': 'Ban',
 
     // Start screen
     'start.record': '🏆 Record: 0',

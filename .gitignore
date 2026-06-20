@@ -14,3 +14,4 @@ apps/web/public/tenant.json
 
 # Rust server runtime data (libSQL db, bans, world saves, uploads)
 apps/server/data/
+.vercel

@@ -58,6 +58,26 @@ pub enum ClientMsg {
         kind: String,
         allowed: bool,
     },
+    /// Admin-only: toggle room-wide player-vs-player combat. Ignored from non-admins.
+    AdminSetPvp {
+        on: bool,
+    },
+    /// Admin-only: enable or disable the room chat. Ignored from non-admins.
+    AdminSetChat {
+        on: bool,
+    },
+    /// Admin-only: disconnect a player by id (they may rejoin). Ignored from non-admins.
+    AdminKick {
+        id: u32,
+    },
+    /// Admin-only: permanently ban a player by id (disconnect + block their address). Ignored from non-admins.
+    AdminBan {
+        id: u32,
+    },
+    /// Attack another player by id; the server validates pvp + range and tells the target it was hit.
+    AttackPlayer {
+        id: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -132,6 +152,12 @@ pub enum ServerMsg {
     RoomState {
         peace: bool,
         blocked_structures: Vec<String>,
+        pvp: bool,
+        chat_enabled: bool,
+    },
+    /// Sent to a player who was just hit by another player in PvP; the client takes the damage.
+    Hurt {
+        by: String,
     },
 }
 

@@ -16,7 +16,7 @@ import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './en
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 import { creatureDefFor } from './engine/creature-snapshot';
 import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './engine/textures';
-import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud } from './coop';
+import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer } from './coop';
 import type { EditCell, EditOp } from './protocol';
 
 interface Creature {
@@ -85,6 +85,10 @@ export interface CoopBridge {
     sendChat(text: string): void;
     setAdminPeace(on: boolean): void;
     setAdminStructure(kind: string, allowed: boolean): void;
+    setAdminPvp(on: boolean): void;
+    setAdminChat(on: boolean): void;
+    kickPlayer(id: number): void;
+    banPlayer(id: number): void;
     debugSnapshot(): DebugSnapshot;
   }): void;
 }
@@ -323,6 +327,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   };
   let selected = 1;
   let peaceful = true;
+  let pvp = false;
+  let chatEnabled = true;
   const blockedStructures = new Set<string>();
   let coop: CoopController | null = null;
   let fps = 0;
@@ -365,12 +371,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   // Room-wide settings (admin-controlled, server-authoritative): peace calms the local creatures for
   // everyone, and blocked structures disable those entries in the build menu.
-  function applyRoomState({ peace, blockedStructures: blocked }: { peace: boolean; blockedStructures: string[] }): void {
+  function applyRoomState({ peace, blockedStructures: blocked, pvp: pvpOn, chatEnabled: chatOn }: { peace: boolean; blockedStructures: string[]; pvp: boolean; chatEnabled: boolean }): void {
     peaceful = peace;
+    pvp = pvpOn;
+    chatEnabled = chatOn;
     blockedStructures.clear();
     for (const kind of blocked) blockedStructures.add(kind);
     syncBuildMenu();
-    debug('engine', 'room state applied', { peace, blocked: blocked.length });
+    debug('engine', 'room state applied', { peace, blocked: blocked.length, pvp: pvpOn, chat: chatOn });
+  }
+  // A pvp hit from another player costs one heart, reusing the same damage + death path as monsters.
+  function applyHurt(by: string): void {
+    if (player.hurtCooldown > 0) return;
+    hurtPlayer();
+    debug('engine', 'hurt by player', { by });
   }
   function localPose(): { x: number; y: number; z: number; yaw: number; pitch: number } {
     return { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch };
@@ -390,9 +404,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     return { ...base, ping: coop.ping, state: coop.state, online: coop.onlineCount };
   }
   bridge?.bind({
-    sendChat: (text) => coop?.sendChat(text),
+    sendChat: (text) => { if (chatEnabled) coop?.sendChat(text); },
     setAdminPeace: (on) => coop?.sendAdminSetPeace(on),
     setAdminStructure: (kind, allowed) => coop?.sendAdminSetStructure(kind, allowed),
+    setAdminPvp: (on) => coop?.sendAdminSetPvp(on),
+    setAdminChat: (on) => coop?.sendAdminSetChat(on),
+    kickPlayer: (id) => coop?.sendAdminKick(id),
+    banPlayer: (id) => coop?.sendAdminBan(id),
     debugSnapshot,
   });
 
@@ -566,6 +584,31 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     debug('engine', 'hit request', { id: cr.id, kind: cr.kind });
   }
 
+  // Co-op pvp: when the room has pvp on we aim the crosshair at a remote player (same sphere test as
+  // creatures) and ask the server to apply the hit; the server validates pvp + range and replies with
+  // Hurt to the target. Returns null when pvp is off so players never damage each other.
+  function raycastRemotePlayer(): { player: CoopPlayer; t: number } | null {
+    if (!coop || !pvp) return null;
+    const origin = camera.position.clone();
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    let best: CoopPlayer | null = null, bestT = REACH;
+    for (const p of coop.getPlayers()) {
+      const oc = new THREE.Vector3(p.x - origin.x, p.y - origin.y, p.z - origin.z);
+      const tca = oc.dot(dir);
+      if (tca < 0) continue;
+      const d2 = oc.lengthSq() - tca * tca;
+      if (d2 > p.radius * p.radius) continue;
+      if (tca < bestT) { bestT = tca; best = p; }
+    }
+    return best ? { player: best, t: bestT } : null;
+  }
+  function attackRemotePlayer(p: CoopPlayer): void {
+    coop?.sendAttackPlayer(p.id);
+    blip(300, 0.08);
+    debug('engine', 'attack player', { id: p.id });
+  }
+
   // ---------- Poof particles ----------
   const poofs: Poof[] = [];
   function spawnPoof(pos: THREE.Vector3, color: string): void {
@@ -613,7 +656,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const block = raycastVoxel();
     const blockDist = block ? new THREE.Vector3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
     if (coop) {
+      const playerHit = raycastRemotePlayer();
       const serverHit = raycastServerCreature();
+      if (playerHit && playerHit.t <= blockDist && (!serverHit || playerHit.t <= serverHit.t)) { attackRemotePlayer(playerHit.player); return; }
       if (serverHit && serverHit.t <= blockDist) { hitServerCreature(serverHit.creature); return; }
       if (block) breakBlock(block);
       return;
@@ -1049,6 +1094,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       applyRemoteEdit,
       applyRemoteEditBatch,
       applyRoomState,
+      applyHurt,
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }

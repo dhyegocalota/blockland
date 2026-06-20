@@ -5,8 +5,13 @@
 
 import { debug } from './log';
 import {
+  adminBan,
+  adminKick,
+  adminSetChat,
   adminSetPeace,
+  adminSetPvp,
   adminSetStructure,
+  attackPlayer,
   chat,
   edit,
   editBatch,
@@ -42,6 +47,7 @@ type EditBatchMsg = Extract<ServerMsg, { t: 'edit_batch' }>;
 type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
 type EventMsg = Extract<ServerMsg, { t: 'event' }>;
 type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
+type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -52,6 +58,7 @@ export interface NetHandlers {
   onChat?(msg: ChatMsg): void;
   onEvent?(msg: EventMsg): void;
   onRoomState?(msg: RoomStateMsg): void;
+  onHurt?(msg: HurtMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -90,6 +97,11 @@ export interface NetClient {
   sendHit(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
+  sendAdminSetPvp(on: boolean): void;
+  sendAdminSetChat(on: boolean): void;
+  sendAdminKick(id: number): void;
+  sendAdminBan(id: number): void;
+  sendAttackPlayer(id: number): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -167,6 +179,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'room_state') {
       opts.handlers.onRoomState?.(msg);
+      return;
+    }
+    if (msg.t === 'hurt') {
+      opts.handlers.onHurt?.(msg);
       return;
     }
     if (msg.t === 'ping') {
@@ -270,6 +286,21 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminSetStructure(kind, allowed): void {
       rawSend(encodeClientMsg(adminSetStructure(kind, allowed)));
+    },
+    sendAdminSetPvp(on): void {
+      rawSend(encodeClientMsg(adminSetPvp(on)));
+    },
+    sendAdminSetChat(on): void {
+      rawSend(encodeClientMsg(adminSetChat(on)));
+    },
+    sendAdminKick(id): void {
+      rawSend(encodeClientMsg(adminKick(id)));
+    },
+    sendAdminBan(id): void {
+      rawSend(encodeClientMsg(adminBan(id)));
+    },
+    sendAttackPlayer(id): void {
+      rawSend(encodeClientMsg(attackPlayer(id)));
     },
     get ping(): number {
       return ping;
