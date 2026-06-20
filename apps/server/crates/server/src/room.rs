@@ -173,6 +173,9 @@ pub struct Room {
 }
 
 const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
+                                  // The ban/reclaim/idle sweep + admin telemetry don't need 30Hz; running them at ~2Hz keeps the hot tick
+                                  // loop cheap (no per-tick DashMap lookups or player clones) without users noticing the slower cadence.
+const STATUS_EVERY_TICKS: u64 = 15; // 0.5s @ 30Hz
 const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
 const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
 
@@ -958,48 +961,54 @@ impl Room {
     fn tick(&mut self, dt: f32) -> bool {
         self.tick += 1;
 
-        // Refill rate buckets and find idle players to drop.
-        let idle = Duration::from_secs(self.hub.limits.idle_secs);
-        let now = Instant::now();
-        let mut kicked: Vec<PlayerId> = Vec::new();
+        // Rate buckets must refill every tick so limits stay smooth.
         for p in self.players.values_mut() {
             p.move_b.refill(dt);
             p.edit_b.refill(dt);
             p.chat_b.refill(dt);
-            if self.hub.bans.is_banned(p.ip) {
-                let _ = p.conn.try_send(ServerMsg::Error {
-                    code: "banned".into(),
-                    msg: "Your access has been revoked.".into(),
-                });
-                tracing::debug!(id = %p.id, ip = %p.ip, "banned kick");
-                kicked.push(p.id);
-                continue;
-            }
-            // Kick-on-reclaim: a logged-in player whose claim is no longer the live one (someone
-            // re-claimed the account) is dropped. Guests (no account_id) are never affected.
-            let still_holds =
-                self.hub.claims.get(&p.account_id).as_deref() == Some(p.claim.as_str());
-            if !p.account_id.is_empty() && !still_holds {
-                let _ = p.conn.try_send(ServerMsg::Error {
-                    code: "reclaimed".into(),
-                    msg: "Your username was taken over from another device.".into(),
-                });
-                tracing::debug!(id = %p.id, account_id = %p.account_id, "reclaimed kick");
-                kicked.push(p.id);
-                continue;
-            }
-            if now.duration_since(p.last_seen) > idle {
-                let _ = p.conn.try_send(ServerMsg::Error {
-                    code: "idle_timeout".into(),
-                    msg: "You were idle for too long.".into(),
-                });
-                tracing::debug!(id = %p.id, "idle kick");
-                kicked.push(p.id);
-            }
         }
-        for id in kicked {
-            self.players.remove(&id);
-            self.broadcast(&ServerMsg::Left { id });
+
+        // The ban/reclaim/idle sweep (DashMap lookups per player) runs at ~2Hz, not every tick.
+        let now = Instant::now();
+        if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
+            let idle = Duration::from_secs(self.hub.limits.idle_secs);
+            let mut kicked: Vec<PlayerId> = Vec::new();
+            for p in self.players.values() {
+                if self.hub.bans.is_banned(p.ip) {
+                    let _ = p.conn.try_send(ServerMsg::Error {
+                        code: "banned".into(),
+                        msg: "Your access has been revoked.".into(),
+                    });
+                    tracing::debug!(id = %p.id, ip = %p.ip, "banned kick");
+                    kicked.push(p.id);
+                    continue;
+                }
+                // Kick-on-reclaim: a logged-in player whose claim is no longer the live one (someone
+                // re-claimed the account) is dropped. Guests (no account_id) are never affected.
+                let still_holds =
+                    self.hub.claims.get(&p.account_id).as_deref() == Some(p.claim.as_str());
+                if !p.account_id.is_empty() && !still_holds {
+                    let _ = p.conn.try_send(ServerMsg::Error {
+                        code: "reclaimed".into(),
+                        msg: "Your username was taken over from another device.".into(),
+                    });
+                    tracing::debug!(id = %p.id, account_id = %p.account_id, "reclaimed kick");
+                    kicked.push(p.id);
+                    continue;
+                }
+                if now.duration_since(p.last_seen) > idle {
+                    let _ = p.conn.try_send(ServerMsg::Error {
+                        code: "idle_timeout".into(),
+                        msg: "You were idle for too long.".into(),
+                    });
+                    tracing::debug!(id = %p.id, "idle kick");
+                    kicked.push(p.id);
+                }
+            }
+            for id in kicked {
+                self.players.remove(&id);
+                self.broadcast(&ServerMsg::Left { id });
+            }
         }
 
         // Server-initiated ping for authoritative latency measurement.
@@ -1057,7 +1066,9 @@ impl Room {
         };
         self.broadcast(&snap);
 
-        self.publish_stats(now);
+        if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
+            self.publish_stats(now);
+        }
 
         // Persist the world diff at most every PERSIST_SECS, and only when it changed.
         if self.tick.is_multiple_of(PERSIST_SECS * self.tick_hz as u64) {

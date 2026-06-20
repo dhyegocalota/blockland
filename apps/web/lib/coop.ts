@@ -18,7 +18,8 @@ import { t } from './i18n';
 
 // One persistent world per tenant (see apps/server model); the world name is fixed and global.
 export const MAIN_WORLD = 'main';
-const MOVE_SEND_HZ = 15;
+// Match the 30Hz server tick more closely so remote players get more position samples (smoother).
+const MOVE_SEND_HZ = 20;
 const MOVE_SEND_INTERVAL_MS = 1000 / MOVE_SEND_HZ;
 const AVATAR_HEIGHT = PLAYER_HEIGHT;
 const MODEL_HEIGHT = 1.8; // natural height of the humanoid before scaling to AVATAR_HEIGHT

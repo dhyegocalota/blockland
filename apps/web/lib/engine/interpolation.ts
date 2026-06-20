@@ -21,7 +21,8 @@ export interface RemotePose {
 }
 
 // Render this many milliseconds behind the newest sample so there is always a pair to lerp between.
-export const INTERP_DELAY_MS = 120;
+// Tuned to the 30Hz snapshot + 20Hz move rate: ~2-3 samples of buffer, snappier than the old 120ms.
+export const INTERP_DELAY_MS = 100;
 // Drop samples older than this to bound memory and ignore stale history after a reconnect.
 export const INTERP_BUFFER_MS = 1000;
 
