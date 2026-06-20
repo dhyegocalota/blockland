@@ -10,9 +10,11 @@ services:
       BIND: 0.0.0.0:8080
       RUST_LOG: info,server=debug
       WORLD_DIR: /data/worlds
+      DATABASE_PATH: /data/db/blockland.db
     volumes:
       - ./apps/server/tenants.toml:/etc/teocraft/tenants.toml:ro
       - blockland-worlds:/data/worlds
+      - blockland-db:/data/db
     restart: unless-stopped
     # keep an abuser/runaway from eating the host
     mem_limit: 256m
@@ -26,3 +28,4 @@ services:
 
 volumes:
   blockland-worlds:
+  blockland-db:

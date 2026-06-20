@@ -1013,6 +1013,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_flow_account_submit_then_top_scores() {
+        let db = memory_db().await;
+        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        db.submit_score(&ann, 42).await.unwrap();
+
+        let top = db.top_scores("teo", default_top_limit()).await.unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].name, "Ann");
+        assert_eq!(top[0].score, 42);
+    }
+
+    #[tokio::test]
+    async fn top_scores_hides_rows_whose_account_was_wiped() {
+        // The leaderboard JOINs scores onto accounts. If accounts are lost but score rows survive
+        // (a half-restored db), the row silently vanishes from the board.
+        let db = memory_db().await;
+        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        db.submit_score(&ann, 99).await.unwrap();
+        db.conn
+            .execute("DELETE FROM accounts WHERE account_id = ?1", params![ann])
+            .await
+            .unwrap();
+
+        assert!(db
+            .top_scores("teo", default_top_limit())
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
     async fn leaderboard_keeps_best_score_per_account() {
         let db = memory_db().await;
         let ann = account(&db, "teo", "ann@x.com", "Ann").await;

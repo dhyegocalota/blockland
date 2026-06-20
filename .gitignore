@@ -2,6 +2,10 @@ node_modules
 .next
 out
 .DS_Store
+
+# Local env files with secrets (.env.sample stays tracked as the template)
+.env
+.env*.local
 npm-debug.log*
 .playwright-mcp
 *.jpeg
