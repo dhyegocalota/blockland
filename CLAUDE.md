@@ -9,7 +9,8 @@ game client, `/admin`, libSQL tenant store) and `apps/server` (Rust authoritativ
   User-facing text goes through the i18n layer (`apps/web/lib/i18n`, **pt-BR is the default**
   display locale, en-US available). Tenant content (name/tagline/etc.) is data, not code.
 - **Tests for absolutely everything, especially game logic.** Unit-test every pure module;
-  cover the rendering/glue with e2e.
+  cover the rendering/glue with e2e. EVERY new or changed behavior — client or server — ships with its
+  automated test in the SAME change, before committing. Missing tests = the task failed, no exceptions.
 - **Colocate tests next to the implementation:** `worldgen.ts` → `worldgen.test.ts` in the same
   folder. Never a separate `test/`/`__tests__/` dir. (Rust uses `#[cfg(test)] mod tests` in-file.)
 - **Keep the game engine small and modular.** Pure logic (worldgen, world store, physics,

@@ -40,6 +40,14 @@ const DESPAWN_RADIUS: f32 = 64.0;
 const SPAWN_EVERY_TICKS: u64 = 5;
 // A player must be within this distance of a creature for a Hit to land (anti-cheat melee range).
 const MELEE_RANGE: f32 = 4.0;
+// Player health + how a hostile creature bites it. Mirrors the web rules (MAX_HEARTS, hurt.ts, the 1.2s
+// hurt cooldown) so survival is identical, only now owned by the server.
+const MAX_HP: u8 = 3;
+const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
+const HURT_RANGE: f32 = 1.2;
+const HURT_LEVEL_SLACK: f32 = 0.5;
+const PLAYER_EYE_HEIGHT: f32 = 1.55;
+const PLAYER_BODY_HEIGHT: f32 = 1.7;
 
 /// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
 pub struct Appearance {
@@ -129,6 +137,9 @@ struct Player {
     // False until the player's first in-world move is accepted. That first move is taken verbatim as the
     // anti-cheat baseline (the client spawns/restores wherever it likes); only later moves are speed-checked.
     move_synced: bool,
+    // Server-owned health: hearts left, and when the player last took damage (for the hurt cooldown).
+    hp: u8,
+    hurt_at: Instant,
     joined_at_ms: u64,
     ping_nonce: u32,
     ping_sent_at: Instant,
@@ -386,6 +397,8 @@ impl Room {
             last_seen: now,
             last_move: now,
             move_synced: false,
+            hp: MAX_HP,
+            hurt_at: now,
             joined_at_ms: epoch_ms(),
             ping_nonce: 0,
             ping_sent_at: now,
@@ -515,6 +528,13 @@ impl Room {
                 p.last_seen = now;
             }
             self.on_hit(id, creature_id);
+            return;
+        }
+        if let ClientMsg::Respawn = msg {
+            if let Some(p) = self.players.get_mut(&id) {
+                p.last_seen = now;
+            }
+            self.respawn(id);
             return;
         }
 
@@ -650,7 +670,8 @@ impl Room {
             | ClientMsg::AdminResetWorld
             | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AttackPlayer { .. }
-            | ClientMsg::Hit { .. } => { /* handled before the per-player borrow above */ }
+            | ClientMsg::Hit { .. }
+            | ClientMsg::Respawn => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
         }
 
@@ -893,14 +914,22 @@ impl Room {
         let Some(target) = self.players.get(&target_id) else {
             return;
         };
-        let dist = ((target.x - attacker_x).powi(2)
-            + (target.y - attacker_y).powi(2)
-            + (target.z - attacker_z).powi(2))
+        let (target_x, target_y, target_z) = (target.x, target.y, target.z);
+        let dist = ((target_x - attacker_x).powi(2)
+            + (target_y - attacker_y).powi(2)
+            + (target_z - attacker_z).powi(2))
         .sqrt();
         if dist > MELEE_RANGE {
             tracing::debug!(%attacker_id, %target_id, dist, "pvp attack rejected: out of range");
             return;
         }
+        // Hearts are server-owned: apply the damage, flash the target, and respawn it if it ran out.
+        let Some(target) = self.players.get_mut(&target_id) else {
+            return;
+        };
+        target.hp = target.hp.saturating_sub(1);
+        target.hurt_at = Instant::now();
+        let died = target.hp == 0;
         let _ = target.conn.try_send(ServerMsg::Hurt { by: attacker_name });
         // Everyone but the attacker sees the same hit effect on the target.
         self.broadcast_except(
@@ -910,6 +939,9 @@ impl Room {
                 id: target_id,
             },
         );
+        if died {
+            self.respawn(target_id);
+        }
         tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
     }
 
@@ -1001,6 +1033,7 @@ impl Room {
                 pitch: p.pitch,
                 ping_ms: p.ping_ms,
                 score: p.score,
+                hp: p.hp,
             })
             .collect();
         let creatures: Vec<CreatureState> = self
@@ -1085,6 +1118,70 @@ impl Room {
         for creature in self.creatures.iter_mut() {
             creature.advance(&player_xz, peace, dt, tick, |x, z| world.surface_y(x, z));
         }
+        if peace {
+            return;
+        }
+        // A hostile creature out in the open (not buried) at the player's level bites for one heart, on
+        // the same cooldown the web used. Health is the server's now; the client only renders it.
+        let biters: Vec<[f32; 3]> = self
+            .creatures
+            .iter()
+            .filter(|c| c.kind.config().hostile)
+            .filter(|c| {
+                !world.is_solid(
+                    c.pos[0].floor() as i32,
+                    c.pos[1].floor() as i32 + 1,
+                    c.pos[2].floor() as i32,
+                )
+            })
+            .map(|c| c.pos)
+            .collect();
+        let now = Instant::now();
+        let mut dead: Vec<PlayerId> = Vec::new();
+        for p in self.players.values_mut() {
+            if now.duration_since(p.hurt_at) < HURT_COOLDOWN {
+                continue;
+            }
+            let feet = p.y - PLAYER_EYE_HEIGHT;
+            let bitten = biters.iter().any(|c| {
+                ((p.x - c[0]).powi(2) + (p.z - c[2]).powi(2)).sqrt() < HURT_RANGE
+                    && c[1] >= feet - HURT_LEVEL_SLACK
+                    && c[1] <= feet + PLAYER_BODY_HEIGHT
+            });
+            if !bitten {
+                continue;
+            }
+            p.hp = p.hp.saturating_sub(1);
+            p.hurt_at = now;
+            let _ = p.conn.try_send(ServerMsg::Hurt { by: String::new() });
+            if p.hp == 0 {
+                dead.push(p.id);
+            }
+        }
+        for id in dead {
+            self.respawn(id);
+        }
+    }
+
+    /// Move a player to spawn with full health and re-baseline the anti-cheat (so the client's snap to
+    /// spawn is accepted), telling them to reposition + refill. Used by the respawn request and on death.
+    fn respawn(&mut self, id: PlayerId) {
+        let spawn = World::spawn();
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        p.x = spawn[0];
+        p.y = spawn[1];
+        p.z = spawn[2];
+        p.hp = MAX_HP;
+        p.hurt_at = Instant::now();
+        p.move_synced = false;
+        let _ = p.conn.try_send(ServerMsg::Respawn {
+            x: spawn[0],
+            y: spawn[1],
+            z: spawn[2],
+            hp: MAX_HP,
+        });
     }
 
     /// Spawn one creature near a player, kind and offset derived from the creature id and tick so the
@@ -1289,6 +1386,8 @@ mod tests {
             last_seen: now,
             last_move: now,
             move_synced: false,
+            hp: MAX_HP,
+            hurt_at: now,
             joined_at_ms: 0,
             ping_nonce: 0,
             ping_sent_at: now,
@@ -1400,6 +1499,96 @@ mod tests {
             },
         );
         assert_eq!(room.players.get(&1).unwrap().x, 50.0);
+    }
+
+    // Stand a player on the open ground with a hostile creature spawned on the same spot, so after the
+    // sim advances it they are at the same level and within bite range.
+    fn bite_setup(room: &mut Room) {
+        room.peace = false;
+        let spider = Creature::spawn(99, CreatureKind::Spider, 40.0, 40.0, |x, z| {
+            room.world.surface_y(x, z)
+        });
+        let feet = spider.pos[1];
+        let p = room.players.get_mut(&1).unwrap();
+        p.x = 40.0;
+        p.z = 40.0;
+        p.y = feet + PLAYER_EYE_HEIGHT;
+        p.hurt_at = Instant::now() - Duration::from_secs(5);
+        room.creatures.clear();
+        room.creatures.push(spider);
+    }
+
+    #[tokio::test]
+    async fn a_hostile_creature_bite_drops_a_heart_server_side() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        bite_setup(&mut room);
+        room.simulate_creatures(0.1);
+        assert_eq!(room.players.get(&1).unwrap().hp, MAX_HP - 1);
+    }
+
+    #[tokio::test]
+    async fn a_bite_that_empties_the_hearts_respawns_at_spawn() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        bite_setup(&mut room);
+        room.players.get_mut(&1).unwrap().hp = 1;
+        room.simulate_creatures(0.1);
+        let spawn = World::spawn();
+        let p = room.players.get(&1).unwrap();
+        assert_eq!(p.hp, MAX_HP);
+        assert_eq!(p.x, spawn[0]);
+        assert!(
+            (0..50)
+                .filter_map(|_| rx.try_recv().ok())
+                .any(|m| matches!(m, ServerMsg::Respawn { .. })),
+            "the player is told it respawned",
+        );
+    }
+
+    #[tokio::test]
+    async fn respawn_request_recenters_refills_and_notifies() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        {
+            let p = room.players.get_mut(&1).unwrap();
+            p.x = 200.0;
+            p.hp = 1;
+            p.move_synced = true;
+        }
+        room.on_input(1, ClientMsg::Respawn);
+        let spawn = World::spawn();
+        let p = room.players.get(&1).unwrap();
+        assert_eq!(p.x, spawn[0]);
+        assert_eq!(p.hp, MAX_HP);
+        assert!(
+            !p.move_synced,
+            "the anti-cheat baseline resets so the snap is accepted"
+        );
+        assert!((0..50)
+            .filter_map(|_| rx.try_recv().ok())
+            .any(|m| matches!(m, ServerMsg::Respawn { .. })),);
+    }
+
+    #[tokio::test]
+    async fn pvp_hit_drops_the_targets_heart_on_the_server() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        add_player(&mut room, 2, false);
+        room.pvp = true;
+        for id in [1, 2] {
+            let p = room.players.get_mut(&id).unwrap();
+            p.x = 0.0;
+            p.y = 0.0;
+            p.z = 0.0;
+        }
+        room.on_attack_player(1, 2);
+        assert_eq!(room.players.get(&2).unwrap().hp, MAX_HP - 1);
+        assert_eq!(
+            room.players.get(&1).unwrap().hp,
+            MAX_HP,
+            "the attacker is unharmed"
+        );
     }
 
     #[tokio::test]

@@ -11,6 +11,14 @@ html.game, body.game { overflow: hidden; }
 canvas { display: block; }
 input, textarea, select { font-size: max(16px, 1em); }
 
+/* Point-of-view damage cue: a red wash that pulses when you take a hit (monster or pvp). */
+#hurtFlash {
+  position: fixed; inset: 0; z-index: 40; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 38%, rgba(196, 0, 0, .62) 100%);
+}
+#hurtFlash.show { animation: hurtFlash .45s ease-out; }
+@keyframes hurtFlash { 0% { opacity: 0; } 14% { opacity: 1; } 100% { opacity: 0; } }
+
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
 /* ---------- Crosshair ---------- */

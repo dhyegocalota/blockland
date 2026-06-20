@@ -23,6 +23,7 @@ import {
   move,
   parseServerMsg,
   pong,
+  respawn,
   type EditCell,
   type EditOp,
   type Role,
@@ -53,6 +54,7 @@ type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
 type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
+type RespawnMsg = Extract<ServerMsg, { t: 'respawn' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -66,6 +68,7 @@ export interface NetHandlers {
   onHurt?(msg: HurtMsg): void;
   onRole?(msg: RoleMsg): void;
   onAttack?(msg: AttackMsg): void;
+  onRespawn?(msg: RespawnMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -102,6 +105,7 @@ export interface NetClient {
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
   sendHit(id: number): void;
+  sendRespawn(): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
   sendAdminSetPvp(on: boolean): void;
@@ -200,6 +204,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'attack') {
       opts.handlers.onAttack?.(msg);
+      return;
+    }
+    if (msg.t === 'respawn') {
+      opts.handlers.onRespawn?.(msg);
       return;
     }
     if (msg.t === 'ping') {
@@ -306,6 +314,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendHit(id): void {
       rawSend(encodeClientMsg(hit(id)));
+    },
+    sendRespawn(): void {
+      rawSend(encodeClientMsg(respawn()));
     },
     sendAdminSetPeace(on): void {
       rawSend(encodeClientMsg(adminSetPeace(on)));

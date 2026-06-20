@@ -38,6 +38,8 @@ export const pong = (nonce: number): ClientMsg => ({ t: 'pong', nonce });
 
 export const hit = (id: number): ClientMsg => ({ t: 'hit', id });
 
+export const respawn = (): ClientMsg => ({ t: 'respawn' });
+
 export const chat = (text: string): ClientMsg => ({ t: 'chat', text });
 
 export const editBatch = (edits: EditCell[]): ClientMsg => ({ t: 'edit_batch', edits });

@@ -86,6 +86,9 @@ pub enum ClientMsg {
         id: u32,
         role: Role,
     },
+    /// Ask the server to send the player back to spawn (the "back to start" button, and on death). The
+    /// server moves them authoritatively and re-baselines the anti-cheat so the teleport is not rejected.
+    Respawn,
 }
 
 /// A player's capability tier on the wire. Mirrors the server `db::Role`.
@@ -188,6 +191,14 @@ pub enum ServerMsg {
         kind: String,
         id: u32,
     },
+    /// The server moved this player to spawn (on request or death) with full health; the client snaps
+    /// its position onto it (re-baselining the anti-cheat) and refills its hearts.
+    Respawn {
+        x: f32,
+        y: f32,
+        z: f32,
+        hp: u8,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -204,6 +215,7 @@ pub struct PlayerState {
     pub pitch: f32,
     pub ping_ms: u32,
     pub score: u32,
+    pub hp: u8,
 }
 
 /// A server-simulated creature every client renders identically. `hp` of 0 never appears (it is

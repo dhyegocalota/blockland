@@ -83,6 +83,7 @@ export default function Game() {
 
   return (
     <>
+      <div id="hurtFlash"></div>
       <div id="hud">
         <div id="topbar">
           <img src={brand.avatar} alt={brand.hero} />

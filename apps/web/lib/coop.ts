@@ -90,6 +90,10 @@ export interface CoopOptions {
   // The server's authoritative spawn for this player (from Welcome). The engine snaps the local player
   // onto it so the server's anti-cheat baseline and the client agree from the first move.
   onSpawn(x: number, y: number, z: number): void;
+  // The server owns hearts: every snapshot carries this player's current health, and a Respawn message
+  // recenters them with full health on death or the back-to-spawn button.
+  onHealth(hp: number): void;
+  onRespawn(x: number, y: number, z: number, hp: number): void;
 }
 
 interface Avatar {
@@ -145,6 +149,7 @@ export interface CoopController {
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
   sendHit(id: number): void;
+  sendRespawn(): void;
   flashCreature(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
@@ -406,6 +411,7 @@ export function createCoop(opts: CoopOptions): CoopController {
           if (p.id === selfId) {
             selfPing = p.ping_ms;
             selfScore = p.score;
+            opts.onHealth(p.hp);
             continue;
           }
           seen.add(p.id);
@@ -507,6 +513,10 @@ export function createCoop(opts: CoopOptions): CoopController {
         const at = avatar.group.position;
         opts.onCreaturePoof({ x: at.x, y: at.y + PLAYER_HEIGHT / 2, z: at.z, color: PLAYER_HIT_COLOR });
       },
+      onRespawn: (msg) => {
+        opts.onRespawn(msg.x, msg.y, msg.z, msg.hp);
+        debug('coop', 'respawn', { x: msg.x, y: msg.y, z: msg.z, hp: msg.hp });
+      },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });
         opts.hud.onError(code);
@@ -529,6 +539,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendChat(text): void {
       net.sendChat(text);
+    },
+    sendRespawn(): void {
+      net.sendRespawn();
     },
     sendHit(id): void {
       net.sendHit(id);

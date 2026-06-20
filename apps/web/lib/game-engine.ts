@@ -19,7 +19,6 @@ import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './engin
 import { meshChunkBuckets } from './engine/meshing';
 import { sphereCastClosest } from './engine/sphere-cast';
 import { moveVector } from './engine/movement';
-import { canMonsterReachPlayer, HURT_BURIED_PROBE } from './engine/hurt';
 import { BlockInventory, hotbarCountLabel } from './engine/inventory';
 import { parseSavedPosition, serializeSavedPosition } from './engine/saved-position';
 import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from './engine/poofs';
@@ -394,11 +393,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     applyRoomState(next);
     bridge?.hud.onRoomState(next);
   }
-  // A pvp hit from another player costs one heart, reusing the same damage + death path as monsters.
+  // The server (which owns hearts in co-op) reports a hit — from a monster or another player. We only
+  // play the damage cue; the heart count itself arrives authoritatively in the next snapshot.
   function applyHurt(by: string): void {
-    if (player.hurtCooldown > 0) return;
-    hurtPlayer();
-    debug('engine', 'hurt by player', { by });
+    flashDamage();
+    debug('engine', 'hurt', { by });
   }
   function localPose(): { x: number; y: number; z: number; yaw: number; pitch: number } {
     return { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch };
@@ -432,7 +431,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     resetWorld: () => { if (coop) { coop.sendAdminResetWorld(); return; } resetLocalWorld(); },
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
     setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
-    returnToSpawn: () => { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); savePos(); },
+    returnToSpawn: () => {
+      if (coop) { coop.sendRespawn(); return; }
+      player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); savePos();
+    },
     debugSnapshot,
   });
 
@@ -505,34 +507,24 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       if (hostile && player.hurtCooldown === 0 && creatureBitesPlayer({ horizontalDistance: dist, verticalGap })) hurtPlayer();
     }
   }
-  function hurtPlayer(): void {
-    player.hearts -= 1;
-    player.hurtCooldown = 1.2;
+  // The point-of-view damage cue: a red wash over the screen, the hearts shake, and a thud. Driven by
+  // taking damage — locally offline, and by the server's Hurt message in co-op.
+  function flashDamage(): void {
     blip(140, 0.18);
     const heartsEl = el('hearts');
     heartsEl.classList.add('hit');
     setTimeout(() => heartsEl.classList.remove('hit'), 300);
+    const flash = el('hurtFlash');
+    flash.classList.remove('show');
+    void flash.offsetWidth;
+    flash.classList.add('show');
+  }
+  function hurtPlayer(): void {
+    player.hearts -= 1;
+    player.hurtCooldown = 1.2;
+    flashDamage();
     updateStats();
     if (player.hearts <= 0) napAndRespawn();
-  }
-  // In co-op the server owns the creatures, but each client still takes its own damage from the
-  // server-synced monsters when the room is not at peace (so monsters actually attack again).
-  function hurtFromServerCreatures(dt: number): void {
-    player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
-    if (peaceful || player.hurtCooldown > 0 || !coop) return;
-    const feet = player.pos.y - EYE_HEIGHT;
-    for (const cr of coop.getCreatures()) {
-      if (creatureDefFor(cr.kind).kind !== 'monster') continue;
-      const buried = isSolid(Math.floor(cr.x), Math.floor(cr.y + HURT_BURIED_PROBE), Math.floor(cr.z));
-      const reaches = canMonsterReachPlayer({
-        monster: { x: cr.x, y: cr.y, z: cr.z },
-        playerX: player.pos.x, playerFeetY: feet, playerZ: player.pos.z,
-        playerHeight: PLAYER_HEIGHT, buried,
-      });
-      if (!reaches) continue;
-      hurtPlayer();
-      return;
-    }
   }
   function napAndRespawn(): void {
     toast(t('toast.nap'));
@@ -1068,7 +1060,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     last = frame.last;
     const dt = frame.dt;
     fps = smoothFps({ fps, dt });
-    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (coop) hurtFromServerCreatures(dt); else updateCreatures(dt); updatePoofs(dt); }
+    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (!coop) updateCreatures(dt); updatePoofs(dt); }
     if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
     if (started && now - lastPosSave > POS_SAVE_MS) { savePos(); lastPosSave = now; }
     renderer.render(scene, camera);
@@ -1136,6 +1128,14 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       onCreaturePoof: ({ x, y, z, color }) => spawnPoof(new THREE.Vector3(x, y, z), color),
       onWorldReset: resetLocalWorld,
       onSpawn: (x, y, z) => { player.pos.set(x, y, z); player.vel.set(0, 0, 0); },
+      onHealth: (hp) => { player.hearts = hp; updateStats(); },
+      onRespawn: (x, y, z, hp) => {
+        player.pos.set(x, y, z);
+        player.vel.set(0, 0, 0);
+        player.hearts = hp;
+        updateStats();
+        toast(t('toast.nap'));
+      },
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }
