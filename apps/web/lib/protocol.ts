@@ -60,6 +60,8 @@ export const adminBan = (id: number): ClientMsg => ({ t: 'admin_ban', id });
 
 export const attackPlayer = (id: number): ClientMsg => ({ t: 'attack_player', id });
 
+export const adminResetWorld = (): ClientMsg => ({ t: 'admin_reset_world' });
+
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 
 export const parseServerMsg = (data: string): ServerMsg => JSON.parse(data) as ServerMsg;

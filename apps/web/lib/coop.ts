@@ -27,6 +27,9 @@ const LABEL_PIXEL_SCALE = 0.012;
 const BUBBLE_LIFT = 0.95;
 const BUBBLE_PIXEL_SCALE = 0.0125;
 const BUBBLE_TTL_MS = 6000;
+// On a world reset the simplest correct client reset is a full reload so every client re-fetches the
+// fresh world; the short delay lets the feed entry render first.
+const RESET_RELOAD_DELAY_MS = 1500;
 const PANTS = '#2f3a8c'; // dark trousers, common to every character
 
 export interface Appearance {
@@ -136,6 +139,7 @@ export interface CoopController {
   sendAdminKick(id: number): void;
   sendAdminBan(id: number): void;
   sendAttackPlayer(id: number): void;
+  sendAdminResetWorld(): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
@@ -429,6 +433,11 @@ export function createCoop(opts: CoopOptions): CoopController {
           opts.hud.onEvent({ kind: 'kill', name: msg.name, detail: t(creatureNameKey(msg.detail)) });
           return;
         }
+        if (msg.kind === 'reset') {
+          opts.hud.onEvent({ kind: 'reset', name: msg.name });
+          window.setTimeout(() => window.location.reload(), RESET_RELOAD_DELAY_MS);
+          return;
+        }
         if (msg.kind === 'rename') renameAvatar(msg.detail, msg.name);
         opts.hud.onEvent({ kind: 'rename', name: msg.name, detail: msg.detail });
       },
@@ -493,6 +502,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAttackPlayer(id): void {
       net.sendAttackPlayer(id);
+    },
+    sendAdminResetWorld(): void {
+      net.sendAdminResetWorld();
     },
     update(now): void {
       for (const avatar of avatars.values()) {

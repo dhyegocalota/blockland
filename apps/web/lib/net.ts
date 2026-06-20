@@ -7,6 +7,7 @@ import { debug } from './log';
 import {
   adminBan,
   adminKick,
+  adminResetWorld,
   adminSetChat,
   adminSetPeace,
   adminSetPvp,
@@ -102,6 +103,7 @@ export interface NetClient {
   sendAdminKick(id: number): void;
   sendAdminBan(id: number): void;
   sendAttackPlayer(id: number): void;
+  sendAdminResetWorld(): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -310,6 +312,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAttackPlayer(id): void {
       rawSend(encodeClientMsg(attackPlayer(id)));
+    },
+    sendAdminResetWorld(): void {
+      rawSend(encodeClientMsg(adminResetWorld()));
     },
     get ping(): number {
       return ping;

@@ -474,6 +474,13 @@ impl Room {
             return;
         }
 
+        // Resetting the world wipes shared state (edits + creatures), so it is handled before the
+        // single-player borrow below.
+        if let ClientMsg::AdminResetWorld = msg {
+            self.on_admin_reset_world(id);
+            return;
+        }
+
         // A PvP attack reads both the attacker and the target, so it is handled before the single
         // borrow below as well.
         if let ClientMsg::AttackPlayer { id: target } = msg {
@@ -620,6 +627,7 @@ impl Room {
             | ClientMsg::AdminSetChat { .. }
             | ClientMsg::AdminKick { .. }
             | ClientMsg::AdminBan { .. }
+            | ClientMsg::AdminResetWorld
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. } => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
@@ -728,6 +736,32 @@ impl Room {
         self.players.remove(&target_id);
         self.broadcast(&ServerMsg::Left { id: target_id });
         tracing::info!(tenant = %self.key.0, %admin_id, %target_id, ban, "player removed by admin");
+    }
+
+    /// Admin-gated world wipe: replace the world with a fresh one (clearing every edit), drop all
+    /// creatures and reset the id counter, persist the cleared world, and broadcast a "reset" event so
+    /// every client rebuilds the procedural map. Never trust the client: ignore unless an admin sent it.
+    fn on_admin_reset_world(&mut self, id: PlayerId) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "admin command ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        self.world = World::new();
+        self.creatures.clear();
+        self.next_creature_id = 1;
+        self.dirty = true;
+        self.flush();
+        self.broadcast(&ServerMsg::Event {
+            kind: "reset".into(),
+            name: admin_name,
+            detail: String::new(),
+        });
+        tracing::info!(tenant = %self.key.0, %id, "world reset by admin");
     }
 
     /// A PvP melee attack on another player. Ignored unless pvp is on and the attacker is within melee
@@ -917,8 +951,9 @@ impl Room {
         }
         let peace = self.peace;
         let tick = self.tick;
-        for creature in &mut self.creatures {
-            creature.advance(&player_xz, peace, dt, tick, sim::height_at);
+        let world = &self.world;
+        for creature in self.creatures.iter_mut() {
+            creature.advance(&player_xz, peace, dt, tick, |x, z| world.surface_y(x, z));
         }
     }
 
@@ -933,8 +968,9 @@ impl Room {
         let x = anchor[0] + angle.cos() * radius;
         let z = anchor[1] + angle.sin() * radius;
         let kind = CreatureKind::ALL[id as usize % CreatureKind::ALL.len()];
-        self.creatures
-            .push(Creature::spawn(id, kind, x, z, sim::height_at));
+        let world = &self.world;
+        let creature = Creature::spawn(id, kind, x, z, |cx, cz| world.surface_y(cx, cz));
+        self.creatures.push(creature);
         tracing::debug!(tenant = %self.key.0, id, kind = kind.slug(), "creature spawned");
     }
 
@@ -1479,6 +1515,52 @@ mod tests {
         ));
         room.simulate_creatures(0.05);
         assert!(room.creatures.is_empty(), "no players means no creatures");
+    }
+
+    fn drain_reset_event(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<String> {
+        let mut latest = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::Event { kind, name, .. } = msg {
+                if kind == "reset" {
+                    latest = Some(name);
+                }
+            }
+        }
+        latest
+    }
+
+    #[tokio::test]
+    async fn admin_reset_clears_world_and_creatures_and_broadcasts() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        let mut other_rx = add_player(&mut room, 2, false);
+        room.world.set(5, 6, 7, sim::STONE);
+        room.creatures.push(Creature::spawn(
+            9,
+            CreatureKind::Pig,
+            0.0,
+            0.0,
+            sim::height_at,
+        ));
+        room.next_creature_id = 42;
+
+        room.on_input(1, ClientMsg::AdminResetWorld);
+        assert_eq!(room.world.edit_count(), 0, "all edits are wiped");
+        assert!(room.creatures.is_empty(), "all creatures are cleared");
+        assert_eq!(room.next_creature_id, 1, "the id counter is reset");
+        assert_eq!(drain_reset_event(&mut admin_rx), Some("p1".into()));
+        assert_eq!(drain_reset_event(&mut other_rx), Some("p1".into()));
+    }
+
+    #[tokio::test]
+    async fn non_admin_reset_is_ignored() {
+        let mut room = test_room().await;
+        let mut other_rx = add_player(&mut room, 2, false);
+        room.world.set(5, 6, 7, sim::STONE);
+
+        room.on_input(2, ClientMsg::AdminResetWorld);
+        assert_eq!(room.world.edit_count(), 1, "a non-admin cannot reset");
+        assert_eq!(drain_reset_event(&mut other_rx), None);
     }
 
     #[tokio::test]

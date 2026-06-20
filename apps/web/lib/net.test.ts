@@ -292,6 +292,8 @@ describe('net client', () => {
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_ban', id: 4 }));
     client.sendAttackPlayer(5);
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'attack_player', id: 5 }));
+    client.sendAdminResetWorld();
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_reset_world' }));
   });
 
   it('does not reconnect when reconnect is disabled', () => {

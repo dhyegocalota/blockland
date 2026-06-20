@@ -386,6 +386,13 @@ canvas { display: block; }
 #adminStructures button.blocked { background: rgba(255,93,46,.4); }
 #adminPlayers button.kick { background: rgba(255,210,63,.3); }
 #adminPlayers button.ban { background: rgba(255,93,46,.45); }
+#adminReset {
+  font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
+  background: rgba(255,46,46,.45); border: 2px solid rgba(255,93,46,.7); border-radius: 10px;
+  padding: 6px 10px; transition: transform .08s;
+}
+#adminReset.armed { background: rgba(255,46,46,.85); border-color: #fff; }
+#adminReset:active { transform: translateY(2px); }
 
 /* On phones the centered top bar used to wrap into a tall column that the side panels collided with.
    Keep it to a single compact row so the presence + admin panels sit clear just below it. */
@@ -397,7 +404,8 @@ canvas { display: block; }
   #topbar img { width: 32px; height: 32px; }
   #topbar .title { font-size: 15px; }
   #topbar .stat { font-size: 12px; padding: 3px 8px; }
-  #presence, #adminPanel { top: 58px; }
+  #presence { top: 58px; }
+  #adminPanel { top: 48px; }
   #adminBody { max-height: 46vh; overflow-y: auto; }
 }
 
@@ -515,6 +523,10 @@ body.is-touch #buildMenu .buildCard { width: 150px; padding: 12px 8px; font-size
 body.is-touch #buildMenu .buildCard .emoji { font-size: 40px; }
 body.is-touch #buildMenu h2 { font-size: 22px; margin-bottom: 8px; }
 body.is-touch #buildMenu .buildHint { margin: 6px 0 12px; font-size: 13px; }
+/* Lift chat + feed clear above the on-screen joystick (left:14px bottom:14px ~108px tall) so taps
+   on the joystick never land on the chat input or log. */
+body.is-touch #chat { bottom: 140px; }
+body.is-touch #feed { bottom: 196px; }
 
 /* landscape phones: spread controls so nothing stacks on top of each other */
 @media (orientation: landscape) {

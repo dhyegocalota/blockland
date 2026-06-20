@@ -89,6 +89,7 @@ export interface CoopBridge {
     setAdminChat(on: boolean): void;
     kickPlayer(id: number): void;
     banPlayer(id: number): void;
+    resetWorld(): void;
     debugSnapshot(): DebugSnapshot;
   }): void;
 }
@@ -411,6 +412,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     setAdminChat: (on) => coop?.sendAdminSetChat(on),
     kickPlayer: (id) => coop?.sendAdminKick(id),
     banPlayer: (id) => coop?.sendAdminBan(id),
+    resetWorld: () => coop?.sendAdminResetWorld(),
     debugSnapshot,
   });
 
@@ -958,12 +960,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       hideBuildMenu();
     }, { signal });
   });
-  // Disabled blocked structure cards so a player can't pick what an admin has blocked room-wide.
+  // Hide blocked structure cards so a player never sees what an admin has blocked room-wide;
+  // unblocked ones reappear. buildStructure still guards against a stale blocked pick.
   function syncBuildMenu(): void {
     buildMenuEl.querySelectorAll<HTMLButtonElement>('.buildCard').forEach((btn) => {
       const kind = btn.dataset.kind;
       if (!kind) throw new Error('build card missing data-kind');
-      btn.disabled = blockedStructures.has(kind);
+      btn.style.display = blockedStructures.has(kind) ? 'none' : '';
     });
   }
 

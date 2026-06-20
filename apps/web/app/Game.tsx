@@ -20,6 +20,9 @@ const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as con
 const DEFAULT_LOOK: Appearance = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
 const CHAT_BACKLOG = 6;
 const CHAT_FADE_MS = 8000;
+// World reset is destructive, so the first click only arms it; the admin must confirm within this
+// window or it disarms itself — a misclick can never wipe the world.
+const RESET_ARM_MS = 4000;
 
 function loadLook(): Appearance {
   if (typeof window === 'undefined') return DEFAULT_LOOK;
@@ -48,12 +51,14 @@ const FEED_ICONS: Record<FeedEvent['kind'], string> = {
   chat: '💬',
   rename: '✏️',
   kill: '⚔️',
+  reset: '🌍',
 };
 
 function feedText(entry: FeedEntry): string {
   if (entry.kind === 'kill' && entry.detail) return t('feed.kill', { name: entry.name, detail: entry.detail });
   if (entry.kind === 'rename' && entry.detail) return t('feed.renamed', { old: entry.detail, name: entry.name });
   if (entry.kind === 'rename') return entry.name;
+  if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });
   return t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name });
 }
 
@@ -83,6 +88,7 @@ interface GameApi {
   setAdminChat(on: boolean): void;
   kickPlayer(id: number): void;
   banPlayer(id: number): void;
+  resetWorld(): void;
   debugSnapshot(): DebugSnapshot;
 }
 
@@ -123,8 +129,10 @@ export default function Game() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [room, setRoom] = useState<RoomState>({ peace: true, blockedStructures: [], pvp: false, chatEnabled: true });
   const [adminOpen, setAdminOpen] = useState(false);
+  const [resetArmed, setResetArmed] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
+  const resetArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const soloRef = useRef(false);
   const loginClearedRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -244,6 +252,18 @@ export default function Game() {
   const banPlayer = useCallback((id: number) => {
     gameApiRef.current?.banPlayer(id);
   }, []);
+
+  const resetWorld = useCallback(() => {
+    if (!resetArmed) {
+      setResetArmed(true);
+      if (resetArmTimer.current) clearTimeout(resetArmTimer.current);
+      resetArmTimer.current = setTimeout(() => setResetArmed(false), RESET_ARM_MS);
+      return;
+    }
+    if (resetArmTimer.current) clearTimeout(resetArmTimer.current);
+    setResetArmed(false);
+    gameApiRef.current?.resetWorld();
+  }, [resetArmed]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -536,6 +556,9 @@ export default function Game() {
                   );
                 })}
               </ul>
+              <button id="adminReset" className={resetArmed ? 'armed' : undefined} onClick={resetWorld}>
+                {resetArmed ? t('game_admin.reset_confirm') : t('game_admin.reset')}
+              </button>
             </div>
           )}
         </div>

@@ -71,6 +71,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.players': 'Jogadores',
     'game_admin.kick': 'Expulsar',
     'game_admin.ban': 'Banir',
+    'game_admin.reset': '🌍 Resetar mundo',
+    'game_admin.reset_confirm': '⚠️ Confirmar reset?',
 
     // Start screen
     'start.record': '🏆 Recorde: 0',
@@ -155,6 +157,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.left': '{name} saiu',
     'feed.renamed': '{old} agora é {name}',
     'feed.kill': '{name} derrotou um {detail}',
+    'feed.reset': '🌍 {name} resetou o mundo',
 
     // Change name (logged-in rename)
 
@@ -360,6 +363,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.players': 'Players',
     'game_admin.kick': 'Kick',
     'game_admin.ban': 'Ban',
+    'game_admin.reset': '🌍 Reset world',
+    'game_admin.reset_confirm': '⚠️ Confirm reset?',
 
     // Start screen
     'start.record': '🏆 Record: 0',
@@ -444,6 +449,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.left': '{name} left',
     'feed.renamed': '{old} is now {name}',
     'feed.kill': '{name} beat a {detail}',
+    'feed.reset': '🌍 {name} reset the world',
 
     // Change name (logged-in rename)
 

@@ -64,6 +64,11 @@ describe('pushFeed', () => {
     expect(second).toHaveLength(2);
   });
 
+  it('appends a reset system event carrying the admin name', () => {
+    const entries = pushFeed({ entries: [], event: { kind: 'reset', name: 'Maria' }, id: 0, now: 100 });
+    expect(entries).toEqual([{ kind: 'reset', name: 'Maria', id: 0, at: 100 }]);
+  });
+
   it('caps the visible list to the last FEED_VISIBLE entries', () => {
     const entries = Array.from({ length: FEED_VISIBLE + 3 }).reduce<FeedEntry[]>(
       (acc, _unused, index) => pushFeed({ entries: acc, event: { kind: 'join', name: `P${index}` }, id: index, now: index }),

@@ -246,6 +246,30 @@ mod tests {
     }
 
     #[test]
+    fn does_not_clip_out_of_a_deep_dug_pit() {
+        // A creature standing at the floor of a 3-deep pit (surface 5) with surrounding ground at 8.
+        // The two-block-plus rise traps it, so it never clips up through the pit wall.
+        let surface = |x: i32, _z: i32| if x >= 3 { 8 } else { 5 };
+        let mut c = Creature::spawn(1, CreatureKind::Slime, 1.0, 0.5, surface);
+        for _ in 0..300 {
+            c.advance(&[[10.0, 0.5]], false, 0.1, 0, surface);
+        }
+        assert!(c.pos[0] < 3.0, "trapped below the pit wall, x={}", c.pos[0]);
+        assert!(c.pos[1] < 8.0, "never clips up the wall, y={}", c.pos[1]);
+    }
+
+    #[test]
+    fn steps_up_a_single_block_rise() {
+        // A one-block rise (5 -> 6) is still climbable, so the creature steps up onto it.
+        let surface = |x: i32, _z: i32| if x >= 3 { 6 } else { 5 };
+        let mut c = Creature::spawn(1, CreatureKind::Slime, 1.0, 0.5, surface);
+        for _ in 0..200 {
+            c.advance(&[[10.0, 0.5]], false, 0.1, 0, surface);
+        }
+        assert!(c.pos[0] > 3.0, "steps up the single block, x={}", c.pos[0]);
+    }
+
+    #[test]
     fn hostile_approaches_player_when_not_peace() {
         let mut spider = Creature::spawn(7, CreatureKind::Spider, 0.0, 0.0, flat());
         let player = [[0.0_f32, 6.0_f32]];

@@ -167,6 +167,15 @@ impl World {
         v != AIR && v != WATER
     }
 
+    /// The topmost solid block y in a column, accounting for player edits (the edit-aware analog of
+    /// [`height_at`]). Scans the column top-down; returns 0 (the bedrock floor) when nothing is solid.
+    pub fn surface_y(&self, x: i32, z: i32) -> i32 {
+        (0..SIZE_Y)
+            .rev()
+            .find(|&y| self.is_solid(x, y, z))
+            .unwrap_or(0)
+    }
+
     /// Number of player edits stored (handy for telemetry / persistence sizing).
     pub fn edit_count(&self) -> usize {
         self.edits.len()
@@ -355,6 +364,37 @@ mod tests {
         assert_eq!(w.edit_count(), 1);
         w.set(x, y, z, AIR);
         assert!(!w.is_solid(x, y, z));
+    }
+
+    #[test]
+    fn surface_y_matches_height_without_edits() {
+        let w = World::new();
+        for i in 0..50 {
+            let (x, z) = (i * 137, i * 211);
+            assert_eq!(
+                w.surface_y(x, z),
+                height_at(x, z),
+                "no-edit column at {x},{z}"
+            );
+        }
+    }
+
+    #[test]
+    fn surface_y_rises_with_a_placed_block() {
+        let mut w = World::new();
+        let (x, z) = (20, 30);
+        let top = height_at(x, z);
+        w.set(x, top + 3, z, STONE);
+        assert_eq!(w.surface_y(x, z), top + 3);
+    }
+
+    #[test]
+    fn surface_y_lowers_when_top_block_is_broken() {
+        let mut w = World::new();
+        let (x, z) = (40, 50);
+        let top = height_at(x, z);
+        w.set(x, top, z, AIR);
+        assert_eq!(w.surface_y(x, z), top - 1);
     }
 
     #[test]

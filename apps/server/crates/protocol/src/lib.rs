@@ -78,6 +78,8 @@ pub enum ClientMsg {
     AttackPlayer {
         id: u32,
     },
+    /// Admin-only: wipe the world (all edits + creatures) for everyone. Ignored from non-admins.
+    AdminResetWorld,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
