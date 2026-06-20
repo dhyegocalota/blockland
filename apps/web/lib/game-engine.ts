@@ -86,6 +86,7 @@ export interface GameApi {
   kickPlayer(id: number): void;
   banPlayer(id: number): void;
   resetWorld(): void;
+  returnToSpawn(): void;
   debugSnapshot(): DebugSnapshot;
 }
 
@@ -292,8 +293,28 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const feet = clearFeetAbove({ feet: heightAt(sx, sz) + 1, isSolid: (y) => isSolid(sx, y, sz) });
     return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + 4);
   };
+
+  // Persist where the player last stood (per tenant) so re-entering the game drops them back there
+  // instead of the spawn point.
+  const POS_KEY = `bl-pos:${brand.id}`;
+  const loadSavedPos = (): THREE.Vector3 | null => {
+    try {
+      const raw = localStorage.getItem(POS_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw) as { x: number; y: number; z: number };
+      if (typeof p.x !== 'number' || typeof p.y !== 'number' || typeof p.z !== 'number') return null;
+      return new THREE.Vector3(p.x, p.y, p.z);
+    } catch {
+      return null;
+    }
+  };
+  const savePos = (): void => {
+    localStorage.setItem(POS_KEY, JSON.stringify({ x: player.pos.x, y: player.pos.y, z: player.pos.z }));
+  };
+
+  const savedPos = loadSavedPos();
   const player: Player = {
-    pos: spawnPoint(),
+    pos: savedPos ? savedPos : spawnPoint(),
     vel: new THREE.Vector3(),
     yaw: Math.PI, pitch: -0.2,
     onGround: false, fly: false,
@@ -367,7 +388,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     coop?.sendEdit(op, x, y, z, id);
   }
   function debugSnapshot(): DebugSnapshot {
-    const round = (n: number): number => Math.round(n * 10) / 10;
+    const round = (n: number): number => Math.round(n * 100) / 100;
     const base = {
       fps: Math.round(fps),
       x: round(player.pos.x), y: round(player.pos.y), z: round(player.pos.z),
@@ -386,6 +407,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     kickPlayer: (id) => coop?.sendAdminKick(id),
     banPlayer: (id) => coop?.sendAdminBan(id),
     resetWorld: () => coop?.sendAdminResetWorld(),
+    returnToSpawn: () => { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); savePos(); },
     debugSnapshot,
   });
 
@@ -987,17 +1009,25 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }, { signal });
 
   // ---------- Loop ----------
+  // Cap the render/update rate so 120Hz+ displays (and most phones) don't burn battery running at
+  // their native refresh; the modulo carry keeps the cadence steady instead of drifting.
+  const FRAME_MS = 1000 / 60;
+  const POS_SAVE_MS = 2000;
   let started = false;
   let last = performance.now();
+  let lastPosSave = last;
   function loop(now: number): void {
     if (disposed) return;
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
+    rafId = requestAnimationFrame(loop);
+    const elapsed = now - last;
+    if (elapsed < FRAME_MS) return;
+    last = now - (elapsed % FRAME_MS);
+    const dt = Math.min(elapsed / 1000, 0.05);
     if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
     if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (coop) hurtFromServerCreatures(dt); else updateCreatures(dt); updatePoofs(dt); }
     if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
+    if (started && now - lastPosSave > POS_SAVE_MS) { savePos(); lastPosSave = now; }
     renderer.render(scene, camera);
-    rafId = requestAnimationFrame(loop);
   }
 
   function start(): void {
@@ -1082,6 +1112,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   const cleanup = (): void => {
     disposed = true;
+    if (started) savePos();
     coop?.close();
     coop = null;
     cancelAnimationFrame(rafId);

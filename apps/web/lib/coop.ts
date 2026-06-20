@@ -102,8 +102,14 @@ interface ServerCreature {
   group: THREE.Group;
   body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
   radius: number;
+  lift: number;
   interp: RemoteInterpolator;
 }
+
+// The server reports a creature's y as `surface_y + this` (its body center floats this far above the
+// top *solid block index*). The walkable surface is one block higher (index + 1), so to sit a creature
+// on the ground like the local single-player model we lift it by (1 - offset) + half its height.
+const SERVER_GROUND_OFFSET = 0.5;
 
 // What the engine raycasts against to aim an attack: world position, the wire id to send in `hit`,
 // and the hit sphere radius derived from the creature's model size.
@@ -349,7 +355,8 @@ export function createCoop(opts: CoopOptions): CoopController {
     );
     group.add(body);
     scene.add(group);
-    const creature: ServerCreature = { kind, group, body, radius: Math.max(...def.size) * 0.7, interp: new RemoteInterpolator() };
+    const lift = 1 - SERVER_GROUND_OFFSET + def.size[1] / 2;
+    const creature: ServerCreature = { kind, group, body, radius: Math.max(...def.size) * 0.7, lift, interp: new RemoteInterpolator() };
     creatures.set(id, creature);
     debug('coop', 'creature spawned', { id, kind });
     return creature;
@@ -516,7 +523,7 @@ export function createCoop(opts: CoopOptions): CoopController {
       for (const creature of creatures.values()) {
         const pose = creature.interp.sampleAt(now);
         if (!pose) continue;
-        creature.group.position.set(pose.x, pose.y, pose.z);
+        creature.group.position.set(pose.x, pose.y + creature.lift, pose.z);
         creature.group.rotation.y = pose.yaw;
       }
     },

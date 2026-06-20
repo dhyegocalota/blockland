@@ -15,9 +15,11 @@ canvas { display: block; }
 #crosshair {
   position: fixed; left: 50%; top: 50%; width: 26px; height: 26px;
   transform: translate(-50%, -50%); opacity: 0; transition: opacity .3s;
+  /* One shadow around the whole + shape, so the two bars don't stack a double shadow at the center. */
+  filter: drop-shadow(0 0 2px #000);
 }
 #crosshair::before, #crosshair::after {
-  content: ''; position: absolute; background: #fff; box-shadow: 0 0 3px #000;
+  content: ''; position: absolute; background: #fff;
   border-radius: 3px;
 }
 #crosshair::before { left: 50%; top: 0; width: 4px; height: 100%; transform: translateX(-50%); }

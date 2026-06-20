@@ -10,6 +10,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.controls': '❓ Controles',
     'hud.build': '🏗️ Construir',
     'hud.fly': '✈️ Voar',
+    'hud.spawn': '🏠 Início',
     'hud.chat': '💬 Chat',
     'hud.exit': '🚪 Sair',
 
@@ -323,6 +324,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.controls': '❓ Controls',
     'hud.build': '🏗️ Build',
     'hud.fly': '✈️ Fly',
+    'hud.spawn': '🏠 Spawn',
     'hud.chat': '💬 Chat',
     'hud.exit': '🚪 Leave',
 

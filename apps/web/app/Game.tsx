@@ -407,6 +407,7 @@ export default function Game() {
           <button className="btn" id="helpBtn">{t('hud.controls')}</button>
           <button className="btn" id="buildBtn">{t('hud.build')}</button>
           <button className="btn" id="flyBtn">{t('hud.fly')}</button>
+          <button className="btn" id="spawnBtn" onClick={() => gameApiRef.current?.returnToSpawn()}>{t('hud.spawn')}</button>
           {room.chatEnabled && <button className="btn" id="chatBtn" onClick={openChat}>{t('hud.chat')}</button>}
           <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}</button>
         </div>
