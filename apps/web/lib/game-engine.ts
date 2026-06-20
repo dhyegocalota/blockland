@@ -16,6 +16,8 @@ import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './en
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 import { creatureDefFor } from './engine/creature-snapshot';
 import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './engine/textures';
+import { meshChunkBuckets } from './engine/meshing';
+import { sphereCastClosest } from './engine/sphere-cast';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer } from './coop';
 import type { EditCell, EditOp } from './protocol';
 
@@ -161,17 +163,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
 
   // ---------- Meshing (face-culled, merged per block type) ----------
-  interface Face { dir: number[]; corners: number[][]; }
-  interface MeshBucket { pos: number[]; norm: number[]; uv: number[]; idxs: number[]; }
-  const FACES: Face[] = [
-    { dir: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
-    { dir: [-1, 0, 0], corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]] },
-    { dir: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
-    { dir: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
-    { dir: [0, 0, 1], corners: [[1, 0, 1], [1, 1, 1], [0, 1, 1], [0, 0, 1]] },
-    { dir: [0, 0, -1], corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]] },
-  ];
-  const UV = [[0, 0], [0, 1], [1, 1], [1, 0]];
+  const isTransparent = (id: number): boolean => !!blockById(id)?.transparent;
 
   const worldGroup = new THREE.Group();
   const chunkMeshes = new Map<string, THREE.Mesh[]>();
@@ -180,38 +172,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const key = `${cxh},${czh}`;
     const old = chunkMeshes.get(key);
     if (old) old.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
-    const buckets: Record<number, MeshBucket> = {};
-    for (const b of BLOCKS) { if (b) buckets[b.id] = { pos: [], norm: [], uv: [], idxs: [] }; }
 
     const x0 = cxh * CHUNK, x1 = Math.min(SIZE_X, x0 + CHUNK);
     const z0 = czh * CHUNK, z1 = Math.min(SIZE_Z, z0 + CHUNK);
-    for (let y = 0; y < SIZE_Y; y++)
-      for (let z = z0; z < z1; z++)
-        for (let x = x0; x < x1; x++) {
-          const id = getVoxel(x, y, z);
-          if (id === AIR) continue;
-          const bucket = buckets[id];
-          const opaque = !blockById(id)?.transparent;
-          for (const f of FACES) {
-            const neighbor = getVoxel(x + f.dir[0], y + f.dir[1], z + f.dir[2]);
-            const neighborTransparent = neighbor === AIR || blockById(neighbor)?.transparent;
-            if (opaque && !neighborTransparent) continue;
-            if (!opaque && neighbor !== AIR) continue;
-            const start = bucket.pos.length / 3;
-            f.corners.forEach((c, i) => {
-              bucket.pos.push(x + c[0], y + c[1], z + c[2]);
-              bucket.norm.push(...f.dir);
-              bucket.uv.push(UV[i][0], UV[i][1]);
-            });
-            bucket.idxs.push(start, start + 1, start + 2, start, start + 2, start + 3);
-          }
-        }
+    const buckets = meshChunkBuckets({ getVoxel, isTransparent, x0, x1, z0, z1, sizeY: SIZE_Y });
 
     const meshes: THREE.Mesh[] = [];
     for (const b of BLOCKS) {
       if (!b) continue;
-      const data = buckets[b.id];
-      if (!data.pos.length) continue;
+      const data = buckets.get(b.id);
+      if (!data) continue;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(data.pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(data.norm, 3));
@@ -527,20 +497,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     updateStats();
   }
   function raycastCreature(): { creature: Creature; t: number } | null {
-    const origin = camera.position.clone();
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
-    let best: Creature | null = null, bestT = REACH;
-    for (const cr of creatures) {
-      const oc = new THREE.Vector3().subVectors(cr.mesh.position, origin);
-      const tca = oc.dot(dir);
-      if (tca < 0) continue;
-      const d2 = oc.lengthSq() - tca * tca;
-      const radius = Math.max(...cr.def.size) * 0.7;
-      if (d2 > radius * radius) continue;
-      if (tca < bestT) { bestT = tca; best = cr; }
-    }
-    return best ? { creature: best, t: bestT } : null;
+    const targets = creatures.map((cr) => ({ x: cr.mesh.position.x, y: cr.mesh.position.y, z: cr.mesh.position.z, radius: Math.max(...cr.def.size) * 0.7 }));
+    const pick = sphereCastClosest({ origin: camera.position, dir, targets, maxDist: REACH });
+    return pick ? { creature: creatures[pick.index], t: pick.t } : null;
   }
   function hitCreature(cr: Creature): void {
     cr.hp -= 1;
@@ -570,19 +531,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // reward and despawn all come back authoritatively in the next snapshot.
   function raycastServerCreature(): { creature: CoopCreature; t: number } | null {
     if (!coop) return null;
-    const origin = camera.position.clone();
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
-    let best: CoopCreature | null = null, bestT = REACH;
-    for (const cr of coop.getCreatures()) {
-      const oc = new THREE.Vector3(cr.x - origin.x, cr.y - origin.y, cr.z - origin.z);
-      const tca = oc.dot(dir);
-      if (tca < 0) continue;
-      const d2 = oc.lengthSq() - tca * tca;
-      if (d2 > cr.radius * cr.radius) continue;
-      if (tca < bestT) { bestT = tca; best = cr; }
-    }
-    return best ? { creature: best, t: bestT } : null;
+    const candidates = coop.getCreatures();
+    const pick = sphereCastClosest({ origin: camera.position, dir, targets: candidates, maxDist: REACH });
+    return pick ? { creature: candidates[pick.index], t: pick.t } : null;
   }
   function hitServerCreature(cr: CoopCreature): void {
     coop?.sendHit(cr.id);
@@ -596,19 +549,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // Hurt to the target. Returns null when pvp is off so players never damage each other.
   function raycastRemotePlayer(): { player: CoopPlayer; t: number } | null {
     if (!coop || !pvp) return null;
-    const origin = camera.position.clone();
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
-    let best: CoopPlayer | null = null, bestT = REACH;
-    for (const p of coop.getPlayers()) {
-      const oc = new THREE.Vector3(p.x - origin.x, p.y - origin.y, p.z - origin.z);
-      const tca = oc.dot(dir);
-      if (tca < 0) continue;
-      const d2 = oc.lengthSq() - tca * tca;
-      if (d2 > p.radius * p.radius) continue;
-      if (tca < bestT) { bestT = tca; best = p; }
-    }
-    return best ? { player: best, t: bestT } : null;
+    const candidates = coop.getPlayers();
+    const pick = sphereCastClosest({ origin: camera.position, dir, targets: candidates, maxDist: REACH });
+    return pick ? { player: candidates[pick.index], t: pick.t } : null;
   }
   function attackRemotePlayer(p: CoopPlayer): void {
     coop?.sendAttackPlayer(p.id);
