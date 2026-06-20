@@ -8,7 +8,6 @@ import Script from 'next/script';
 import { currentLocale } from '../../../lib/i18n';
 import { PLATFORM_NAME } from '../../../lib/builtins';
 
-const CONTACT_EMAIL = 'dhyego@logicbit.com.br';
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 const TURNSTILE_SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
@@ -95,6 +94,17 @@ const COPY = {
       { q: 'Quanto vai custar quando lançar?', a: 'Menos que uma pizza por mês para a família toda (até 3-4 crianças), com 7 dias grátis sem cartão pra testar. Quem entra na lista agora trava uma condição especial de fundadora.' },
       { q: 'A partir de que idade dá pra usar?', a: 'Foi feito pra crianças: controles simples e tudo num mundo seguro. Você acompanha e aprova tudo pelo seu celular.' },
     ] as Qa[],
+    founderTitle: 'Quem está por trás disso',
+    founderStory: [
+      'Oi, eu sou o Dhyego. Sou desenvolvedor — e, antes de tudo, pai.',
+      'Esse joguinho nasceu de uma vontade simples: deixar meu filho construir, explorar e brincar online com os amigos sem que eu ficasse com o coração na mão. Procurei um lugar assim e não encontrei. Então resolvi construir um — do jeito que eu, como pai, gostaria de achar.',
+      'Cada detalhe aqui passou por uma pergunta: "eu deixaria meu filho nesse mundo?". Quando a resposta era não, não entrava.',
+    ],
+    founderSign: '— Dhyego Calota, pai e criador do Blockland',
+    terms: 'Termos de Uso',
+    privacy: 'Política de Privacidade',
+    companyLine: 'Logic Bit · CNPJ 32.555.315/0001-91',
+    addressLine: 'R. Rio Grande do Norte, 1435 — Sala 708, Savassi, Belo Horizonte/MG',
     credit: 'Feito com 🧡 por Dhyego Calota',
   },
   'en-US': {
@@ -156,6 +166,17 @@ const COPY = {
       { q: 'How much will it cost at launch?', a: 'Less than a pizza a month for the whole family (up to 3-4 kids), with 7 days free and no card to try it. Joining now locks a special founder deal.' },
       { q: 'What age is it for?', a: 'Built for kids: simple controls and everything inside a safe world. You follow and approve it all from your phone.' },
     ] as Qa[],
+    founderTitle: 'Who is behind this',
+    founderStory: [
+      'Hi, I am Dhyego. I am a developer — and, above all, a dad.',
+      'This little game came from a simple wish: to let my son build, explore and play online with his friends without me holding my breath the whole time. I looked for a place like that and could not find one. So I built it — the way I, as a dad, would want to find it.',
+      'Every detail here went through one question: "would I let my own kid into this world?" When the answer was no, it did not make it in.',
+    ],
+    founderSign: '— Dhyego Calota, dad and creator of Blockland',
+    terms: 'Terms of Use',
+    privacy: 'Privacy Policy',
+    companyLine: 'Logic Bit · CNPJ 32.555.315/0001-91',
+    addressLine: 'R. Rio Grande do Norte, 1435 — Sala 708, Savassi, Belo Horizonte/MG',
     credit: 'Built with 🧡 by Dhyego Calota',
   },
 };
@@ -257,6 +278,22 @@ export default function Welcome() {
 
       <p style={S.guarantee}>🛡️ {copy.guarantee}</p>
 
+      <section style={S.founder}>
+        <img
+          src="/founder-family.jpg"
+          alt={copy.founderSign}
+          style={S.founderPhoto}
+          onError={(event) => { event.currentTarget.style.display = 'none'; }}
+        />
+        <div style={S.founderText}>
+          <h3 style={S.founderHeading}>{copy.founderTitle}</h3>
+          {copy.founderStory.map((line) => (
+            <p key={line} style={S.founderLine}>{line}</p>
+          ))}
+          <p style={S.founderSign}>{copy.founderSign}</p>
+        </div>
+      </section>
+
       <section id="waitlist" style={S.formSection}>
         <h3 style={S.formTitle}>{copy.formTitle}</h3>
         {status === 'done' && <p style={S.success}>{copy.success}</p>}
@@ -318,10 +355,16 @@ export default function Welcome() {
       </section>
 
       <footer style={S.footer}>
-        <a style={S.email} href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+        <div style={S.legalLinks}>
+          <a style={S.legalLink} href="/terms">{copy.terms}</a>
+          <span style={S.legalDot}>·</span>
+          <a style={S.legalLink} href="/privacy">{copy.privacy}</a>
+        </div>
         <a style={S.credit} href="https://dhyegocalota.com.br" target="_blank" rel="noopener noreferrer">
           {copy.credit}
         </a>
+        <p style={S.company}>{copy.companyLine}</p>
+        <p style={S.company}>{copy.addressLine}</p>
       </footer>
     </main>
   );
@@ -396,7 +439,21 @@ const S: Record<string, CSSProperties> = {
   faqItem: { background: '#f1f6ff', borderRadius: 16, padding: '14px 16px', textAlign: 'left' },
   faqQ: { fontWeight: 900, fontSize: 16, margin: 0 },
   faqA: { fontWeight: 600, fontSize: 14, lineHeight: 1.5, color: '#42365a', marginTop: 6 },
+  founder: {
+    ...card, display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center',
+  },
+  founderPhoto: {
+    width: 'clamp(120px, 32vw, 184px)', height: 'clamp(120px, 32vw, 184px)', borderRadius: 24,
+    objectFit: 'cover', border: '5px solid #ffd23f', boxShadow: '0 10px 30px #0003', flexShrink: 0,
+  },
+  founderText: { flex: 1, minWidth: 240 },
+  founderHeading: { fontSize: 'clamp(20px, 4.6vw, 28px)', fontWeight: 900, margin: '0 0 6px' },
+  founderLine: { fontSize: 'clamp(15px, 3.4vw, 17px)', fontWeight: 700, lineHeight: 1.55, color: '#42365a', marginTop: 12 },
+  founderSign: { fontSize: 15, fontWeight: 900, color: '#ff5d2e', marginTop: 16 },
   footer: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 6 },
-  email: { color: '#1f3a63', fontWeight: 800, textDecoration: 'none', fontSize: 15 },
+  legalLinks: { display: 'flex', gap: 8, alignItems: 'center' },
+  legalLink: { color: '#1f3a63', fontWeight: 800, textDecoration: 'none', fontSize: 14 },
+  legalDot: { color: '#1f3a6377' },
   credit: { color: '#1f3a63bb', fontWeight: 700, fontSize: 13, textDecoration: 'none' },
+  company: { color: '#1f3a6399', fontWeight: 700, fontSize: 12, textAlign: 'center', margin: 0, lineHeight: 1.4 },
 };
