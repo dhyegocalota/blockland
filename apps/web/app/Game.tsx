@@ -11,6 +11,9 @@ import { randomLook } from '../lib/look';
 import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
+import LobbyPresence from './LobbyPresence';
+
+const AUTHOR_URL = 'https://dhyegocalota.com.br';
 
 const NAME_KEY = 'bl-name';
 const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
@@ -456,6 +459,7 @@ export default function Game() {
           <button className="btn" id="helpBtn">{t('hud.controls')}</button>
           <button className="btn" id="buildBtn">{t('hud.build')}</button>
           <button className="btn" id="flyBtn">{t('hud.fly')}</button>
+          {room.chatEnabled && <button className="btn" id="chatBtn" onClick={openChat}>{t('hud.chat')}</button>}
           <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}</button>
         </div>
       </div>
@@ -712,6 +716,7 @@ export default function Game() {
         <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">{t('start.record')}</span>
+        <LobbyPresence tenant={brand.id} />
         <label id="nameField">
           {t('start.name_label')}
           <input
@@ -750,6 +755,10 @@ export default function Game() {
         </div>
         <button id="playBtn">{t('start.play')}</button>
         <Leaderboard tenant={brand.id} />
+        <footer id="startFooter">
+          <a className="wantGame" href="/welcome">{t('lobby.want_game')}</a>
+          <a className="credit" href={AUTHOR_URL} target="_blank" rel="noopener noreferrer">{t('lobby.credit')}</a>
+        </footer>
       </div>
     </>
   );

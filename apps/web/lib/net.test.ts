@@ -149,6 +149,21 @@ describe('net client', () => {
     expect(MockWebSocket.instances).toHaveLength(1);
   });
 
+  it('an admin kick does not reconnect', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'error', code: 'kicked', msg: 'removed by an admin' });
+    expect(client.state).toBe('kicked');
+
+    socket.serverClose();
+    vi.runAllTimers();
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
   it('an unexpected close reconnects and a successful reopen goes online', () => {
     const { client, states } = makeClient();
     client.connect();

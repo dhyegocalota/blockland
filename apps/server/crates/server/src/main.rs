@@ -73,6 +73,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/online/{tenant}", get(public_online))
         .route("/admin/stats", get(admin_stats))
         .route("/admin/bans", get(admin_bans))
         .route("/admin/ban", post(admin_ban))
@@ -129,11 +130,48 @@ impl axum::extract::FromRef<AppState> for Arc<Hub> {
 async fn ws_handler(
     State(hub): State<Arc<Hub>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    let ip = client_ip(&headers, addr.ip());
     ws.max_message_size(64 * 1024)
         .max_frame_size(64 * 1024)
-        .on_upgrade(move |socket| conn::handle(socket, hub, addr.ip()))
+        .on_upgrade(move |socket| conn::handle(socket, hub, ip))
+}
+
+/// The real client IP behind the reverse proxy (Cloudflare / Traefik), so per-player bans target the
+/// player and not the shared proxy address. Cloudflare's header can't be spoofed through CF; the
+/// first X-Forwarded-For hop is the next fallback; the direct peer is used in local dev (no proxy).
+fn client_ip(headers: &HeaderMap, peer: IpAddr) -> IpAddr {
+    let from_header = |name: &str| -> Option<IpAddr> {
+        headers
+            .get(name)?
+            .to_str()
+            .ok()?
+            .split(',')
+            .next()?
+            .trim()
+            .parse()
+            .ok()
+    };
+    from_header("cf-connecting-ip")
+        .or_else(|| from_header("x-forwarded-for"))
+        .unwrap_or(peer)
+}
+
+#[derive(serde::Serialize)]
+struct OnlineResp {
+    count: usize,
+    names: Vec<String>,
+}
+
+/// Public lobby presence for a tenant (no auth): who and how many are online right now.
+async fn public_online(
+    State(hub): State<Arc<Hub>>,
+    Path(tenant): Path<String>,
+) -> impl IntoResponse {
+    let (count, names) = hub.online_for(&tenant);
+    Json(OnlineResp { count, names })
 }
 
 #[derive(Deserialize)]
@@ -547,7 +585,9 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::constant_time_eq;
+    use super::{client_ip, constant_time_eq};
+    use axum::http::HeaderMap;
+    use std::net::IpAddr;
 
     #[test]
     fn constant_time_eq_matches_only_equal_bytes() {
@@ -556,5 +596,27 @@ mod tests {
         assert!(!constant_time_eq(b"secret", b"secret-longer"));
         assert!(!constant_time_eq(b"", b"x"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn client_ip_prefers_proxy_headers_over_the_peer() {
+        let peer: IpAddr = "10.0.0.1".parse().unwrap();
+        // No proxy headers (local dev): the direct peer is used.
+        assert_eq!(client_ip(&HeaderMap::new(), peer), peer);
+        // X-Forwarded-For: the first (original client) hop wins.
+        let mut xff = HeaderMap::new();
+        xff.insert("x-forwarded-for", "203.0.113.7, 70.1.2.3".parse().unwrap());
+        assert_eq!(
+            client_ip(&xff, peer),
+            "203.0.113.7".parse::<IpAddr>().unwrap()
+        );
+        // Cloudflare's header takes priority over X-Forwarded-For.
+        let mut cf = HeaderMap::new();
+        cf.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+        cf.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        assert_eq!(
+            client_ip(&cf, peer),
+            "198.51.100.9".parse::<IpAddr>().unwrap()
+        );
     }
 }

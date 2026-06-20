@@ -15,6 +15,7 @@ const COPY = {
     features: ['🧱 Construa e explore um mundo gigante', '👫 Multiplayer em tempo real', '🎨 Marca e rosto personalizados', '📱 Joga no navegador e instala no celular'],
     contactLead: 'Quer um mundo desses pra sua marca ou pro seu filho?',
     contactBtn: 'Falar com a gente',
+    credit: 'Feito com 🧡 por Dhyego Calota',
   },
   'en-US': {
     tagline: 'White-label 3D voxel worlds, made for kids.',
@@ -22,6 +23,7 @@ const COPY = {
     features: ['🧱 Build and explore a huge world', '👫 Real-time multiplayer', '🎨 Custom brand and face', '📱 Plays in the browser, installs on phones'],
     contactLead: 'Want a world like this for your brand or your kid?',
     contactBtn: 'Get in touch',
+    credit: 'Built with 🧡 by Dhyego Calota',
   },
 };
 
@@ -41,6 +43,9 @@ export default function Welcome() {
         <p style={S.contactLead}>{copy.contactLead}</p>
         <a style={S.contactBtn} href={`mailto:${CONTACT_EMAIL}`}>{copy.contactBtn} →</a>
         <a style={S.email} href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+        <a style={S.credit} href="https://dhyegocalota.com.br" target="_blank" rel="noopener noreferrer">
+          {copy.credit}
+        </a>
       </div>
     </main>
   );
@@ -68,4 +73,5 @@ const S: Record<string, CSSProperties> = {
     border: '5px solid #fff', boxShadow: '0 8px 0 #c43d18',
   },
   email: { display: 'block', marginTop: 14, color: '#3a73c2', fontWeight: 800, textDecoration: 'none' },
+  credit: { display: 'block', marginTop: 18, color: '#6b5a8a', fontWeight: 700, fontSize: 13, textDecoration: 'none' },
 };

@@ -198,12 +198,21 @@ export function createNet(opts: NetOptions): NetClient {
     }
   }
 
+  // Error codes that must NOT auto-reconnect (a reconnect would just be kicked/rejected again).
+  const TERMINAL_ERRORS: Record<string, NetState> = {
+    banned: 'banned',
+    idle_timeout: 'kicked',
+    kicked: 'kicked',
+    room_closed: 'room_closed',
+    reclaimed: 'kicked',
+    claim_required: 'kicked',
+  };
+
   function handleError(code: string, message: string): void {
     debug('net', 'error', { code, msg: message });
     opts.handlers.onError?.(code, message);
-    if (code === 'banned') terminalReason = 'banned';
-    if (code === 'idle_timeout') terminalReason = 'kicked';
-    if (terminalReason !== null) setState(terminalReason);
+    const terminal = TERMINAL_ERRORS[code];
+    if (terminal) { terminalReason = terminal; setState(terminal); }
   }
 
   function handleClose(): void {

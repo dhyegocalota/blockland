@@ -284,6 +284,18 @@ impl Hub {
         tx.send(cmd).await.is_ok()
     }
 
+    /// Public lobby presence for a tenant: how many players are online and their names.
+    pub fn online_for(&self, tenant: &str) -> (usize, Vec<String>) {
+        let mut names = Vec::new();
+        for entry in self.room_stats.iter() {
+            let snap = entry.value();
+            if snap.tenant == tenant {
+                names.extend(snap.players.iter().map(|p| p.name.clone()));
+            }
+        }
+        (names.len(), names)
+    }
+
     pub fn admin_stats(&self) -> AdminStats {
         let mut room_list: Vec<RoomSnapshot> =
             self.room_stats.iter().map(|r| r.value().clone()).collect();

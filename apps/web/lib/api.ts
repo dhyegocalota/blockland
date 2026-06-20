@@ -24,6 +24,18 @@ function baseUrl(): string {
   return process.env.API_URL || DEFAULT_API_URL;
 }
 
+export interface OnlinePresence {
+  count: number;
+  names: string[];
+}
+
+// Public lobby presence (no HMAC): who and how many are online in a tenant right now.
+export async function fetchOnline(tenant: string): Promise<OnlinePresence> {
+  const res = await fetch(`${baseUrl()}/online/${encodeURIComponent(tenant)}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`online ${res.status}`);
+  return (await res.json()) as OnlinePresence;
+}
+
 export function sign(params: {
   method: string;
   path: string;

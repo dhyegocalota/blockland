@@ -10,6 +10,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.controls': '❓ Controles',
     'hud.build': '🏗️ Construir',
     'hud.fly': '✈️ Voar',
+    'hud.chat': '💬 Chat',
     'hud.exit': '🚪 Sair',
 
     // Controls modal
@@ -87,6 +88,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.instructions': '❓ Ver instruções',
     'start.mode_multi': '👫 Com amigos',
     'start.mode_solo': '🧍 Sozinho',
+
+    // Lobby presence + footer
+    'lobby.online': '👥 {count} online agora',
+    'lobby.want_game': '🧡 Quero um jogo desse pro meu filho também',
+    'lobby.credit': 'Feito com 🧡 por Dhyego Calota',
 
     // Start screen — name input
     'start.name_label': 'Seu nome',
@@ -293,6 +299,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.controls': '❓ Controls',
     'hud.build': '🏗️ Build',
     'hud.fly': '✈️ Fly',
+    'hud.chat': '💬 Chat',
     'hud.exit': '🚪 Leave',
 
     // Controls modal
@@ -370,6 +377,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.instructions': '❓ Instructions',
     'start.mode_multi': '👫 With friends',
     'start.mode_solo': '🧍 Solo',
+
+    // Lobby presence + footer
+    'lobby.online': '👥 {count} online now',
+    'lobby.want_game': '🧡 I want a game like this for my kid too',
+    'lobby.credit': 'Built with 🧡 by Dhyego Calota',
 
     // Start screen — name input
     'start.name_label': 'Your name',
