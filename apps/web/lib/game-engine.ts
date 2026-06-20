@@ -21,7 +21,7 @@ import { sphereCastClosest } from './engine/sphere-cast';
 import { moveVector } from './engine/movement';
 import { canMonsterReachPlayer, HURT_BURIED_PROBE } from './engine/hurt';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer } from './coop';
-import type { EditCell, EditOp } from './protocol';
+import type { EditCell, EditOp, Role } from './protocol';
 
 interface Creature {
   typeKey: string;
@@ -88,6 +88,8 @@ export interface GameApi {
   kickPlayer(id: number): void;
   banPlayer(id: number): void;
   resetWorld(): void;
+  setRole(id: number, role: Role): void;
+  setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
   debugSnapshot(): DebugSnapshot;
 }
@@ -419,6 +421,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     kickPlayer: (id) => coop?.sendAdminKick(id),
     banPlayer: (id) => coop?.sendAdminBan(id),
     resetWorld: () => coop?.sendAdminResetWorld(),
+    setRole: (id, role) => coop?.sendAdminSetRole(id, role),
+    setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
     returnToSpawn: () => { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); savePos(); },
     debugSnapshot,
   });
@@ -1105,11 +1109,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
         updateStats();
         bridge.hud.onScore(score);
       },
-      onAdmin: (admin) => {
-        infiniteResources = admin;
-        updateHotbarCounts();
-        bridge.hud.onAdmin(admin);
-      },
+      onRole: (role) => bridge.hud.onRole(role),
     };
     coop = createCoop({
       three: THREE,

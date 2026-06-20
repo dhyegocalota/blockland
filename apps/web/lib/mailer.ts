@@ -29,7 +29,31 @@ export async function send(params: {
     });
     return;
   }
+  await deliver({ apiKey, to: params.to, subject: params.subject, react: params.react });
+}
+
+// Generic transactional send (waitlist confirmation + admin notice). Same dev fallback as `send`:
+// without RESEND_API_KEY it logs instead of sending, so local signups never fail on email.
+export async function sendMail(params: {
+  to: string;
+  subject: string;
+  react: ReactElement;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log('[mailer] dev (no RESEND_API_KEY)', { to: params.to, subject: params.subject });
+    return;
+  }
+  await deliver({ apiKey, to: params.to, subject: params.subject, react: params.react });
+}
+
+async function deliver(params: {
+  apiKey: string;
+  to: string;
+  subject: string;
+  react: ReactElement;
+}): Promise<void> {
   const html = await render(params.react);
-  const resend = new Resend(apiKey);
+  const resend = new Resend(params.apiKey);
   await resend.emails.send({ from: mailFrom(), to: params.to, subject: params.subject, html });
 }

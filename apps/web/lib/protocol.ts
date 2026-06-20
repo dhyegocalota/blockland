@@ -2,9 +2,9 @@
 // AUTO-GENERATED from the Rust `protocol` crate (cargo test -p protocol) — so client and server
 // can never drift. This module adds small typed factories the client uses to build messages.
 
-import type { ClientMsg, EditCell, EditOp, ServerMsg } from './protocol.gen';
+import type { ClientMsg, EditCell, EditOp, Role, ServerMsg } from './protocol.gen';
 
-export type { Brand, ClientMsg, CreatureState, EditCell, EditOp, PlayerState, ServerMsg } from './protocol.gen';
+export type { Brand, ClientMsg, CreatureState, EditCell, EditOp, PlayerState, Role, ServerMsg } from './protocol.gen';
 
 export const join = (params: {
   tenant: string;
@@ -61,6 +61,8 @@ export const adminBan = (id: number): ClientMsg => ({ t: 'admin_ban', id });
 export const attackPlayer = (id: number): ClientMsg => ({ t: 'attack_player', id });
 
 export const adminResetWorld = (): ClientMsg => ({ t: 'admin_reset_world' });
+
+export const adminSetRole = (id: number, role: Role): ClientMsg => ({ t: 'admin_set_role', id, role });
 
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 

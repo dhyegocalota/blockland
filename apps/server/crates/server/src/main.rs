@@ -515,7 +515,8 @@ async fn internal_auth_verify(
     match result {
         Ok(Some(verified)) => Json(serde_json::json!({
             "ok": true, "tenant": verified.tenant, "name": verified.name,
-            "claim": verified.claim, "is_admin": verified.is_admin
+            "claim": verified.claim, "is_admin": verified.is_admin,
+            "is_moderator": verified.is_moderator
         }))
         .into_response(),
         Ok(None) => Json(serde_json::json!({ "ok": false })).into_response(),

@@ -74,6 +74,12 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // In-game admin panel
     'game_admin.title': 'Admin',
+    'game_admin.title_mod': 'Moderador',
+    'game_admin.infinite_on': '♾️ Recursos infinitos: ON',
+    'game_admin.infinite_off': '🎒 Recursos infinitos: OFF',
+    'game_admin.make_mod': '🧒 Mod',
+    'game_admin.make_admin': '🛡️ Admin',
+    'game_admin.make_player': '👤 Jogador',
     'game_admin.structures': 'Construções',
     'game_admin.allowed': 'Liberada',
     'game_admin.blocked': 'Bloqueada',
@@ -390,6 +396,12 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // In-game admin panel
     'game_admin.title': 'Admin',
+    'game_admin.title_mod': 'Moderator',
+    'game_admin.infinite_on': '♾️ Infinite resources: ON',
+    'game_admin.infinite_off': '🎒 Infinite resources: OFF',
+    'game_admin.make_mod': '🧒 Mod',
+    'game_admin.make_admin': '🛡️ Admin',
+    'game_admin.make_player': '👤 Player',
     'game_admin.structures': 'Structures',
     'game_admin.allowed': 'Allowed',
     'game_admin.blocked': 'Blocked',

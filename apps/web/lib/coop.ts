@@ -11,7 +11,7 @@ import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
 import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
-import type { EditCell, EditOp } from './protocol';
+import type { EditCell, EditOp, Role } from './protocol';
 import type { FeedEvent, RosterMember } from './feed';
 import { creatureDefFor, creatureNameKey } from './engine/creature-snapshot';
 import { t } from './i18n';
@@ -62,7 +62,7 @@ export interface CoopHud {
   onRoster(players: RosterEntry[]): void;
   onEvent(event: FeedEvent): void;
   onScore(score: number): void;
-  onAdmin(admin: boolean): void;
+  onRole(role: { admin: boolean; moderator: boolean }): void;
   onRoomState(room: RoomState): void;
   onError(code: string): void;
 }
@@ -150,6 +150,7 @@ export interface CoopController {
   sendAdminBan(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
+  sendAdminSetRole(id: number, role: Role): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
@@ -391,8 +392,8 @@ export function createCoop(opts: CoopOptions): CoopController {
       onWelcome: (msg) => {
         selfId = msg.you;
         admin = msg.admin;
-        opts.hud.onAdmin(msg.admin);
-        debug('coop', 'welcome', { you: msg.you, world: msg.world, admin: msg.admin });
+        opts.hud.onRole({ admin: msg.admin, moderator: msg.moderator });
+        debug('coop', 'welcome', { you: msg.you, world: msg.world, admin: msg.admin, moderator: msg.moderator });
       },
       onSnapshot: (msg) => {
         const seen = new Set<number>();
@@ -474,6 +475,10 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.applyHurt(msg.by);
         debug('coop', 'hurt', { by: msg.by });
       },
+      onRole: (msg) => {
+        opts.hud.onRole({ admin: msg.admin, moderator: msg.moderator });
+        debug('coop', 'role changed', { admin: msg.admin, moderator: msg.moderator });
+      },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });
         opts.hud.onError(code);
@@ -534,6 +539,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminResetWorld(): void {
       net.sendAdminResetWorld();
+    },
+    sendAdminSetRole(id, role): void {
+      net.sendAdminSetRole(id, role);
     },
     update(now): void {
       for (const avatar of avatars.values()) {

@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 
 use crate::creatures::{Creature, CreatureKind};
+use crate::db::Role;
 use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
 
 // Bulk edits (magic structures, and the world handed to a joining player) are capped so one player
@@ -109,6 +110,7 @@ struct Player {
     // taken over (keyed by account_id, so the name can change underneath without losing the session).
     account_id: String,
     is_admin: bool,
+    is_moderator: bool,
     claim: String,
     skin: String,
     shirt: String,
@@ -289,7 +291,7 @@ impl Room {
                 .admit(
                     String::new(),
                     String::new(),
-                    false,
+                    Role::Player,
                     claim,
                     look,
                     ip,
@@ -317,14 +319,14 @@ impl Room {
             let _ = reply.send(Err("claim_required".into()));
             return;
         }
-        let is_admin = self.hub.db.is_admin(&account_id).await.unwrap_or_else(|e| {
-            tracing::error!(tenant = %self.key.0, error = %e, "admin lookup failed");
-            false
+        let role = self.hub.db.role(&account_id).await.unwrap_or_else(|e| {
+            tracing::error!(tenant = %self.key.0, error = %e, "role lookup failed");
+            Role::Player
         });
         self.admit(
             account_id,
             authoritative_name,
-            is_admin,
+            role,
             claim,
             look,
             ip,
@@ -341,7 +343,7 @@ impl Room {
         &mut self,
         account_id: String,
         authoritative_name: String,
-        is_admin: bool,
+        role: Role,
         claim: String,
         look: Appearance,
         ip: IpAddr,
@@ -363,7 +365,8 @@ impl Room {
             id,
             name,
             account_id,
-            is_admin,
+            is_admin: role.is_admin(),
+            is_moderator: role.is_moderator(),
             claim,
             skin: sanitize_color(&look.skin, "#f2c18b"),
             shirt: sanitize_color(&look.shirt, "#ff5d2e"),
@@ -393,7 +396,8 @@ impl Room {
             brand: self.brand.clone(),
             tick_hz: self.tick_hz,
             spawn,
-            admin: is_admin,
+            admin: role.is_admin(),
+            moderator: role.is_moderator(),
         };
         let _ = conn.try_send(welcome);
         // Hand the joining player the world that has already been built.
@@ -481,6 +485,12 @@ impl Room {
         // single-player borrow below.
         if let ClientMsg::AdminResetWorld = msg {
             self.on_admin_reset_world(id);
+            return;
+        }
+
+        // Role changes touch another account + the whole player map, so handle before the borrow.
+        if let ClientMsg::AdminSetRole { id: target, role } = msg {
+            self.on_admin_set_role(id, target, role);
             return;
         }
 
@@ -631,6 +641,7 @@ impl Room {
             | ClientMsg::AdminKick { .. }
             | ClientMsg::AdminBan { .. }
             | ClientMsg::AdminResetWorld
+            | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. } => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
@@ -669,8 +680,15 @@ impl Room {
             return;
         };
         p.last_seen = Instant::now();
-        if !p.is_admin {
-            tracing::debug!(%id, "admin command ignored: not an admin");
+        let is_admin = p.is_admin;
+        let is_moderator = p.is_moderator;
+        // Moderators (kids) may flip the harmless toggles; only admins (parents) may toggle chat.
+        if !is_admin && !is_moderator {
+            tracing::debug!(%id, "room setting ignored: not a moderator/admin");
+            return;
+        }
+        if matches!(msg, ClientMsg::AdminSetChat { .. }) && !is_admin {
+            tracing::debug!(%id, "chat toggle ignored: moderators cannot toggle chat");
             return;
         }
         let changed = match msg {
@@ -749,8 +767,9 @@ impl Room {
             return;
         };
         admin.last_seen = Instant::now();
-        if !admin.is_admin {
-            tracing::debug!(%id, "admin command ignored: not an admin");
+        // World reset is a harmless toggle (kids can do it), so moderators are allowed too.
+        if !admin.is_admin && !admin.is_moderator {
+            tracing::debug!(%id, "world reset ignored: not a moderator/admin");
             return;
         }
         let admin_name = admin.name.clone();
@@ -765,6 +784,49 @@ impl Room {
             detail: String::new(),
         });
         tracing::info!(tenant = %self.key.0, %id, "world reset by admin");
+    }
+
+    /// Change an online player's role. Admins (parents) may grant any role; moderators (kids) may only
+    /// add or remove other moderators (never touch an admin, never grant admin). The change takes
+    /// effect live (the target's flags + a Role message) and is persisted to the account.
+    fn on_admin_set_role(&mut self, actor_id: PlayerId, target_id: PlayerId, wire_role: protocol::Role) {
+        let role = Role::from(wire_role);
+        let Some(actor) = self.players.get_mut(&actor_id) else {
+            return;
+        };
+        actor.last_seen = Instant::now();
+        let actor_is_admin = actor.is_admin;
+        let actor_is_moderator = actor.is_moderator;
+        let may_grant = actor_is_admin || (actor_is_moderator && role != Role::Admin);
+        if !may_grant {
+            tracing::debug!(%actor_id, "set-role ignored: insufficient authority");
+            return;
+        }
+        let Some(target) = self.players.get_mut(&target_id) else {
+            return;
+        };
+        if target.account_id.is_empty() {
+            tracing::debug!(%target_id, "set-role ignored: target is a guest");
+            return;
+        }
+        if !actor_is_admin && target.is_admin {
+            tracing::debug!(%actor_id, "set-role ignored: a moderator cannot change an admin");
+            return;
+        }
+        target.is_admin = role.is_admin();
+        target.is_moderator = role.is_moderator();
+        let target_account = target.account_id.clone();
+        let _ = target.conn.try_send(ServerMsg::Role {
+            admin: role.is_admin(),
+            moderator: role.is_moderator(),
+        });
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.set_role(&target_account, role).await {
+                tracing::error!(error = %e, "set_role persist failed");
+            }
+        });
+        tracing::info!(tenant = %self.key.0, %actor_id, %target_id, ?role, "role changed in-game");
     }
 
     /// A PvP melee attack on another player. Ignored unless pvp is on and the attacker is within melee
@@ -1137,6 +1199,7 @@ mod tests {
             name: format!("p{id}"),
             account_id: format!("acc{id}"),
             is_admin,
+            is_moderator: false,
             claim: format!("tok{id}"),
             skin: "#000000".into(),
             shirt: "#000000".into(),
@@ -1564,6 +1627,46 @@ mod tests {
         room.on_input(2, ClientMsg::AdminResetWorld);
         assert_eq!(room.world.edit_count(), 1, "a non-admin cannot reset");
         assert_eq!(drain_reset_event(&mut other_rx), None);
+    }
+
+    #[tokio::test]
+    async fn admin_promotes_a_player_to_moderator_who_can_reset_but_not_toggle_chat() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, true); // admin (parent)
+        add_player(&mut room, 2, false); // plain player (kid)
+
+        // A plain player can neither reset nor be hit by the chat toggle.
+        room.world.set(5, 6, 7, sim::STONE);
+        room.on_input(2, ClientMsg::AdminResetWorld);
+        assert_eq!(room.world.edit_count(), 1, "a plain player cannot reset");
+
+        // The admin promotes the kid to moderator.
+        room.on_input(1, ClientMsg::AdminSetRole { id: 2, role: protocol::Role::Moderator });
+        assert!(room.players.get(&2).unwrap().is_moderator);
+
+        // Now the moderator may reset the world (a harmless toggle)...
+        room.on_input(2, ClientMsg::AdminResetWorld);
+        assert_eq!(room.world.edit_count(), 0, "a moderator may reset");
+
+        // ...but may NOT toggle chat (parents-only).
+        room.on_input(2, ClientMsg::AdminSetChat { on: false });
+        assert!(room.chat_enabled, "a moderator cannot toggle chat");
+    }
+
+    #[tokio::test]
+    async fn a_moderator_cannot_grant_admin() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, true);
+        room.on_input(1, ClientMsg::AdminSetRole { id: 2, role: protocol::Role::Moderator });
+        add_player(&mut room, 2, false);
+        room.players.get_mut(&2).unwrap().is_moderator = true;
+        add_player(&mut room, 3, false);
+
+        room.on_input(2, ClientMsg::AdminSetRole { id: 3, role: protocol::Role::Admin });
+        assert!(!room.players.get(&3).unwrap().is_admin, "a moderator cannot grant admin");
+
+        room.on_input(2, ClientMsg::AdminSetRole { id: 3, role: protocol::Role::Moderator });
+        assert!(room.players.get(&3).unwrap().is_moderator, "a moderator may add another moderator");
     }
 
     #[tokio::test]

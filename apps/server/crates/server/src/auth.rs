@@ -34,6 +34,7 @@ pub struct Verified {
     pub name: String,
     pub claim: String,
     pub is_admin: bool,
+    pub is_moderator: bool,
 }
 
 /// Outcome of a rename request, mapped 1:1 onto the HTTP contract.
@@ -108,6 +109,7 @@ pub async fn verify(
         name: claimed.name,
         claim,
         is_admin: claimed.is_admin,
+        is_moderator: claimed.is_moderator,
     }))
 }
 

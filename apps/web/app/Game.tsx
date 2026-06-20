@@ -107,6 +107,7 @@ export default function Game() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [lobbyAdmin, setLobbyAdmin] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
+  const [infiniteResources, setInfiniteResources] = useState(true);
 
   const gameApiRef = useRef<GameApi | null>(null);
   const soloRef = useRef(false);
@@ -114,8 +115,9 @@ export default function Game() {
 
   const { entries: feed, pushFeedEntry } = useFeed();
   const {
-    room, setRoom, isAdmin, setIsAdmin, adminOpen, setAdminOpen, resetArmed, resetWorld,
-    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer,
+    room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
+    resetArmed, resetWorld, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
+    kickPlayer, banPlayer, setRole,
   } = useRoomAdmin(gameApiRef);
   const {
     lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
@@ -183,7 +185,7 @@ export default function Game() {
         onEvent: (event) => pushFeedEntry(event),
         // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
         onScore: () => undefined,
-        onAdmin: (admin) => setIsAdmin(admin),
+        onRole: (role) => { setIsAdmin(role.admin); setIsModerator(role.moderator); },
         onRoomState: (state) => setRoom(state),
         onError: (code) => {
           const key = AUTH_ERROR_KEYS[code];
@@ -430,10 +432,10 @@ export default function Game() {
         )}
       </div>
 
-      {isAdmin && (
+      {(isAdmin || isModerator) && (
         <div id="adminPanel" className={adminOpen ? 'open' : undefined}>
           <button id="adminToggle" onClick={() => setAdminOpen((open) => !open)} aria-expanded={adminOpen}>
-            🛡️ {t('game_admin.title')}
+            {isAdmin ? '🛡️' : '🧒'} {t(isAdmin ? 'game_admin.title' : 'game_admin.title_mod')}
           </button>
           {adminOpen && (
             <div id="adminBody">
@@ -451,21 +453,35 @@ export default function Game() {
               >
                 {room.pvp ? t('game_admin.pvp_on') : t('game_admin.pvp_off')}
               </button>
-              <button
-                id="adminChat"
-                className={room.chatEnabled ? undefined : 'on'}
-                onClick={toggleRoomChat}
-              >
-                {room.chatEnabled ? t('game_admin.chat_on') : t('game_admin.chat_off')}
-              </button>
+              {isAdmin && (
+                <button
+                  id="adminChat"
+                  className={room.chatEnabled ? undefined : 'on'}
+                  onClick={toggleRoomChat}
+                >
+                  {room.chatEnabled ? t('game_admin.chat_on') : t('game_admin.chat_off')}
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  id="adminInfinite"
+                  className={infiniteResources ? 'on' : undefined}
+                  onClick={() => { const next = !infiniteResources; setInfiniteResources(next); gameApiRef.current?.setInfiniteResources(next); }}
+                >
+                  {infiniteResources ? t('game_admin.infinite_on') : t('game_admin.infinite_off')}
+                </button>
+              )}
               <span className="adminLabel">{t('game_admin.players')}</span>
               <ul id="adminPlayers">
                 {roster.filter((player) => !player.self).map((player) => (
                   <li key={player.id}>
                     <span>{player.name}</span>
                     <span className="adminPlayerActions">
-                      <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>
-                      <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>
+                      <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
+                      {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
+                      <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
+                      {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
+                      {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
                     </span>
                   </li>
                 ))}

@@ -11,6 +11,7 @@ import {
   adminSetChat,
   adminSetPeace,
   adminSetPvp,
+  adminSetRole,
   adminSetStructure,
   attackPlayer,
   chat,
@@ -24,6 +25,7 @@ import {
   pong,
   type EditCell,
   type EditOp,
+  type Role,
   type ServerMsg,
 } from './protocol';
 
@@ -49,6 +51,7 @@ type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
 type EventMsg = Extract<ServerMsg, { t: 'event' }>;
 type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
 type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
+type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -60,6 +63,7 @@ export interface NetHandlers {
   onEvent?(msg: EventMsg): void;
   onRoomState?(msg: RoomStateMsg): void;
   onHurt?(msg: HurtMsg): void;
+  onRole?(msg: RoleMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -104,6 +108,7 @@ export interface NetClient {
   sendAdminBan(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
+  sendAdminSetRole(id: number, role: Role): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -185,6 +190,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'hurt') {
       opts.handlers.onHurt?.(msg);
+      return;
+    }
+    if (msg.t === 'role') {
+      opts.handlers.onRole?.(msg);
       return;
     }
     if (msg.t === 'ping') {
@@ -315,6 +324,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminResetWorld(): void {
       rawSend(encodeClientMsg(adminResetWorld()));
+    },
+    sendAdminSetRole(id, role): void {
+      rawSend(encodeClientMsg(adminSetRole(id, role)));
     },
     get ping(): number {
       return ping;

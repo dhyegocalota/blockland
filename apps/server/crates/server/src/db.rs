@@ -41,9 +41,48 @@ pub struct ScoreEntry {
     pub score: i64,
 }
 
+/// A per-account capability tier. `Admin` (parents) can do everything; `Moderator` (kids) can flip
+/// only the harmless room toggles and manage other moderators; `Player` is a normal account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Player,
+    Moderator,
+    Admin,
+}
+
+impl Role {
+    /// Reconstruct the role from the two persisted flags (admin wins if both are somehow set).
+    pub fn from_flags(is_admin: bool, is_moderator: bool) -> Self {
+        if is_admin {
+            return Self::Admin;
+        }
+        if is_moderator {
+            return Self::Moderator;
+        }
+        Self::Player
+    }
+    pub fn is_admin(self) -> bool {
+        self == Self::Admin
+    }
+    pub fn is_moderator(self) -> bool {
+        self == Self::Moderator
+    }
+}
+
+impl From<protocol::Role> for Role {
+    fn from(role: protocol::Role) -> Self {
+        match role {
+            protocol::Role::Player => Self::Player,
+            protocol::Role::Moderator => Self::Moderator,
+            protocol::Role::Admin => Self::Admin,
+        }
+    }
+}
+
 /// An account is identified by a stable `account_id`; the `name` is its current, MUTABLE display
 /// name within a tenant. Identity is per tenant: `(tenant, email)` and `(tenant, name)` are unique.
-/// `is_admin` is a per-account flag that authorizes room-wide settings in-game.
+/// `is_admin`/`is_moderator` back the `Role` capability tier (see `Role`).
 #[derive(Debug, Clone)]
 pub struct Account {
     pub account_id: String,
@@ -51,6 +90,13 @@ pub struct Account {
     pub name: String,
     pub email: String,
     pub is_admin: bool,
+    pub is_moderator: bool,
+}
+
+impl Account {
+    pub fn role(&self) -> Role {
+        Role::from_flags(self.is_admin, self.is_moderator)
+    }
 }
 
 /// One account row in the /admin panel's per-tenant account list.
@@ -60,6 +106,7 @@ pub struct AccountInfo {
     pub name: String,
     pub email: String,
     pub is_admin: bool,
+    pub is_moderator: bool,
 }
 
 /// Result of finding-or-creating an account for `(tenant, email)`: the stable id, its current name,
@@ -71,6 +118,13 @@ pub struct ClaimedAccount {
     pub renamed: bool,
     pub old_name: String,
     pub is_admin: bool,
+    pub is_moderator: bool,
+}
+
+impl ClaimedAccount {
+    pub fn role(&self) -> Role {
+        Role::from_flags(self.is_admin, self.is_moderator)
+    }
 }
 
 /// A pending login: a clicked-link `token` and a typed `code` both unlock the same (tenant, name, email).
@@ -154,6 +208,7 @@ impl Db {
                     email TEXT NOT NULL,
                     name TEXT NOT NULL,
                     is_admin INTEGER NOT NULL DEFAULT 0,
+                    is_moderator INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL,
                     UNIQUE (tenant, email),
                     UNIQUE (tenant, name)
@@ -161,15 +216,14 @@ impl Db {
                 (),
             )
             .await?;
-        // Backfill the column on databases created before admin existed; ignore the error if it
-        // already exists (libSQL has no `ADD COLUMN IF NOT EXISTS`).
-        let _ = self
-            .conn
-            .execute(
-                "ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
-                (),
-            )
-            .await;
+        // Backfill columns on databases created before they existed; ignore the error if a column is
+        // already there (libSQL has no `ADD COLUMN IF NOT EXISTS`).
+        for column in [
+            "ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE accounts ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0",
+        ] {
+            let _ = self.conn.execute(column, ()).await;
+        }
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS leaderboard (
@@ -386,7 +440,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT account_id, name, is_admin FROM accounts WHERE tenant = ?1 AND email = ?2",
+                "SELECT account_id, name, is_admin, is_moderator FROM accounts WHERE tenant = ?1 AND email = ?2",
                 params![tenant, email],
             )
             .await?;
@@ -397,6 +451,7 @@ impl Db {
                 name: row.get::<String>(1)?,
                 email: email.to_string(),
                 is_admin: row.get::<i64>(2)? != 0,
+                is_moderator: row.get::<i64>(3)? != 0,
             })),
             None => Ok(None),
         }
@@ -410,7 +465,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT account_id, email, is_admin FROM accounts WHERE tenant = ?1 AND name = ?2",
+                "SELECT account_id, email, is_admin, is_moderator FROM accounts WHERE tenant = ?1 AND name = ?2",
                 params![tenant, name],
             )
             .await?;
@@ -421,6 +476,7 @@ impl Db {
                 name: name.to_string(),
                 email: row.get::<String>(1)?,
                 is_admin: row.get::<i64>(2)? != 0,
+                is_moderator: row.get::<i64>(3)? != 0,
             })),
             None => Ok(None),
         }
@@ -433,7 +489,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT tenant, email, name, is_admin FROM accounts WHERE account_id = ?1",
+                "SELECT tenant, email, name, is_admin, is_moderator FROM accounts WHERE account_id = ?1",
                 params![account_id],
             )
             .await?;
@@ -444,6 +500,7 @@ impl Db {
                 email: row.get::<String>(1)?,
                 name: row.get::<String>(2)?,
                 is_admin: row.get::<i64>(3)? != 0,
+                is_moderator: row.get::<i64>(4)? != 0,
             })),
             None => Ok(None),
         }
@@ -491,12 +548,33 @@ impl Db {
         }
     }
 
+    /// The account's capability tier. Unknown accounts are plain players.
+    pub async fn role(&self, account_id: &str) -> Result<Role, libsql::Error> {
+        match self.get_account_by_id(account_id).await? {
+            Some(account) => Ok(account.role()),
+            None => Ok(Role::Player),
+        }
+    }
+
+    /// Set an account's role by stable id (used for in-game promote/demote of an online player).
+    /// Returns false when no such account exists.
+    pub async fn set_role(&self, account_id: &str, role: Role) -> Result<bool, libsql::Error> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE accounts SET is_admin = ?2, is_moderator = ?3 WHERE account_id = ?1",
+                params![account_id, role.is_admin() as i64, role.is_moderator() as i64],
+            )
+            .await?;
+        Ok(changed > 0)
+    }
+
     /// Every account of a tenant for the /admin panel, oldest-first.
     pub async fn list_accounts(&self, tenant: &str) -> Result<Vec<AccountInfo>, libsql::Error> {
         let mut rows = self
             .conn
             .query(
-                "SELECT account_id, name, email, is_admin FROM accounts
+                "SELECT account_id, name, email, is_admin, is_moderator FROM accounts
                  WHERE tenant = ?1 ORDER BY created_at ASC",
                 params![tenant],
             )
@@ -508,6 +586,7 @@ impl Db {
                 name: row.get::<String>(1)?,
                 email: row.get::<String>(2)?,
                 is_admin: row.get::<i64>(3)? != 0,
+                is_moderator: row.get::<i64>(4)? != 0,
             });
         }
         Ok(out)
@@ -544,6 +623,7 @@ impl Db {
                     renamed: false,
                     old_name: existing.name,
                     is_admin: existing.is_admin,
+                    is_moderator: existing.is_moderator,
                 });
             }
             let old_name = existing.name.clone();
@@ -558,6 +638,7 @@ impl Db {
                     renamed: false,
                     old_name,
                     is_admin: existing.is_admin,
+                    is_moderator: existing.is_moderator,
                 });
             }
             return Ok(ClaimedAccount {
@@ -566,6 +647,7 @@ impl Db {
                 renamed: true,
                 old_name,
                 is_admin: existing.is_admin,
+                is_moderator: existing.is_moderator,
             });
         }
         let account_id = gen_account_id();
@@ -591,6 +673,7 @@ impl Db {
             renamed: false,
             old_name: name.to_string(),
             is_admin: first_in_tenant,
+            is_moderator: false,
         })
     }
 
@@ -1016,6 +1099,26 @@ mod tests {
         assert_eq!(third.account_id, first.account_id);
         assert!(!third.renamed);
         assert_eq!(third.name, "Annie");
+    }
+
+    #[tokio::test]
+    async fn set_role_moves_an_account_between_tiers() {
+        let db = memory_db().await;
+        account(&db, "teo", "first@x.com", "First").await;
+        let kid = account(&db, "teo", "kid@x.com", "Kid").await;
+        assert_eq!(db.role(&kid).await.unwrap(), Role::Player);
+
+        assert!(db.set_role(&kid, Role::Moderator).await.unwrap());
+        assert_eq!(db.role(&kid).await.unwrap(), Role::Moderator);
+        assert!(!db.is_admin(&kid).await.unwrap());
+
+        assert!(db.set_role(&kid, Role::Admin).await.unwrap());
+        assert_eq!(db.role(&kid).await.unwrap(), Role::Admin);
+        assert!(db.is_admin(&kid).await.unwrap());
+
+        assert!(db.set_role(&kid, Role::Player).await.unwrap());
+        assert_eq!(db.role(&kid).await.unwrap(), Role::Player);
+        assert!(!db.set_role("ghost", Role::Admin).await.unwrap());
     }
 
     #[tokio::test]

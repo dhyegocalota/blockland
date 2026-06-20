@@ -78,8 +78,23 @@ pub enum ClientMsg {
     AttackPlayer {
         id: u32,
     },
-    /// Admin-only: wipe the world (all edits + creatures) for everyone. Ignored from non-admins.
+    /// Moderator+admin: wipe the world (all edits + creatures) for everyone. Ignored from players.
     AdminResetWorld,
+    /// Admin-only (or moderator setting a moderator): change an online player's role by id. Ignored
+    /// when the sender lacks the authority to grant the requested role.
+    AdminSetRole {
+        id: u32,
+        role: Role,
+    },
+}
+
+/// A player's capability tier on the wire. Mirrors the server `db::Role`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Player,
+    Moderator,
+    Admin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -111,6 +126,7 @@ pub enum ServerMsg {
         tick_hz: u32,
         spawn: [f32; 3],
         admin: bool,
+        moderator: bool,
     },
     Snapshot {
         #[ts(type = "number")]
@@ -160,6 +176,11 @@ pub enum ServerMsg {
     /// Sent to a player who was just hit by another player in PvP; the client takes the damage.
     Hurt {
         by: String,
+    },
+    /// Sent to a player whose role just changed in-game, so their controls update without a rejoin.
+    Role {
+        admin: bool,
+        moderator: bool,
     },
 }
 
@@ -216,6 +237,7 @@ mod export {
         for decl in [
             Brand::decl(),
             EditOp::decl(),
+            Role::decl(),
             EditCell::decl(),
             PlayerState::decl(),
             CreatureState::decl(),
