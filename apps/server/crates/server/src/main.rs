@@ -20,6 +20,7 @@
 //!   POST   /internal/auth/verify         finish a login: { token } or { tenant, name, code } -> { ok, tenant, name, claim, is_admin }
 //!   POST   /internal/auth/logout         end a session: { tenant, claim } -> { ok }
 //!   POST   /internal/auth/rename         rename a logged-in account: { tenant, claim, newName } -> { ok, name } | { ok:false, error }
+//!   POST   /internal/waitlist            join the pre-launch waitlist: { email, name?, phone? } -> { ok }
 
 mod auth;
 mod bans;
@@ -580,6 +581,38 @@ async fn internal_auth_rename(
         Ok(auth::RenameResult::Invalid) => {
             Json(serde_json::json!({ "ok": false, "error": "invalid" })).into_response()
         }
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct WaitlistReq {
+    email: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    phone: Option<String>,
+}
+
+async fn internal_waitlist(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "POST", &original_uri.0, &headers, &body) {
+        return resp;
+    }
+    let Ok(req) = serde_json::from_slice::<WaitlistReq>(&body) else {
+        return (StatusCode::BAD_REQUEST, "invalid_body").into_response();
+    };
+    match state
+        .hub
+        .db
+        .add_waitlist_entry(&req.email, req.name.as_deref(), req.phone.as_deref())
+        .await
+    {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => internal_error(e),
     }
 }

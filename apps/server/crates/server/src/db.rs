@@ -1401,7 +1401,9 @@ mod tests {
         db.add_waitlist_entry("ann@x.com", Some("Ann"), Some("+5511900000000"))
             .await
             .unwrap();
-        db.add_waitlist_entry("bob@x.com", None, None).await.unwrap();
+        db.add_waitlist_entry("bob@x.com", None, None)
+            .await
+            .unwrap();
         // Re-submitting the same email refreshes the row instead of adding a duplicate.
         db.add_waitlist_entry("ann@x.com", Some("Annie"), None)
             .await
