@@ -87,6 +87,9 @@ export interface CoopOptions {
   onCreaturePoof(args: { x: number; y: number; z: number; color: string }): void;
   // The admin reset the world: rebuild it in place + respawn, without a page reload.
   onWorldReset(): void;
+  // The server's authoritative spawn for this player (from Welcome). The engine snaps the local player
+  // onto it so the server's anti-cheat baseline and the client agree from the first move.
+  onSpawn(x: number, y: number, z: number): void;
 }
 
 interface Avatar {
@@ -393,6 +396,7 @@ export function createCoop(opts: CoopOptions): CoopController {
       onWelcome: (msg) => {
         selfId = msg.you;
         admin = msg.admin;
+        opts.onSpawn(msg.spawn[0], msg.spawn[1], msg.spawn[2]);
         opts.hud.onRole({ admin: msg.admin, moderator: msg.moderator });
         debug('coop', 'welcome', { you: msg.you, world: msg.world, admin: msg.admin, moderator: msg.moderator });
       },

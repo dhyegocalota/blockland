@@ -126,6 +126,9 @@ struct Player {
     conn: mpsc::Sender<ServerMsg>,
     last_seen: Instant,
     last_move: Instant,
+    // False until the player's first in-world move is accepted. That first move is taken verbatim as the
+    // anti-cheat baseline (the client spawns/restores wherever it likes); only later moves are speed-checked.
+    move_synced: bool,
     joined_at_ms: u64,
     ping_nonce: u32,
     ping_sent_at: Instant,
@@ -382,6 +385,7 @@ impl Room {
             conn: conn.clone(),
             last_seen: now,
             last_move: now,
+            move_synced: false,
             joined_at_ms: epoch_ms(),
             ping_nonce: 0,
             ping_sent_at: now,
@@ -544,7 +548,10 @@ impl Room {
                 let in_world = horizontal.contains(&x)
                     && horizontal.contains(&z)
                     && (0.0..=sim::MAX_FLY_Y as f32).contains(&y);
-                if dist <= allowed && in_world && x.is_finite() && y.is_finite() && z.is_finite() {
+                let finite = x.is_finite() && y.is_finite() && z.is_finite();
+                let first_sync = !p.move_synced && in_world && finite;
+                if in_world && finite && (dist <= allowed || first_sync) {
+                    p.move_synced = true;
                     p.x = x;
                     p.y = y;
                     p.z = z;
@@ -1281,6 +1288,7 @@ mod tests {
             conn,
             last_seen: now,
             last_move: now,
+            move_synced: false,
             joined_at_ms: 0,
             ping_nonce: 0,
             ping_sent_at: now,
@@ -1361,6 +1369,37 @@ mod tests {
         room.on_admin_setting(2, ClientMsg::AdminSetPeace { on: true });
         assert!(!room.peace);
         assert_eq!(drain_room_state(&mut other_rx), None);
+    }
+
+    #[tokio::test]
+    async fn first_move_is_accepted_as_baseline_then_speed_checked() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        // The client may spawn or restore far from the server spawn; the first move is taken verbatim so
+        // the player isn't frozen by the anti-cheat (which would otherwise reject every later move too).
+        room.on_input(
+            1,
+            ClientMsg::Move {
+                x: 50.0,
+                y: 20.0,
+                z: 50.0,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        );
+        assert_eq!(room.players.get(&1).unwrap().x, 50.0);
+        // Once synced, an impossibly fast jump is rejected and the position holds.
+        room.on_input(
+            1,
+            ClientMsg::Move {
+                x: 120.0,
+                y: 20.0,
+                z: 50.0,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        );
+        assert_eq!(room.players.get(&1).unwrap().x, 50.0);
     }
 
     #[tokio::test]

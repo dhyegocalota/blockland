@@ -1135,6 +1135,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       applyHurt,
       onCreaturePoof: ({ x, y, z, color }) => spawnPoof(new THREE.Vector3(x, y, z), color),
       onWorldReset: resetLocalWorld,
+      onSpawn: (x, y, z) => { player.pos.set(x, y, z); player.vel.set(0, 0, 0); },
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }
@@ -1177,5 +1178,36 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     win.__blGameCleanup = undefined;
   };
   win.__blGameCleanup = cleanup;
+  // Dev-only E2E hook: lets the automated test plan read state and aim+attack without pointer lock.
+  if (process.env.NODE_ENV !== 'production') {
+    (win as unknown as { __blTest?: unknown }).__blTest = {
+      creatures: () =>
+        coop
+          ? coop.getCreatures()
+          : creatures.map((c) => ({ id: -1, kind: c.typeKey, x: c.mesh.position.x, y: c.mesh.position.y, z: c.mesh.position.z })),
+      players: () => (coop ? coop.getPlayers() : []),
+      pos: () => ({ x: player.pos.x, y: player.pos.y, z: player.pos.z }),
+      stars: () => player.stars,
+      hearts: () => player.hearts,
+      fly: () => player.fly,
+      teleport: (x: number, y: number, z: number) => { player.pos.set(x, y + EYE_HEIGHT, z); player.vel.set(0, 0, 0); },
+      setFly: (on: boolean) => { player.fly = on; },
+      face: (x: number, z: number) => { player.yaw = Math.atan2(x - player.pos.x, z - player.pos.z); player.pitch = 0; },
+      attackAt: (x: number, y: number, z: number) => {
+        player.yaw = Math.atan2(x - player.pos.x, z - player.pos.z);
+        player.pitch = Math.atan2(y - player.pos.y, Math.hypot(x - player.pos.x, z - player.pos.z));
+        camera.position.copy(player.pos);
+        camera.lookAt(x, y, z);
+        primaryAction();
+      },
+      rayHitAt: (x: number, y: number, z: number) => {
+        camera.position.copy(player.pos);
+        camera.lookAt(x, y, z);
+        const r = raycastServerCreature();
+        return r ? { id: r.creature.id, t: r.t } : null;
+      },
+      hitId: (id: number) => coop?.sendHit(id),
+    };
+  }
   return cleanup;
 }

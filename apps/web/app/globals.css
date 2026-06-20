@@ -449,13 +449,13 @@ canvas { display: block; }
   background: rgba(20,12,40,.6); border: 2px solid rgba(255,255,255,.35); border-radius: 12px;
   padding: 10px 12px; backdrop-filter: blur(6px); animation: chatIn .2s ease both;
 }
-#adminPeace, #adminPvp, #adminChat {
+#adminPeace, #adminPvp, #adminChat, #adminInfinite {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,93,46,.35); border: 2px solid rgba(255,255,255,.35); border-radius: 10px;
   padding: 6px 10px; transition: transform .08s;
 }
-#adminPeace.on, #adminPvp.on, #adminChat.on { background: rgba(91,216,106,.35); border-color: var(--gold); }
-#adminPeace:active, #adminPvp:active, #adminChat:active { transform: translateY(2px); }
+#adminPeace.on, #adminPvp.on, #adminChat.on, #adminInfinite.on { background: rgba(91,216,106,.35); border-color: var(--gold); }
+#adminPeace:active, #adminPvp:active, #adminChat:active, #adminInfinite:active { transform: translateY(2px); }
 #adminBody .adminLabel { color: #cbb8ff; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 #adminStructures, #adminPlayers { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 #adminStructures li, #adminPlayers li { display: flex; align-items: center; gap: 8px; }
