@@ -89,6 +89,13 @@ pub enum ClientMsg {
     /// Ask the server to send the player back to spawn (the "back to start" button, and on death). The
     /// server moves them authoritatively and re-baselines the anti-cheat so the teleport is not rejected.
     Respawn,
+    /// One tap against a block while digging. The server counts taps per block and decides when it breaks
+    /// (after DIG_HITS), so the dig difficulty is authoritative — a modified client can't break instantly.
+    Dig {
+        x: i32,
+        y: i32,
+        z: i32,
+    },
 }
 
 /// A player's capability tier on the wire. Mirrors the server `db::Role`.

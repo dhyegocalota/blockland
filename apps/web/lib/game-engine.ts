@@ -353,12 +353,18 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     player.pos.y = clearFeetAbove({ feet, isSolid: (y) => isSolid(fx, y, fz) }) + EYE_HEIGHT;
     player.vel.set(0, 0, 0);
   }
-  function applyRemoteEdit({ x, y, z, id }: { x: number; y: number; z: number; id: number }): void {
+  function applyRemoteEdit({ x, y, z, id, mine }: { x: number; y: number; z: number; id: number; mine: boolean }): void {
     if (!inBounds(x, y, z)) return;
+    // When the server confirms OUR own dig broke a block, that is when we collect it (digs are
+    // server-authoritative now, so we wait for the break instead of applying it optimistically).
+    if (mine && id === AIR) {
+      const removed = getVoxel(x, y, z);
+      if (removed !== AIR) { player.bag += 1; inventory.bank(removed); updateHotbarCounts(); updateStats(); }
+    }
     setVoxel(x, y, z, id);
     remeshRegion(x - 1, x + 1, z - 1, z + 1);
     unstuckPlayer();
-    debug('coop', 'remote edit', { x, y, z, id });
+    debug('coop', 'remote edit', { x, y, z, id, mine });
   }
   function applyRemoteEditBatch(edits: EditCell[]): void {
     if (edits.length === 0) return;
@@ -683,10 +689,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (target === 'block' && block) breakBlock(block);
   }
   function breakBlock(r: VoxelHit): void {
+    // Co-op: the server counts the taps and decides the break (authoritative dig). We just send the tap
+    // and chip — the block is removed + collected when the server's break edit comes back to us.
+    if (coop) {
+      coop.sendDig(r.hit[0], r.hit[1], r.hit[2]);
+      blip(180, 0.05);
+      return;
+    }
     const removed = getVoxel(r.hit[0], r.hit[1], r.hit[2]);
     setVoxel(r.hit[0], r.hit[1], r.hit[2], AIR);
     remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
-    sendCoopEdit('break', r.hit[0], r.hit[1], r.hit[2], AIR);
     player.bag += 1;
     inventory.bank(removed);
     updateHotbarCounts();

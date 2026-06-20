@@ -80,7 +80,7 @@ export interface CoopOptions {
   hair: string;
   claim: string;
   hud: CoopHud;
-  applyRemoteEdit(args: { x: number; y: number; z: number; id: number }): void;
+  applyRemoteEdit(args: { x: number; y: number; z: number; id: number; mine: boolean }): void;
   applyRemoteEditBatch(edits: EditCell[]): void;
   applyRoomState(room: RoomState): void;
   applyHurt(by: string): void;
@@ -151,6 +151,7 @@ export interface CoopController {
   sendChat(text: string): void;
   sendHit(id: number): void;
   sendRespawn(): void;
+  sendDig(x: number, y: number, z: number): void;
   flashCreature(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
@@ -449,7 +450,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onPing(selfPing);
         opts.hud.onScore(selfScore);
       },
-      onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id }),
+      onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id, mine: msg.by === selfId }),
       onEditBatch: (msg) => opts.applyRemoteEditBatch(msg.edits),
       onChat: (msg) => {
         showBubble(msg.from, msg.text);
@@ -543,6 +544,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendRespawn(): void {
       net.sendRespawn();
+    },
+    sendDig(x, y, z): void {
+      net.sendDig(x, y, z);
     },
     sendHit(id): void {
       net.sendHit(id);

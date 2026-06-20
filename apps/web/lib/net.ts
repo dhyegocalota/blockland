@@ -21,6 +21,7 @@ import {
   hit,
   join,
   move,
+  dig,
   parseServerMsg,
   pong,
   respawn,
@@ -106,6 +107,7 @@ export interface NetClient {
   sendChat(text: string): void;
   sendHit(id: number): void;
   sendRespawn(): void;
+  sendDig(x: number, y: number, z: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
   sendAdminSetPvp(on: boolean): void;
@@ -317,6 +319,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendRespawn(): void {
       rawSend(encodeClientMsg(respawn()));
+    },
+    sendDig(x, y, z): void {
+      rawSend(encodeClientMsg(dig(x, y, z)));
     },
     sendAdminSetPeace(on): void {
       rawSend(encodeClientMsg(adminSetPeace(on)));

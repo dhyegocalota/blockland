@@ -48,6 +48,8 @@ const HURT_RANGE: f32 = 1.2;
 const HURT_LEVEL_SLACK: f32 = 0.5;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
 const PLAYER_BODY_HEIGHT: f32 = 1.7;
+// Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
+const DIG_HITS: u8 = 3;
 
 /// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
 pub struct Appearance {
@@ -140,6 +142,9 @@ struct Player {
     // Server-owned health: hearts left, and when the player last took damage (for the hurt cooldown).
     hp: u8,
     hurt_at: Instant,
+    // The block currently being chipped and how many taps have landed, so the server decides the break.
+    dig_block: Option<[i32; 3]>,
+    dig_hits: u8,
     joined_at_ms: u64,
     ping_nonce: u32,
     ping_sent_at: Instant,
@@ -215,7 +220,8 @@ impl Room {
             tick: 0,
             empty_since: Some(Instant::now()),
             dirty: false,
-            peace: false,
+            // Monsters are calm by default (kids' worlds); an admin/moderator turns attacks on.
+            peace: true,
             blocked_structures: BTreeSet::new(),
             pvp: false,
             chat_enabled: true,
@@ -402,6 +408,8 @@ impl Room {
             move_synced: false,
             hp: MAX_HP,
             hurt_at: now,
+            dig_block: None,
+            dig_hits: 0,
             joined_at_ms: epoch_ms(),
             ping_nonce: 0,
             ping_sent_at: now,
@@ -540,6 +548,15 @@ impl Room {
             self.respawn(id);
             return;
         }
+        // A dig tap touches the player's dig counter and (on the final tap) the shared world, so it is
+        // handled before the single-player borrow below.
+        if let ClientMsg::Dig { x, y, z } = msg {
+            if let Some(p) = self.players.get_mut(&id) {
+                p.last_seen = now;
+            }
+            self.on_dig(id, x, y, z);
+            return;
+        }
 
         // Edits and chat need a broadcast after the borrow ends, so stage them.
         let mut edit_out: Option<ServerMsg> = None;
@@ -674,7 +691,8 @@ impl Room {
             | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
-            | ClientMsg::Respawn => { /* handled before the per-player borrow above */ }
+            | ClientMsg::Respawn
+            | ClientMsg::Dig { .. } => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* already joined; ignore */ }
         }
 
@@ -1195,6 +1213,55 @@ impl Room {
         });
     }
 
+    /// Count a dig tap against a block (resetting when the player switches blocks). After DIG_HITS taps
+    /// on the same in-reach solid block the server breaks it and broadcasts the edit to everyone, so the
+    /// dig difficulty is authoritative.
+    fn on_dig(&mut self, id: PlayerId, x: i32, y: i32, z: i32) {
+        let reach = self.hub.limits.edit_reach;
+        {
+            let Some(p) = self.players.get_mut(&id) else {
+                return;
+            };
+            if !p.edit_b.take() {
+                return;
+            }
+            if !(0..sim::SIZE_Y).contains(&y) {
+                return;
+            }
+            let d = ((x as f32 + 0.5 - p.x).powi(2)
+                + (y as f32 + 0.5 - p.y).powi(2)
+                + (z as f32 + 0.5 - p.z).powi(2))
+            .sqrt();
+            if d > reach {
+                return;
+            }
+            let cell = [x, y, z];
+            if p.dig_block == Some(cell) {
+                p.dig_hits += 1;
+            } else {
+                p.dig_block = Some(cell);
+                p.dig_hits = 1;
+            }
+            if p.dig_hits < DIG_HITS {
+                return;
+            }
+            p.dig_block = None;
+            p.dig_hits = 0;
+        }
+        if !self.world.is_solid(x, y, z) {
+            return;
+        }
+        self.world.set(x, y, z, sim::AIR);
+        self.dirty = true;
+        self.broadcast(&ServerMsg::Edit {
+            x,
+            y,
+            z,
+            id: sim::AIR,
+            by: id,
+        });
+    }
+
     /// Spawn one creature near a player, kind and offset derived from the creature id and tick so the
     /// population varies without any RNG state.
     fn spawn_near(&mut self, player_xz: &[[f32; 2]]) {
@@ -1399,6 +1466,8 @@ mod tests {
             move_synced: false,
             hp: MAX_HP,
             hurt_at: now,
+            dig_block: None,
+            dig_hits: 0,
             joined_at_ms: 0,
             ping_nonce: 0,
             ping_sent_at: now,
@@ -1465,10 +1534,10 @@ mod tests {
         let mut admin_rx = add_player(&mut room, 1, true);
         let mut other_rx = add_player(&mut room, 2, false);
 
-        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: true });
-        assert!(room.peace);
-        assert_eq!(drain_room_state(&mut admin_rx), Some((true, vec![])));
-        assert_eq!(drain_room_state(&mut other_rx), Some((true, vec![])));
+        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: false });
+        assert!(!room.peace);
+        assert_eq!(drain_room_state(&mut admin_rx), Some((false, vec![])));
+        assert_eq!(drain_room_state(&mut other_rx), Some((false, vec![])));
     }
 
     #[tokio::test]
@@ -1476,8 +1545,8 @@ mod tests {
         let mut room = test_room().await;
         let mut other_rx = add_player(&mut room, 2, false);
 
-        room.on_admin_setting(2, ClientMsg::AdminSetPeace { on: true });
-        assert!(!room.peace);
+        room.on_admin_setting(2, ClientMsg::AdminSetPeace { on: false });
+        assert!(room.peace);
         assert_eq!(drain_room_state(&mut other_rx), None);
     }
 
@@ -1603,6 +1672,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dig_breaks_only_after_three_taps_and_resets_on_switch() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        room.world.set(10, 20, 10, 1);
+        room.world.set(11, 20, 10, 1);
+        {
+            let p = room.players.get_mut(&1).unwrap();
+            p.x = 10.5;
+            p.y = 21.0;
+            p.z = 10.5;
+        }
+        room.on_dig(1, 10, 20, 10);
+        room.on_dig(1, 10, 20, 10);
+        assert!(
+            room.world.is_solid(10, 20, 10),
+            "two taps leave it standing"
+        );
+        // switching blocks resets the counter, so the original needs three fresh taps
+        room.on_dig(1, 11, 20, 10);
+        room.on_dig(1, 10, 20, 10);
+        room.on_dig(1, 10, 20, 10);
+        assert!(room.world.is_solid(10, 20, 10), "the switch reset progress");
+        room.on_dig(1, 10, 20, 10);
+        assert!(!room.world.is_solid(10, 20, 10), "the third tap breaks it");
+        assert!(
+            (0..50)
+                .filter_map(|_| rx.try_recv().ok())
+                .any(|m| matches!(m, ServerMsg::Edit { id: 0, .. })),
+            "the break is broadcast",
+        );
+    }
+
+    #[tokio::test]
     async fn admin_blocks_then_reallows_a_structure() {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
@@ -1617,7 +1719,7 @@ mod tests {
         assert!(room.blocked_structures.contains("trophy"));
         assert_eq!(
             drain_room_state(&mut admin_rx),
-            Some((false, vec!["trophy".to_string()]))
+            Some((true, vec!["trophy".to_string()]))
         );
 
         room.on_admin_setting(
@@ -1628,7 +1730,7 @@ mod tests {
             },
         );
         assert!(room.blocked_structures.is_empty());
-        assert_eq!(drain_room_state(&mut admin_rx), Some((false, vec![])));
+        assert_eq!(drain_room_state(&mut admin_rx), Some((true, vec![])));
     }
 
     #[tokio::test]
@@ -1668,7 +1770,7 @@ mod tests {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
 
-        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: false });
+        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: true });
         assert_eq!(drain_room_state(&mut admin_rx), None);
     }
 

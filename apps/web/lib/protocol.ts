@@ -40,6 +40,8 @@ export const hit = (id: number): ClientMsg => ({ t: 'hit', id });
 
 export const respawn = (): ClientMsg => ({ t: 'respawn' });
 
+export const dig = (x: number, y: number, z: number): ClientMsg => ({ t: 'dig', x, y, z });
+
 export const chat = (text: string): ClientMsg => ({ t: 'chat', text });
 
 export const editBatch = (edits: EditCell[]): ClientMsg => ({ t: 'edit_batch', edits });
