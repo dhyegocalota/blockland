@@ -95,6 +95,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.online': '👥 {count} online agora',
     'lobby.want_game': '🧡 Quero um jogo desse pro meu filho também',
     'lobby.credit': 'Feito com 🧡 por Dhyego Calota',
+    'lobby.admin_badge': '👑 Você é admin',
 
     // Start screen — name input
     'start.name_label': 'Seu nome',
@@ -108,6 +109,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'login.sending': 'Enviando...',
     'login.code_title': 'Verifique seu e-mail',
     'login.code_hint': 'Enviamos um código de 6 dígitos para {email}.',
+    'login.code_spam': '📩 Não chegou? Veja na caixa de spam ou lixo eletrônico.',
     'login.code_placeholder': '000000',
     'login.verify': 'Entrar',
     'login.verifying': 'Entrando...',
@@ -282,11 +284,15 @@ export const messages: Record<Locale, Record<string, string>> = {
     'accounts.load': 'Carregar',
     'accounts.empty': 'Nenhuma conta neste tenant.',
     'accounts.col_name': 'Nome',
+    'accounts.col_email': 'Email',
     'accounts.col_admin': 'Admin',
     'accounts.make_admin': 'Tornar admin',
     'accounts.remove_admin': 'Remover admin',
     'accounts.is_admin': '👑 Admin',
     'accounts.not_admin': '—',
+    'accounts.grant_email_label': 'Tornar admin por email',
+    'accounts.grant_email_placeholder': 'email@exemplo.com',
+    'accounts.grant_email_button': 'Tornar admin',
 
     // Admin — leaderboard
     'leaderboard.title': '🏆 Placar',
@@ -387,6 +393,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.online': '👥 {count} online now',
     'lobby.want_game': '🧡 I want a game like this for my kid too',
     'lobby.credit': 'Built with 🧡 by Dhyego Calota',
+    'lobby.admin_badge': '👑 You are admin',
 
     // Start screen — name input
     'start.name_label': 'Your name',
@@ -400,6 +407,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'login.sending': 'Sending...',
     'login.code_title': 'Check your email',
     'login.code_hint': 'We sent a 6-digit code to {email}.',
+    'login.code_spam': "📩 Didn't arrive? Check your spam or junk folder.",
     'login.code_placeholder': '000000',
     'login.verify': 'Log in',
     'login.verifying': 'Logging in...',
@@ -574,11 +582,15 @@ export const messages: Record<Locale, Record<string, string>> = {
     'accounts.load': 'Load',
     'accounts.empty': 'No accounts in this tenant.',
     'accounts.col_name': 'Name',
+    'accounts.col_email': 'Email',
     'accounts.col_admin': 'Admin',
     'accounts.make_admin': 'Make admin',
     'accounts.remove_admin': 'Remove admin',
     'accounts.is_admin': '👑 Admin',
     'accounts.not_admin': '—',
+    'accounts.grant_email_label': 'Make admin by email',
+    'accounts.grant_email_placeholder': 'email@example.com',
+    'accounts.grant_email_button': 'Make admin',
 
     // Admin — leaderboard
     'leaderboard.title': '🏆 Leaderboard',

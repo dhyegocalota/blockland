@@ -103,6 +103,11 @@ canvas { display: block; }
   z-index: 2; background: rgba(42,26,74,.85); color: var(--gold); font-weight: 900; font-size: 18px;
   padding: 8px 20px; border-radius: 16px; border: 3px solid var(--gold);
 }
+#start .admin-badge {
+  z-index: 2; background: linear-gradient(var(--gold), #e0a800); color: #2a1a4a; font-weight: 900;
+  font-size: 17px; padding: 8px 20px; border-radius: 16px; border: 3px solid #fff;
+  box-shadow: 0 4px 14px #0004; letter-spacing: .3px;
+}
 #playBtn {
   z-index: 2; font-family: inherit; font-size: 30px; font-weight: 900; color: #fff;
   background: linear-gradient(#ff8a3d, #ff5d2e); border: 6px solid #fff; border-radius: 26px;
@@ -284,6 +289,7 @@ canvas { display: block; }
 #loginModal h2 { color: var(--ink); font-size: clamp(20px, 5vw, 28px); font-weight: 900; margin-bottom: 10px; }
 #loginModal p { color: #2a1a4a; font-weight: 800; font-size: 15px; line-height: 1.4; margin-bottom: 16px; }
 #loginModal .loginError { color: #c43d18; }
+#loginModal .loginSpam { color: #6b5b8a; font-size: 13px; font-weight: 700; margin-top: -8px; }
 #loginModal input {
   font-family: inherit; font-size: 20px; font-weight: 800; text-align: center; color: var(--ink);
   background: #fff; border: 4px solid #fff; border-radius: 16px; padding: 10px 18px; width: min(280px, 76vw);

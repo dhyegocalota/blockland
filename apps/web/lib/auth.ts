@@ -24,6 +24,7 @@ export interface AuthVerifyResult {
   tenant: string;
   name: string;
   claim: string;
+  is_admin: boolean;
 }
 
 export interface AuthVerifyFailure {

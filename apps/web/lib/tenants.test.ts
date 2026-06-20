@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolveTenant, tenantIdFromLocation } from './tenants';
+import { resolveTenant, tenantIdFromLocation, tenantSubdomain } from './tenants';
 import { DEFAULT_TENANT } from './builtins';
+
+const PROD_ROOT = 'blockland.dhyegocalota.com.br';
 
 function stubLocation({ hostname, search }: { hostname: string; search: string }) {
   globalThis.window = { location: { hostname, search } } as unknown as Window & typeof globalThis;
@@ -23,11 +25,34 @@ function stubFetchByUrl(routes: { api: StubResponse; bundle: StubResponse }) {
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { fetch?: unknown }).fetch;
+  vi.unstubAllEnvs();
+});
+
+describe('tenantSubdomain', () => {
+  it('is null on the production app root (admin lives here)', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    stubLocation({ hostname: PROD_ROOT, search: '' });
+    expect(tenantSubdomain()).toBeNull();
+  });
+
+  it('extracts the tenant from a production subdomain', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    stubLocation({ hostname: `teo.${PROD_ROOT}`, search: '' });
+    expect(tenantSubdomain()).toBe('teo');
+  });
+
+  it('is null on bare localhost and a tenant on a localhost subdomain', () => {
+    stubLocation({ hostname: 'localhost', search: '' });
+    expect(tenantSubdomain()).toBeNull();
+    stubLocation({ hostname: 'teo.localhost', search: '' });
+    expect(tenantSubdomain()).toBe('teo');
+  });
 });
 
 describe('tenantIdFromLocation', () => {
   it('prefers the ?tenant override', () => {
-    stubLocation({ hostname: 'teo.blockland.app', search: '?tenant=Demo' });
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    stubLocation({ hostname: PROD_ROOT, search: '?tenant=Demo' });
     expect(tenantIdFromLocation()).toBe('demo');
   });
 
@@ -36,18 +61,20 @@ describe('tenantIdFromLocation', () => {
     expect(tenantIdFromLocation()).toBe('teo');
   });
 
-  it('resolves an app subdomain', () => {
-    stubLocation({ hostname: 'teo.blockland.app', search: '' });
+  it('resolves a production subdomain', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    stubLocation({ hostname: `teo.${PROD_ROOT}`, search: '' });
     expect(tenantIdFromLocation()).toBe('teo');
+  });
+
+  it('falls back to the default tenant on the app root', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    stubLocation({ hostname: PROD_ROOT, search: '' });
+    expect(tenantIdFromLocation()).toBe(DEFAULT_TENANT);
   });
 
   it('falls back to the default tenant on bare localhost', () => {
     stubLocation({ hostname: 'localhost', search: '' });
-    expect(tenantIdFromLocation()).toBe(DEFAULT_TENANT);
-  });
-
-  it('falls back to the default tenant on vercel.app previews', () => {
-    stubLocation({ hostname: 'my-app.vercel.app', search: '' });
     expect(tenantIdFromLocation()).toBe(DEFAULT_TENANT);
   });
 });

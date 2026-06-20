@@ -127,6 +127,7 @@ export default function Game() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [lobbyAdmin, setLobbyAdmin] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [room, setRoom] = useState<RoomState>({ peace: true, blockedStructures: [], pvp: false, chatEnabled: true });
   const [adminOpen, setAdminOpen] = useState(false);
@@ -340,7 +341,9 @@ export default function Game() {
   useEffect(() => {
     if (!brand) return;
     const session = loadSession();
-    setLoggedIn(!!session && session.tenant === brand.id);
+    const ownsSession = !!session && session.tenant === brand.id;
+    setLoggedIn(ownsSession);
+    setLobbyAdmin(ownsSession && session?.is_admin === true);
   }, [brand, loginStep]);
 
   useEffect(() => {
@@ -426,12 +429,12 @@ export default function Game() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tenant: brand.id, name: name.trim(), code: loginCode.trim() }),
       });
-      const data = (await res.json()) as { ok: boolean; tenant?: string; name?: string; claim?: string };
+      const data = (await res.json()) as { ok: boolean; tenant?: string; name?: string; claim?: string; is_admin?: boolean };
       if (!data.ok || !data.tenant || !data.name || !data.claim) {
         setLoginError(t('login.error_code'));
         return;
       }
-      saveSession({ tenant: data.tenant, name: data.name, claim: data.claim });
+      saveSession({ tenant: data.tenant, name: data.name, claim: data.claim, is_admin: data.is_admin === true });
       finishLogin();
     } catch {
       setLoginError(t('login.error_generic'));
@@ -606,6 +609,7 @@ export default function Game() {
               <>
                 <h2>{t('login.code_title')}</h2>
                 <p>{t('login.code_hint', { email: loginEmail.trim() })}</p>
+                <p className="loginSpam">{t('login.code_spam')}</p>
                 <input
                   id="loginCode"
                   inputMode="numeric"
@@ -742,6 +746,7 @@ export default function Game() {
         <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
         <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
         <span className="record-badge" id="startRecord">{t('start.record')}</span>
+        {lobbyAdmin && <span className="admin-badge" id="startAdmin">{t('lobby.admin_badge')}</span>}
         <LobbyPresence tenant={brand.id} />
         <label id="nameField">
           {t('start.name_label')}

@@ -70,6 +70,8 @@ export async function fetchAccounts(tenant: string): Promise<unknown> {
   return adminFetch('GET', `/admin/accounts/${encodeURIComponent(tenant)}`);
 }
 
-export async function setAccountAdmin(args: { tenant: string; name: string; admin: boolean }): Promise<unknown> {
+export async function setAccountAdmin(
+  args: { tenant: string; admin: boolean } & ({ name: string } | { email: string }),
+): Promise<unknown> {
   return adminFetch('POST', '/admin/set-admin', args);
 }

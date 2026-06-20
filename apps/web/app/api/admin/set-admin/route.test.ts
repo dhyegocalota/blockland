@@ -43,12 +43,26 @@ describe('POST /api/admin/set-admin', () => {
     expect(setAccountAdminMock).not.toHaveBeenCalled();
   });
 
+  it('rejects a payload with neither name nor email', async () => {
+    const res = await POST(adminRequest({ tenant: 'teo', admin: true }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_payload' });
+    expect(setAccountAdminMock).not.toHaveBeenCalled();
+  });
+
   it('grants admin via the proxy when authorized and valid', async () => {
-    setAccountAdminMock.mockResolvedValue([{ name: 'Ana', admin: true }]);
+    setAccountAdminMock.mockResolvedValue([{ name: 'Ana', is_admin: true }]);
     const res = await POST(adminRequest({ tenant: 'teo', name: 'Ana', admin: true }));
-    expect(setAccountAdminMock).toHaveBeenCalledWith({ tenant: 'teo', name: 'Ana', admin: true });
+    expect(setAccountAdminMock).toHaveBeenCalledWith({ tenant: 'teo', admin: true, name: 'Ana' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([{ name: 'Ana', admin: true }]);
+    expect(await res.json()).toEqual([{ name: 'Ana', is_admin: true }]);
+  });
+
+  it('grants admin by email, lowercased, when an email is given', async () => {
+    setAccountAdminMock.mockResolvedValue([]);
+    const res = await POST(adminRequest({ tenant: 'teo', email: 'Ana@Example.com', admin: true }));
+    expect(setAccountAdminMock).toHaveBeenCalledWith({ tenant: 'teo', admin: true, email: 'ana@example.com' });
+    expect(res.status).toBe(200);
   });
 
   it('maps an upstream failure to a generic 502', async () => {

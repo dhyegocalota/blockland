@@ -21,14 +21,19 @@ export async function POST(req: Request) {
 
   const tenant = String(body.tenant ?? '').trim();
   const name = String(body.name ?? '').trim();
+  const email = String(body.email ?? '').trim().toLowerCase();
   const admin = body.admin;
-  if (tenant === '' || name === '' || typeof admin !== 'boolean') {
+  if (tenant === '' || typeof admin !== 'boolean') {
+    return Response.json({ error: 'invalid_payload' }, { status: 400 });
+  }
+  if (name === '' && email === '') {
     return Response.json({ error: 'invalid_payload' }, { status: 400 });
   }
 
+  const target = email === '' ? { name } : { email };
   try {
-    const result = await setAccountAdmin({ tenant, name, admin });
-    console.log('[api:admin] set-admin', { tenant, name, admin });
+    const result = await setAccountAdmin({ tenant, admin, ...target });
+    console.log('[api:admin] set-admin', { tenant, ...target, admin });
     return Response.json(result);
   } catch (error) {
     const status = error instanceof AdminUpstreamError ? 502 : 500;

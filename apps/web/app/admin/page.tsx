@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEvent } from 'react';
 import { t } from '../../lib/i18n';
+import { tenantSubdomain } from '../../lib/tenants';
 import type { Tenant } from '../../lib/builtins';
 import type { ScoreEntry } from '../../lib/api';
 
@@ -31,7 +32,7 @@ interface OnlinePlayer { id: number; name: string; x: number; y: number; z: numb
 interface RoomSnapshot { tenant: string; players: OnlinePlayer[] }
 interface AdminStats { room_list: RoomSnapshot[] }
 interface OnlineRow { tenant: string; player: OnlinePlayer }
-interface Account { name: string; admin: boolean }
+interface Account { name: string; email: string; is_admin: boolean }
 
 const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'avatar' | 'face'>> = {
   avatar: 'avatar',
@@ -40,15 +41,6 @@ const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'avatar' | 'face'>> = {
 
 const UPLOAD_ACCEPT = 'image/png,image/jpeg,image/webp';
 const TENANT_ID = /^[a-z0-9-]{2,32}$/;
-
-// The admin panel must live on the root domain, never on a tenant subdomain (teo.localhost, ...).
-function onTenantSubdomain(): boolean {
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1') return false;
-  if (host.endsWith('.localhost')) return true;
-  const parts = host.split('.');
-  return parts.length >= 3 && parts[0] !== 'www';
-}
 
 export default function Admin() {
   const [blocked, setBlocked] = useState(false);
@@ -65,10 +57,12 @@ export default function Admin() {
   const [board, setBoard] = useState<ScoreEntry[]>([]);
   const [accountsTenant, setAccountsTenant] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [grantEmail, setGrantEmail] = useState('');
 
   // Let the admin page scroll (the game's global CSS pins body overflow to hidden).
   useEffect(() => {
-    if (onTenantSubdomain()) {
+    // The admin panel lives on the app root, never on a tenant subdomain (teo.blockland...).
+    if (tenantSubdomain()) {
       setBlocked(true);
       window.location.replace('/welcome');
       return;
@@ -135,14 +129,21 @@ export default function Admin() {
     setAccounts((await res.json()) as Account[]);
   }
 
-  async function setAccountAdmin(name: string, admin: boolean) {
+  async function setAdmin(target: { name: string } | { email: string }, admin: boolean) {
     const res = await fetch('/api/admin/set-admin', {
       method: 'POST',
       headers: { 'x-admin-key': key, 'content-type': 'application/json' },
-      body: JSON.stringify({ tenant: accountsTenant.trim(), name, admin }),
+      body: JSON.stringify({ tenant: accountsTenant.trim(), admin, ...target }),
     });
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setAccounts((await res.json()) as Account[]);
+  }
+
+  async function grantAdminByEmail() {
+    const email = grantEmail.trim();
+    if (email === '') return;
+    await setAdmin({ email }, true);
+    setGrantEmail('');
   }
 
   function startEdit(tenant: Tenant) { setForm(tenant); setMsg(''); setView('edit'); }
@@ -327,23 +328,31 @@ export default function Admin() {
           onKeyDown={(e) => e.key === 'Enter' && loadAccounts()} />
         <button style={S.btn} onClick={loadAccounts}>{t('accounts.load')}</button>
       </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
+        <input style={{ ...S.input, flex: 1 }} placeholder={t('accounts.grant_email_placeholder')}
+          value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && grantAdminByEmail()} />
+        <button style={S.btn} onClick={grantAdminByEmail}>{t('accounts.grant_email_button')}</button>
+      </div>
       {accounts.length === 0
         ? <p style={{ color: '#789', marginBottom: 28 }}>{t('accounts.empty')}</p>
         : (
           <table style={S.table}>
             <thead><tr>
               <th style={S.th}>{t('accounts.col_name')}</th>
+              <th style={S.th}>{t('accounts.col_email')}</th>
               <th style={S.th}>{t('accounts.col_admin')}</th>
               <th style={S.th}></th>
             </tr></thead>
             <tbody>
               {accounts.map((account) => (
-                <tr key={account.name}>
+                <tr key={account.email}>
                   <td style={S.td}>{account.name}</td>
-                  <td style={S.td}>{account.admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
+                  <td style={S.td}>{account.email}</td>
+                  <td style={S.td}>{account.is_admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
                   <td style={S.td}>
-                    <button style={S.small} onClick={() => setAccountAdmin(account.name, !account.admin)}>
-                      {account.admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
+                    <button style={S.small} onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
+                      {account.is_admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
                     </button>
                   </td>
                 </tr>

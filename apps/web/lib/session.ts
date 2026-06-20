@@ -7,6 +7,7 @@ export interface Session {
   tenant: string;
   name: string;
   claim: string;
+  is_admin: boolean;
 }
 
 export function loadSession(): Session | null {
@@ -16,7 +17,12 @@ export function loadSession(): Session | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Session>;
     if (!parsed.tenant || !parsed.name || !parsed.claim) return null;
-    return { tenant: parsed.tenant, name: parsed.name, claim: parsed.claim };
+    return {
+      tenant: parsed.tenant,
+      name: parsed.name,
+      claim: parsed.claim,
+      is_admin: parsed.is_admin === true,
+    };
   } catch {
     return null;
   }

@@ -24,13 +24,13 @@ export default function ClaimPage() {
       body: JSON.stringify({ token }),
     })
       .then((res) => res.json())
-      .then((data: { ok: boolean; tenant?: string; name?: string; claim?: string }) => {
+      .then((data: { ok: boolean; tenant?: string; name?: string; claim?: string; is_admin?: boolean }) => {
         if (!alive) return;
         if (!data.ok || !data.tenant || !data.name || !data.claim) {
           setStatus('failed');
           return;
         }
-        saveSession({ tenant: data.tenant, name: data.name, claim: data.claim });
+        saveSession({ tenant: data.tenant, name: data.name, claim: data.claim, is_admin: data.is_admin === true });
         setStatus('ok');
         window.location.replace('/');
       })

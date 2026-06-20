@@ -70,6 +70,7 @@ pub struct ClaimedAccount {
     pub name: String,
     pub renamed: bool,
     pub old_name: String,
+    pub is_admin: bool,
 }
 
 /// A pending login: a clicked-link `token` and a typed `code` both unlock the same (tenant, name, email).
@@ -466,6 +467,22 @@ impl Db {
         Ok(changed > 0)
     }
 
+    pub async fn set_admin_by_email(
+        &self,
+        tenant: &str,
+        email: &str,
+        admin: bool,
+    ) -> Result<bool, libsql::Error> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE accounts SET is_admin = ?3 WHERE tenant = ?1 AND email = ?2",
+                params![tenant, email, admin as i64],
+            )
+            .await?;
+        Ok(changed > 0)
+    }
+
     /// Whether the account is a room admin. Unknown accounts are not admins.
     pub async fn is_admin(&self, account_id: &str) -> Result<bool, libsql::Error> {
         match self.get_account_by_id(account_id).await? {
@@ -526,6 +543,7 @@ impl Db {
                     name: existing.name.clone(),
                     renamed: false,
                     old_name: existing.name,
+                    is_admin: existing.is_admin,
                 });
             }
             let old_name = existing.name.clone();
@@ -539,6 +557,7 @@ impl Db {
                     name: old_name.clone(),
                     renamed: false,
                     old_name,
+                    is_admin: existing.is_admin,
                 });
             }
             return Ok(ClaimedAccount {
@@ -546,6 +565,7 @@ impl Db {
                 name: name.to_string(),
                 renamed: true,
                 old_name,
+                is_admin: existing.is_admin,
             });
         }
         let account_id = gen_account_id();
@@ -570,6 +590,7 @@ impl Db {
             name: name.to_string(),
             renamed: false,
             old_name: name.to_string(),
+            is_admin: first_in_tenant,
         })
     }
 
@@ -1001,12 +1022,56 @@ mod tests {
     async fn first_registered_account_of_a_tenant_is_admin() {
         let db = memory_db().await;
         let first = db.claim_account("teo", "ann@x.com", "Ann").await.unwrap();
+        assert!(first.is_admin);
         assert!(db.is_admin(&first.account_id).await.unwrap());
         let second = db.claim_account("teo", "bob@x.com", "Bob").await.unwrap();
+        assert!(!second.is_admin);
         assert!(!db.is_admin(&second.account_id).await.unwrap());
         // The count is per tenant: another tenant's first account is admin too.
         let other = db.claim_account("demo", "zoe@x.com", "Zoe").await.unwrap();
+        assert!(other.is_admin);
         assert!(db.is_admin(&other.account_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn claim_account_reports_admin_for_an_already_admin_account() {
+        let db = memory_db().await;
+        let ann = db.claim_account("teo", "ann@x.com", "Ann").await.unwrap();
+        assert!(ann.is_admin);
+        // Re-claiming the same account (same email) keeps reporting its admin flag.
+        let again = db.claim_account("teo", "ann@x.com", "Annie").await.unwrap();
+        assert!(again.is_admin);
+    }
+
+    #[tokio::test]
+    async fn set_admin_by_email_grants_then_revokes_and_reports_unknown() {
+        let db = memory_db().await;
+        // Seed the auto-admin first account so the account under test starts non-admin.
+        account(&db, "teo", "first@x.com", "First").await;
+        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        assert!(!db.is_admin(&ann).await.unwrap());
+
+        assert!(db
+            .set_admin_by_email("teo", "ann@x.com", true)
+            .await
+            .unwrap());
+        assert!(db.is_admin(&ann).await.unwrap());
+
+        assert!(db
+            .set_admin_by_email("teo", "ann@x.com", false)
+            .await
+            .unwrap());
+        assert!(!db.is_admin(&ann).await.unwrap());
+
+        // An unknown email reports no change, and tenants are isolated.
+        assert!(!db
+            .set_admin_by_email("teo", "nobody@x.com", true)
+            .await
+            .unwrap());
+        assert!(!db
+            .set_admin_by_email("demo", "ann@x.com", true)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
