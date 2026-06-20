@@ -33,6 +33,25 @@ describe('VoxelWorld.inBounds', () => {
   });
 });
 
+describe('VoxelWorld decoration determinism', () => {
+  it('generates the identical world (terrain + trees) for every player', () => {
+    const a = new VoxelWorld();
+    const b = new VoxelWorld();
+    // Force the same region to generate in two independent worlds and compare every cell.
+    for (let x = 0; x < CHUNK * 2; x++)
+      for (let z = 0; z < CHUNK * 2; z++)
+        for (let y = 0; y < SIZE_Y; y++) {
+          if (a.get(x, y, z) !== b.get(x, y, z)) {
+            throw new Error(`worlds diverged at ${x},${y},${z}`);
+          }
+        }
+    // A re-gen after reset() must reproduce the same world too (no Math.random drift).
+    const before = a.get(5, heightAt(5, 5) + 1, 5);
+    a.reset();
+    expect(a.get(5, heightAt(5, 5) + 1, 5)).toBe(before);
+  });
+});
+
 describe('VoxelWorld.rawGet / rawSet', () => {
   it('reads back what was written without triggering generation', () => {
     const world = new VoxelWorld();
