@@ -1,15 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { resolveTenant, type Brand } from '../lib/tenants';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
-import { STRUCTURE_KINDS, type CoopBridge, type DebugSnapshot } from '../lib/game-engine';
-import type { Appearance, RoomState, RosterEntry } from '../lib/coop';
+import { STRUCTURE_KINDS, type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
+import type { Appearance, RosterEntry } from '../lib/coop';
 import { randomLook } from '../lib/look';
-import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
+import { type FeedEntry, type FeedEventKind } from '../lib/feed';
+import { CHAT_FADE_MS } from '../lib/chat';
+import { useChat } from '../lib/hooks/use-chat';
+import { useFeed } from '../lib/hooks/use-feed';
+import { useRoomAdmin } from '../lib/hooks/use-room-admin';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
@@ -19,11 +22,6 @@ const AUTHOR_URL = 'https://dhyegocalota.com.br';
 const NAME_KEY = 'bl-name';
 const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
 const DEFAULT_LOOK: Appearance = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
-const CHAT_BACKLOG = 6;
-const CHAT_FADE_MS = 8000;
-// World reset is destructive, so the first click only arms it; the admin must confirm within this
-// window or it disarms itself — a misclick can never wipe the world.
-const RESET_ARM_MS = 4000;
 
 function loadLook(): Appearance {
   if (typeof window === 'undefined') return DEFAULT_LOOK;
@@ -46,7 +44,7 @@ const BANNER_KEYS: Record<NetState, string | null> = {
 
 const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed'];
 
-const FEED_ICONS: Record<FeedEvent['kind'], string> = {
+const FEED_ICONS: Record<FeedEventKind, string> = {
   join: '➕',
   leave: '➖',
   chat: '💬',
@@ -75,24 +73,6 @@ function loadName(): string {
   return window.localStorage.getItem(NAME_KEY) ?? '';
 }
 
-interface ChatLine {
-  id: number;
-  name: string;
-  text: string;
-}
-
-interface GameApi {
-  sendChat(text: string): void;
-  setAdminPeace(on: boolean): void;
-  setAdminStructure(kind: string, allowed: boolean): void;
-  setAdminPvp(on: boolean): void;
-  setAdminChat(on: boolean): void;
-  kickPlayer(id: number): void;
-  banPlayer(id: number): void;
-  resetWorld(): void;
-  debugSnapshot(): DebugSnapshot;
-}
-
 const STRUCTURE_LABEL_KEYS: Record<string, string> = {
   trophy: 'build.trophy',
   ball: 'build.ball',
@@ -114,10 +94,6 @@ export default function Game() {
   const [online, setOnline] = useState(1);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [rosterOpen, setRosterOpen] = useState(false);
-  const [feed, setFeed] = useState<FeedEntry[]>([]);
-  const [chatLines, setChatLines] = useState<ChatLine[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatDraft, setChatDraft] = useState('');
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugData, setDebugData] = useState<DebugSnapshot | null>(null);
   const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
@@ -128,30 +104,20 @@ export default function Game() {
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [lobbyAdmin, setLobbyAdmin] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [room, setRoom] = useState<RoomState>({ peace: true, blockedStructures: [], pvp: false, chatEnabled: true });
-  const [adminOpen, setAdminOpen] = useState(false);
-  const [resetArmed, setResetArmed] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
-  const resetArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const soloRef = useRef(false);
   const loginClearedRef = useRef(false);
-  const chatInputRef = useRef<HTMLInputElement>(null);
-  const chatLineId = useRef(0);
-  const feedEntryId = useRef(0);
 
-  const pushChatLine = useCallback((from: string, text: string) => {
-    const id = chatLineId.current++;
-    setChatLines((lines) => [...lines, { id, name: from, text }].slice(-CHAT_BACKLOG));
-    setTimeout(() => setChatLines((lines) => lines.filter((line) => line.id !== id)), CHAT_FADE_MS);
-  }, []);
-
-  const pushFeedEntry = useCallback((event: FeedEvent) => {
-    const id = feedEntryId.current++;
-    setFeed((entries) => pushFeed({ entries, event, id, now: Date.now() }));
-    setTimeout(() => setFeed((entries) => entries.filter((entry) => entry.id !== id)), CHAT_FADE_MS);
-  }, []);
+  const { entries: feed, pushFeedEntry } = useFeed();
+  const {
+    room, setRoom, isAdmin, setIsAdmin, adminOpen, setAdminOpen, resetArmed, resetWorld,
+    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer,
+  } = useRoomAdmin(gameApiRef);
+  const {
+    lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
+    inputRef: chatInputRef, openChat, sendChat, closeChat, pushChatLine,
+  } = useChat({ gameApi: gameApiRef, chatEnabled: room.chatEnabled });
 
   // First-time players get a random look (persisted so it stays stable); done after mount to avoid a
   // hydration mismatch on the color inputs.
@@ -218,57 +184,6 @@ export default function Game() {
     return () => { alive = false; if (cleanup) cleanup(); };
   }, [brand, pushChatLine, pushFeedEntry]);
 
-  const openChat = useCallback(() => {
-    if (!room.chatEnabled) return;
-    // Render the input synchronously so focus() runs inside the same user gesture — that's what makes
-    // the mobile keyboard pop up immediately.
-    flushSync(() => setChatOpen(true));
-    chatInputRef.current?.focus();
-  }, [room.chatEnabled]);
-
-  const sendChat = useCallback(() => {
-    const text = chatDraft.trim();
-    if (text) gameApiRef.current?.sendChat(text);
-    setChatDraft('');
-    setChatOpen(false);
-  }, [chatDraft]);
-
-  const toggleRoomPeace = useCallback(() => {
-    gameApiRef.current?.setAdminPeace(!room.peace);
-  }, [room.peace]);
-
-  const toggleStructure = useCallback((kind: string, allowed: boolean) => {
-    gameApiRef.current?.setAdminStructure(kind, allowed);
-  }, []);
-
-  const toggleRoomPvp = useCallback(() => {
-    gameApiRef.current?.setAdminPvp(!room.pvp);
-  }, [room.pvp]);
-
-  const toggleRoomChat = useCallback(() => {
-    gameApiRef.current?.setAdminChat(!room.chatEnabled);
-  }, [room.chatEnabled]);
-
-  const kickPlayer = useCallback((id: number) => {
-    gameApiRef.current?.kickPlayer(id);
-  }, []);
-
-  const banPlayer = useCallback((id: number) => {
-    gameApiRef.current?.banPlayer(id);
-  }, []);
-
-  const resetWorld = useCallback(() => {
-    if (!resetArmed) {
-      setResetArmed(true);
-      if (resetArmTimer.current) clearTimeout(resetArmTimer.current);
-      resetArmTimer.current = setTimeout(() => setResetArmed(false), RESET_ARM_MS);
-      return;
-    }
-    if (resetArmTimer.current) clearTimeout(resetArmTimer.current);
-    setResetArmed(false);
-    gameApiRef.current?.resetWorld();
-  }, [resetArmed]);
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.code === 'F3') { event.preventDefault(); setDebugOpen((open) => !open); return; }
@@ -280,13 +195,6 @@ export default function Game() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [chatOpen, openChat]);
-
-  // When an admin disables the room chat, close any open input and drop the draft.
-  useEffect(() => {
-    if (room.chatEnabled) return;
-    setChatOpen(false);
-    setChatDraft('');
-  }, [room.chatEnabled]);
 
   useEffect(() => {
     if (!debugOpen) return;
@@ -664,7 +572,7 @@ export default function Game() {
             onChange={(e) => setChatDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.code === 'Enter') { e.preventDefault(); sendChat(); }
-              if (e.code === 'Escape') { e.preventDefault(); setChatDraft(''); setChatOpen(false); }
+              if (e.code === 'Escape') { e.preventDefault(); closeChat(); }
             }}
           />
         )}

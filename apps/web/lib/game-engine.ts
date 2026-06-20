@@ -76,6 +76,19 @@ export interface DebugSnapshot {
 // The bridge connects the React HUD to the engine: the HUD supplies the player name (resolved at
 // connect time so late edits to the name field count) and receives net status / chat updates; the
 // engine exposes chat sending and a live debug snapshot for F3.
+// The control surface the engine binds back to the React HUD: chat, admin commands, debug snapshot.
+export interface GameApi {
+  sendChat(text: string): void;
+  setAdminPeace(on: boolean): void;
+  setAdminStructure(kind: string, allowed: boolean): void;
+  setAdminPvp(on: boolean): void;
+  setAdminChat(on: boolean): void;
+  kickPlayer(id: number): void;
+  banPlayer(id: number): void;
+  resetWorld(): void;
+  debugSnapshot(): DebugSnapshot;
+}
+
 export interface CoopBridge {
   resolveName(): string;
   resolveAppearance(): Appearance;
@@ -83,17 +96,7 @@ export interface CoopBridge {
   // True when the player chose single-player on the start screen: never connect, simulate locally.
   resolveOffline(): boolean;
   hud: CoopHud;
-  bind(api: {
-    sendChat(text: string): void;
-    setAdminPeace(on: boolean): void;
-    setAdminStructure(kind: string, allowed: boolean): void;
-    setAdminPvp(on: boolean): void;
-    setAdminChat(on: boolean): void;
-    kickPlayer(id: number): void;
-    banPlayer(id: number): void;
-    resetWorld(): void;
-    debugSnapshot(): DebugSnapshot;
-  }): void;
+  bind(api: GameApi): void;
 }
 
 export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | undefined {
