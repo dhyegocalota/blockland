@@ -69,6 +69,8 @@ pub enum RoomCmd {
         new_name: String,
         old_name: String,
     },
+    /// Push a server-originated message to everyone in the room (e.g. a shutdown notice on SIGTERM).
+    Announce(ServerMsg),
 }
 
 /// Simple token bucket; refilled every tick, spent per accepted message.
@@ -256,6 +258,7 @@ impl Room {
                 new_name,
                 old_name,
             } => self.on_rename(&account_id, &new_name, &old_name),
+            RoomCmd::Announce(msg) => self.broadcast(&msg),
         }
     }
 

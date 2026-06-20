@@ -107,7 +107,7 @@ async fn main() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(shutdown_signal(hub.clone()))
     .await
     .expect("serve");
 }
@@ -587,9 +587,40 @@ fn internal_error(error: libsql::Error) -> axum::response::Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "db_error").into_response()
 }
 
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+/// How long to keep serving after the shutdown signal so the "server going down" feed notice reaches
+/// connected clients before the process stops.
+const SHUTDOWN_NOTICE_MS: u64 = 800;
+
+/// Wait for a terminate signal — SIGTERM (how Docker/Swarm asks a container to stop) or Ctrl-C — then
+/// tell every player, via the in-game feed, that the server is going down temporarily before we drop
+/// their connections. Swarm's stop grace period covers the short notice delay.
+async fn shutdown_signal(hub: Arc<Hub>) {
+    wait_for_terminate().await;
+    tracing::info!("shutdown signal received: notifying players");
+    hub.announce_all(protocol::ServerMsg::Event {
+        kind: "server_down".into(),
+        name: String::new(),
+        detail: String::new(),
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(SHUTDOWN_NOTICE_MS)).await;
     tracing::info!("shutting down");
+}
+
+async fn wait_for_terminate() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[cfg(test)]

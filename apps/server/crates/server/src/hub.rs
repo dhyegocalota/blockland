@@ -284,6 +284,15 @@ impl Hub {
         tx.send(cmd).await.is_ok()
     }
 
+    /// Push a server-originated message to every live room (e.g. a shutdown notice). Senders are
+    /// cloned out first so no DashMap shard lock is held across the awaits.
+    pub async fn announce_all(&self, msg: protocol::ServerMsg) {
+        let senders: Vec<_> = self.rooms.iter().map(|e| e.value().clone()).collect();
+        for tx in senders {
+            let _ = tx.send(RoomCmd::Announce(msg.clone())).await;
+        }
+    }
+
     /// Public lobby presence for a tenant: how many players are online and their names.
     pub fn online_for(&self, tenant: &str) -> (usize, Vec<String>) {
         let mut names = Vec::new();
