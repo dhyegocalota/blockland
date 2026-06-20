@@ -67,6 +67,13 @@ export class VoxelWorld {
     return new Map(this.chunkData);
   }
 
+  // Drop every materialized chunk so the world regenerates from its procedural base on next access.
+  // Used by an in-game world reset (the admin wipe), mirroring a fresh boot without a page reload.
+  reset(): void {
+    this.chunkData.clear();
+    this.genChunks.clear();
+  }
+
   private placeTree(x: number, top: number, z: number, x0: number, z0: number, biome: Biome): void {
     const trunk = 3 + Math.floor(Math.random() * 3);
     for (let t = 1; t <= trunk; t++) this.rawSet(x, top + t, z, WOOD_ID);

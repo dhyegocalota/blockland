@@ -564,6 +564,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   function hitServerCreature(cr: CoopCreature): void {
     coop?.sendHit(cr.id);
+    coop?.flashCreature(cr.id);
+    spawnPoof(new THREE.Vector3(cr.x, cr.y, cr.z), creatureDefFor(cr.kind).color);
     const def = creatureDefFor(cr.kind);
     blip(def.kind === 'monster' ? 300 : 880, 0.08);
     debug('engine', 'hit request', { id: cr.id, kind: cr.kind });
@@ -605,6 +607,21 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       p.mesh.scale.multiplyScalar(1 - dt * 1.5);
       if (p.life <= 0) { scene.remove(p.mesh); p.mesh.geometry.dispose(); poofs.splice(i, 1); }
     }
+  }
+
+  // The admin wiped the world: rebuild it in place (like a fresh boot) and respawn, so every player
+  // resets without being kicked back to the lobby. The server's reset already cleared its own world
+  // and creatures; the local creatures (single-player) and poofs are cleared to match.
+  function resetLocalWorld(): void {
+    world.reset();
+    buildWelcomeMonument();
+    updateChunks(true);
+    processMeshQueue(isTouch ? 24 : 60);
+    for (const p of poofs) { scene.remove(p.mesh); p.mesh.geometry.dispose(); }
+    poofs.length = 0;
+    player.pos.copy(spawnPoint());
+    player.vel.set(0, 0, 0);
+    savePos();
   }
 
   // ---------- Scoreboard ----------
@@ -715,10 +732,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Physics ----------
   const stepAxis = (axis: Axis, amount: number): void => moveAxis({ world, player, axis, amount });
 
-  // Stop the local player from walking through remote players (velocity-only, never adds motion).
-  function blockIntoPlayers(): void {
+  // Stop the local player from walking through remote players AND server creatures (velocity-only,
+  // never adds motion) — monsters and animals are solid bodies you bump into, not ghosts.
+  function blockIntoActors(): void {
     if (!coop) return;
-    const actors = coop.getColliders();
+    const players = coop.getColliders();
+    const creatures = coop.getCreatures().map((c) => ({ x: c.x, y: c.y, z: c.z }));
+    const actors = [...players, ...creatures];
     if (actors.length === 0) return;
     const blocked = blockVelocityIntoActors({
       x: player.pos.x,
@@ -770,7 +790,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       if (keys.Space && player.onGround) { player.vel.y = JUMP_SPEED; player.onGround = false; }
     }
 
-    blockIntoPlayers();
+    blockIntoActors();
 
     player.onGround = false;
     stepAxis('x', player.vel.x * dt);
@@ -1081,6 +1101,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       applyRemoteEditBatch,
       applyRoomState,
       applyHurt,
+      onCreaturePoof: ({ x, y, z, color }) => spawnPoof(new THREE.Vector3(x, y, z), color),
+      onWorldReset: resetLocalWorld,
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }

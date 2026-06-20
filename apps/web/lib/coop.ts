@@ -27,9 +27,6 @@ const LABEL_PIXEL_SCALE = 0.012;
 const BUBBLE_LIFT = 0.95;
 const BUBBLE_PIXEL_SCALE = 0.0125;
 const BUBBLE_TTL_MS = 6000;
-// On a world reset the simplest correct client reset is a full reload so every client re-fetches the
-// fresh world; the short delay lets the feed entry render first.
-const RESET_RELOAD_DELAY_MS = 1500;
 const PANTS = '#2f3a8c'; // dark trousers, common to every character
 
 export interface Appearance {
@@ -86,6 +83,10 @@ export interface CoopOptions {
   applyRemoteEditBatch(edits: EditCell[]): void;
   applyRoomState(room: RoomState): void;
   applyHurt(by: string): void;
+  // A server creature just vanished from the snapshot (it was defeated): puff it where it stood.
+  onCreaturePoof(args: { x: number; y: number; z: number; color: string }): void;
+  // The admin reset the world: rebuild it in place + respawn, without a page reload.
+  onWorldReset(): void;
 }
 
 interface Avatar {
@@ -110,6 +111,8 @@ interface ServerCreature {
 // top *solid block index*). The walkable surface is one block higher (index + 1), so to sit a creature
 // on the ground like the local single-player model we lift it by (1 - offset) + half its height.
 const SERVER_GROUND_OFFSET = 0.5;
+const CREATURE_FLASH_COLOR = 0xff3333;
+const CREATURE_FLASH_MS = 120;
 
 // What the engine raycasts against to aim an attack: world position, the wire id to send in `hit`,
 // and the hit sphere radius derived from the creature's model size.
@@ -138,6 +141,7 @@ export interface CoopController {
   sendEditBatch(edits: EditCell[]): void;
   sendChat(text: string): void;
   sendHit(id: number): void;
+  flashCreature(id: number): void;
   sendAdminSetPeace(on: boolean): void;
   sendAdminSetStructure(kind: string, allowed: boolean): void;
   sendAdminSetPvp(on: boolean): void;
@@ -421,6 +425,9 @@ export function createCoop(opts: CoopOptions): CoopController {
         }
         for (const id of [...creatures.keys()]) {
           if (liveCreatures.has(id)) continue;
+          const gone = creatures.get(id)!;
+          const at = gone.group.position;
+          opts.onCreaturePoof({ x: at.x, y: at.y, z: at.z, color: creatureDefFor(gone.kind).color });
           removeCreature(id);
         }
         onlineCount = msg.players.length;
@@ -442,7 +449,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         }
         if (msg.kind === 'reset') {
           opts.hud.onEvent({ kind: 'reset', name: msg.name });
-          window.setTimeout(() => window.location.reload(), RESET_RELOAD_DELAY_MS);
+          opts.onWorldReset();
           return;
         }
         if (msg.kind === 'server_down') {
@@ -492,6 +499,17 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendHit(id): void {
       net.sendHit(id);
+    },
+    // Immediate local hit feedback: the server owns hp/death, but flashing the body red the instant
+    // the player connects an attack makes hitting a server creature feel responsive.
+    flashCreature(id): void {
+      const creature = creatures.get(id);
+      if (!creature) return;
+      creature.body.material.emissive.setHex(CREATURE_FLASH_COLOR);
+      window.setTimeout(() => {
+        const still = creatures.get(id);
+        if (still) still.body.material.emissive.setHex(0x000000);
+      }, CREATURE_FLASH_MS);
     },
     sendAdminSetPeace(on): void {
       net.sendAdminSetPeace(on);
