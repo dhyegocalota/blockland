@@ -3,7 +3,7 @@
 // - Cache-first for static assets (Next chunks, icons, tenant images, bundled tenant.json).
 // - Network-first for navigations, falling back to the cached app shell when offline.
 // Bump CACHE_VERSION on every shipped change to invalidate old caches on activate.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `blockland-${CACHE_VERSION}`;
 const APP_SHELL = ['/', '/manifest.webmanifest', '/tenant.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
