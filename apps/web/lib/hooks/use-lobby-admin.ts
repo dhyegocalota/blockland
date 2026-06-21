@@ -65,6 +65,7 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
             blockedStructures: msg.blocked_structures,
             pvp: msg.pvp,
             chatEnabled: msg.chat_enabled,
+            suspended: msg.suspended,
           });
         },
         onRole: (msg) => { setIsAdmin(msg.admin); setIsModerator(msg.moderator); },

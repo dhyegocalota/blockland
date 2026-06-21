@@ -18,7 +18,7 @@ const STRUCTURE_LABEL_KEYS: Record<string, string> = {
 
 export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobbyAdmin> }) {
   const {
-    state, roster, room, isAdmin, isModerator, resetArmed, resetWorld,
+    state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
   } = lobby;
 
@@ -76,6 +76,16 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
         {isAdmin && (
           <button id="adminReset" className={resetArmed ? 'armed' : undefined} onClick={resetWorld}>
             {resetArmed ? t('game_admin.reset_confirm') : t('game_admin.reset')}
+          </button>
+        )}
+        {isAdmin && (
+          <button id="adminResetScores" className={resetScoresArmed ? 'armed' : undefined} onClick={resetScores}>
+            {resetScoresArmed ? t('game_admin.reset_scores_confirm') : t('game_admin.reset_scores')}
+          </button>
+        )}
+        {isAdmin && (
+          <button id="adminSuspend" className={room.suspended ? 'on' : undefined} onClick={suspendRoom}>
+            {room.suspended ? t('game_admin.resume') : t('game_admin.suspend')}
           </button>
         )}
       </div>

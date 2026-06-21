@@ -14,6 +14,8 @@ export function lobbyAdminApi(net: NetClient): RoomAdminApi {
     kickPlayer: (id) => net.sendAdminKick(id),
     banPlayer: (id) => net.sendAdminBan(id),
     resetWorld: () => net.sendAdminResetWorld(),
+    resetScores: () => net.sendAdminResetScores(),
+    suspendRoom: (on) => net.sendAdminSuspend(on),
     setRole: (id, role) => net.sendAdminSetRole(id, role),
   };
 }

@@ -15,14 +15,18 @@ function recordingNet() {
     sendChat: record('sendChat'),
     sendHit: record('sendHit'),
     sendRespawn: record('sendRespawn'),
+    sendDig: record('sendDig'),
     sendAdminSetPeace: record('sendAdminSetPeace'),
     sendAdminSetStructure: record('sendAdminSetStructure'),
     sendAdminSetPvp: record('sendAdminSetPvp'),
     sendAdminSetChat: record('sendAdminSetChat'),
+    sendAdminSetInfinite: record('sendAdminSetInfinite'),
     sendAdminKick: record('sendAdminKick'),
     sendAdminBan: record('sendAdminBan'),
     sendAttackPlayer: record('sendAttackPlayer'),
     sendAdminResetWorld: record('sendAdminResetWorld'),
+    sendAdminResetScores: record('sendAdminResetScores'),
+    sendAdminSuspend: record('sendAdminSuspend'),
     sendAdminSetRole: record('sendAdminSetRole'),
     ping: 0,
     state: 'online' as const,
@@ -43,6 +47,8 @@ describe('lobbyAdminApi', () => {
     api.banPlayer(9);
     api.setRole(3, 'moderator' as Role);
     api.resetWorld();
+    api.resetScores();
+    api.suspendRoom(true);
 
     expect(calls).toEqual([
       ['sendAdminSetPeace', false],
@@ -53,6 +59,8 @@ describe('lobbyAdminApi', () => {
       ['sendAdminBan', 9],
       ['sendAdminSetRole', 3, 'moderator'],
       ['sendAdminResetWorld'],
+      ['sendAdminResetScores'],
+      ['sendAdminSuspend', true],
     ]);
   });
 });
