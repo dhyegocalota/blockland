@@ -126,6 +126,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.offline_badge': '📵 Offline — só dá pra jogar sozinho',
     'lobby.mode_label': 'Como você quer jogar?',
     'lobby.mode_offline_hint': '📵 Sem internet: só dá pra jogar sozinho agora.',
+    'lobby.admin_title': '🛡️ Gerenciar mundo',
+    'lobby.admin_connecting': 'Conectando ao mundo…',
+    'lobby.admin_offline': 'Mundo indisponível agora.',
 
     // Start screen — name input
     'start.name_label': 'Seu nome',
@@ -474,6 +477,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'lobby.offline_badge': '📵 Offline — single-player only',
     'lobby.mode_label': 'How do you want to play?',
     'lobby.mode_offline_hint': '📵 No internet: solo play only for now.',
+    'lobby.admin_title': '🛡️ Manage world',
+    'lobby.admin_connecting': 'Connecting to the world…',
+    'lobby.admin_offline': 'World unavailable right now.',
 
     // Start screen — name input
     'start.name_label': 'Your name',

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type MutableRefObject } from 'react';
 import type { RoomState } from '../coop';
-import type { GameApi } from '../game-engine';
+import type { RoomAdminApi } from '../game-engine';
 import type { Role } from '../protocol';
 
 // World reset is destructive, so the first click only arms it; the admin must confirm within this
@@ -11,7 +11,7 @@ const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false
 
 // Owns the room settings + admin authority the engine reports (setRoom/setIsAdmin feed the bridge),
 // the admin panel open state, and the admin command dispatch incl. the two-step world reset.
-export function useRoomAdmin(gameApi: MutableRefObject<GameApi | null>) {
+export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const [room, setRoom] = useState<RoomState>(DEFAULT_ROOM);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isModerator, setIsModerator] = useState(false);
