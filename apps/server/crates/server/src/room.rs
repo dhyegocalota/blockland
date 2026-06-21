@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{
-    Brand, ClientMsg, CreatureState, EditCell, EditOp, PlayerId, PlayerState, ServerMsg,
+    Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerId, PlayerState,
+    ServerMsg,
 };
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
@@ -140,6 +141,10 @@ struct Player {
     // Server-owned health: hearts left, and when the player last took damage (for the hurt cooldown).
     hp: u8,
     hurt_at: Instant,
+    // Server-authoritative block resources: a count per block id, banked on a break and spent on a
+    // place. `infinite` (default on, to match the old client) lets a player build without spending.
+    inventory: HashMap<u8, u32>,
+    infinite: bool,
     joined_at_ms: u64,
     ping_nonce: u32,
     ping_sent_at: Instant,
@@ -399,6 +404,10 @@ impl Room {
             move_synced: false,
             hp: MAX_HP,
             hurt_at: now,
+            inventory: HashMap::new(),
+            // Infinite by default to match the old client (admins build freely; an admin turns it off
+            // for a player to make them spend banked blocks).
+            infinite: true,
             joined_at_ms: epoch_ms(),
             ping_nonce: 0,
             ping_sent_at: now,
@@ -454,6 +463,8 @@ impl Room {
         // Hand the joining connection the current room-wide settings, after Welcome + world + backlog.
         let _ = conn.try_send(self.room_state());
         self.players.insert(id, player);
+        // The fresh player's inventory (empty + infinite by default), sent after it is registered.
+        self.send_inventory(id);
         self.empty_since = None;
         let _ = reply.send(Ok(id));
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player joined");
@@ -488,6 +499,12 @@ impl Room {
         | ClientMsg::AdminSetChat { .. } = msg
         {
             self.on_admin_setting(id, msg);
+            return;
+        }
+
+        // Toggling infinite resources is admin-only and sends the player their refreshed inventory.
+        if let ClientMsg::AdminSetInfinite { on } = msg {
+            self.on_admin_set_infinite(id, on);
             return;
         }
 
@@ -542,6 +559,9 @@ impl Room {
         let mut edit_out: Option<ServerMsg> = None;
         let mut chat_out: Option<ServerMsg> = None;
         let mut batch_out: Option<ServerMsg> = None;
+        // An accepted edit changes the owner's inventory (banked on a break, spent on a place); send it
+        // their updated counts after the borrow ends.
+        let mut inventory_changed = false;
 
         let Some(p) = self.players.get_mut(&id) else {
             return;
@@ -604,10 +624,25 @@ impl Room {
                     return;
                 }
                 let new_id = match op {
-                    EditOp::Break => sim::AIR,
+                    EditOp::Break => {
+                        let removed = self.world.get(x, y, z);
+                        if removed != sim::AIR {
+                            bank_block(&mut p.inventory, removed);
+                            inventory_changed = true;
+                        }
+                        sim::AIR
+                    }
                     EditOp::Place => {
                         if block == 0 || block > sim::MAX_BLOCK {
                             return;
+                        }
+                        // A non-infinite player must own the block; spending it is the only way the
+                        // place is accepted (else the edit is rejected and never broadcast).
+                        if !p.infinite && !spend_block(&mut p.inventory, block) {
+                            return;
+                        }
+                        if !p.infinite {
+                            inventory_changed = true;
                         }
                         block
                     }
@@ -665,6 +700,7 @@ impl Room {
             | ClientMsg::AdminSetStructure { .. }
             | ClientMsg::AdminSetPvp { .. }
             | ClientMsg::AdminSetChat { .. }
+            | ClientMsg::AdminSetInfinite { .. }
             | ClientMsg::AdminKick { .. }
             | ClientMsg::AdminBan { .. }
             | ClientMsg::AdminResetWorld
@@ -699,6 +735,42 @@ impl Room {
         if let Some(m) = chat_out {
             self.broadcast(&m);
         }
+        if inventory_changed {
+            self.send_inventory(id);
+        }
+    }
+
+    /// Send a player their authoritative inventory (counts per block id + the infinite flag) to its own
+    /// connection. Used on join, on an edit that banks/spends, and when the infinite flag is toggled.
+    fn send_inventory(&self, id: PlayerId) {
+        let Some(p) = self.players.get(&id) else {
+            return;
+        };
+        let items = p
+            .inventory
+            .iter()
+            .map(|(&block, &count)| InventoryItem { id: block, count })
+            .collect();
+        let _ = p.conn.try_send(ServerMsg::Inventory {
+            items,
+            infinite: p.infinite,
+        });
+    }
+
+    /// Admin-gated toggle of a player's infinite-resources mode (build without spending). Never trust
+    /// the client: ignore unless the sender is a known room admin. Sends the refreshed inventory.
+    fn on_admin_set_infinite(&mut self, id: PlayerId, on: bool) {
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        p.last_seen = Instant::now();
+        if !p.is_admin {
+            tracing::debug!(%id, "infinite toggle ignored: not an admin");
+            return;
+        }
+        p.infinite = on;
+        self.send_inventory(id);
+        tracing::debug!(%id, on, "infinite resources toggled");
     }
 
     /// Apply an admin-gated room setting. The sender must be a known room admin (never trust the
@@ -1305,6 +1377,23 @@ impl Room {
 // Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "steve").
 const MAX_STRUCTURE_KIND_LEN: usize = 24;
 
+/// Bank one of a broken block into a player's inventory.
+fn bank_block(inventory: &mut HashMap<u8, u32>, block: u8) {
+    *inventory.entry(block).or_insert(0) += 1;
+}
+
+/// Spend one of a block from a player's inventory; returns false (rejecting the place) when none is held.
+fn spend_block(inventory: &mut HashMap<u8, u32>, block: u8) -> bool {
+    let Some(count) = inventory.get_mut(&block) else {
+        return false;
+    };
+    if *count == 0 {
+        return false;
+    }
+    *count -= 1;
+    true
+}
+
 /// Accept a prebuilt structure-kind id: a short, lowercase alphanumeric slug. Anything else is
 /// rejected so the blocked set never fills with client junk. Returns the validated kind.
 fn valid_structure_kind(raw: &str) -> Option<String> {
@@ -1388,6 +1477,8 @@ mod tests {
             move_synced: false,
             hp: MAX_HP,
             hurt_at: now,
+            inventory: HashMap::new(),
+            infinite: true,
             joined_at_ms: 0,
             ping_nonce: 0,
             ping_sent_at: now,
@@ -2079,5 +2170,153 @@ mod tests {
         assert!(b.take());
         assert!(b.take());
         assert!(!b.take());
+    }
+
+    /// The latest inventory message's (count for a block, infinite flag), or None if none was sent.
+    fn drain_inventory(rx: &mut mpsc::Receiver<ServerMsg>, block: u8) -> Option<(u32, bool)> {
+        let mut latest = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMsg::Inventory { items, infinite } = msg {
+                let count = items.iter().find(|i| i.id == block).map(|i| i.count);
+                latest = Some((count.unwrap_or(0), infinite));
+            }
+        }
+        latest
+    }
+
+    // Stand the player on a block so its edits are within reach.
+    fn place_player_at(room: &mut Room, id: PlayerId, x: i32, y: i32, z: i32) {
+        let p = room.players.get_mut(&id).unwrap();
+        p.x = x as f32 + 0.5;
+        p.y = y as f32 + 0.5;
+        p.z = z as f32 + 0.5;
+    }
+
+    #[tokio::test]
+    async fn breaking_a_block_banks_it_in_the_inventory() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        room.world.set(10, 20, 10, sim::STONE);
+        place_player_at(&mut room, 1, 10, 20, 10);
+
+        room.on_input(
+            1,
+            ClientMsg::Edit {
+                op: EditOp::Break,
+                x: 10,
+                y: 20,
+                z: 10,
+                id: 0,
+            },
+        );
+        assert_eq!(room.players.get(&1).unwrap().inventory.get(&sim::STONE), Some(&1));
+        assert_eq!(drain_inventory(&mut rx, sim::STONE), Some((1, true)));
+    }
+
+    #[tokio::test]
+    async fn placing_without_the_block_is_rejected_and_not_broadcast() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        let mut other_rx = add_player(&mut room, 2, false);
+        room.world.set(10, 20, 11, sim::AIR);
+        place_player_at(&mut room, 1, 10, 20, 10);
+        // A non-infinite player holding nothing cannot place: the cell stays air and nothing is sent.
+        room.players.get_mut(&1).unwrap().infinite = false;
+
+        room.on_input(
+            1,
+            ClientMsg::Edit {
+                op: EditOp::Place,
+                x: 10,
+                y: 20,
+                z: 11,
+                id: sim::STONE,
+            },
+        );
+        assert_eq!(room.world.get(10, 20, 11), sim::AIR, "the place was rejected");
+        let placed = std::iter::from_fn(|| other_rx.try_recv().ok())
+            .any(|m| matches!(m, ServerMsg::Edit { .. }));
+        assert!(!placed, "a rejected place is never broadcast");
+        let _ = rx.try_recv();
+    }
+
+    #[tokio::test]
+    async fn placing_spends_a_banked_block_when_not_infinite() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        room.world.set(10, 20, 11, sim::AIR);
+        place_player_at(&mut room, 1, 10, 20, 10);
+        {
+            let p = room.players.get_mut(&1).unwrap();
+            p.infinite = false;
+            p.inventory.insert(sim::STONE, 1);
+        }
+
+        room.on_input(
+            1,
+            ClientMsg::Edit {
+                op: EditOp::Place,
+                x: 10,
+                y: 20,
+                z: 11,
+                id: sim::STONE,
+            },
+        );
+        assert_eq!(room.world.get(10, 20, 11), sim::STONE, "the place was applied");
+        assert_eq!(room.players.get(&1).unwrap().inventory.get(&sim::STONE), Some(&0));
+        assert_eq!(drain_inventory(&mut rx, sim::STONE), Some((0, false)));
+    }
+
+    #[tokio::test]
+    async fn infinite_player_places_without_spending() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        room.world.set(10, 20, 11, sim::AIR);
+        place_player_at(&mut room, 1, 10, 20, 10);
+        // infinite is true by default; placing must not require nor decrement the inventory.
+        room.on_input(
+            1,
+            ClientMsg::Edit {
+                op: EditOp::Place,
+                x: 10,
+                y: 20,
+                z: 11,
+                id: sim::STONE,
+            },
+        );
+        assert_eq!(room.world.get(10, 20, 11), sim::STONE, "an infinite player places freely");
+        assert!(room.players.get(&1).unwrap().inventory.is_empty());
+    }
+
+    #[tokio::test]
+    async fn admin_toggles_a_players_infinite_flag_and_sends_inventory() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, true);
+        assert!(room.players.get(&1).unwrap().infinite);
+
+        room.on_input(1, ClientMsg::AdminSetInfinite { on: false });
+        assert!(!room.players.get(&1).unwrap().infinite);
+        assert_eq!(drain_inventory(&mut rx, sim::STONE), Some((0, false)));
+    }
+
+    #[tokio::test]
+    async fn non_admin_infinite_toggle_is_ignored() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 2, false);
+        room.on_input(2, ClientMsg::AdminSetInfinite { on: false });
+        assert!(room.players.get(&2).unwrap().infinite, "a non-admin cannot toggle");
+    }
+
+    #[test]
+    fn bank_and_spend_track_counts() {
+        let mut inventory = HashMap::new();
+        assert!(!spend_block(&mut inventory, sim::STONE), "nothing to spend");
+        bank_block(&mut inventory, sim::STONE);
+        bank_block(&mut inventory, sim::STONE);
+        assert_eq!(inventory.get(&sim::STONE), Some(&2));
+        assert!(spend_block(&mut inventory, sim::STONE));
+        assert_eq!(inventory.get(&sim::STONE), Some(&1));
+        assert!(spend_block(&mut inventory, sim::STONE));
+        assert!(!spend_block(&mut inventory, sim::STONE), "depleted");
     }
 }

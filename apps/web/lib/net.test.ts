@@ -262,6 +262,21 @@ describe('net client', () => {
     expect(hits).toEqual([{ t: 'hurt', by: 'Maria' }]);
   });
 
+  it('routes inventory to onInventory and serializes sendAdminSetInfinite', () => {
+    const inventories: unknown[] = [];
+    const { client } = makeClient({ handlers: { onInventory: (m) => inventories.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'inventory', items: [{ id: 3, count: 2 }], infinite: false });
+    expect(inventories).toEqual([{ t: 'inventory', items: [{ id: 3, count: 2 }], infinite: false }]);
+
+    client.sendAdminSetInfinite(true);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_infinite', on: true }));
+  });
+
   it('sendAdminSetPeace and sendAdminSetStructure serialize the right JSON', () => {
     const { client } = makeClient();
     client.connect();
