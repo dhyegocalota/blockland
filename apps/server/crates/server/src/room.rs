@@ -219,19 +219,9 @@ impl Room {
             primary: tcfg.primary.clone(),
             logo: tcfg.logo.clone(),
         };
-        // Restore the tenant's persisted world (procedural base + saved edits).
-        let mut world_state = World::new();
-        if let Some(blob) = crate::persistence::load(&tcfg.id) {
-            match sim::decode_edits(&blob) {
-                Ok(items) => {
-                    world_state.load_edits(&items);
-                    tracing::info!(tenant = %tcfg.id, edits = items.len(), "world restored");
-                }
-                Err(e) => {
-                    tracing::error!(tenant = %tcfg.id, error = %e, "failed to decode world blob")
-                }
-            }
-        }
+        // The saved world is restored asynchronously in run() (a db read can't happen in this sync
+        // constructor); start from the procedural base.
+        let world_state = World::new();
         Self {
             key: (tcfg.id.clone(), world),
             brand,
@@ -258,7 +248,30 @@ impl Room {
         }
     }
 
+    /// Load the tenant's saved world from the db and apply it onto the procedural base. Runs once at
+    /// room startup, before any command is processed, so the first joiner sees the restored world.
+    async fn restore_world(&mut self) {
+        let blob = match self.hub.db.load_world(&self.key.0).await {
+            Ok(Some(blob)) => blob,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::error!(tenant = %self.key.0, error = %e, "failed to load world");
+                return;
+            }
+        };
+        match sim::decode_edits(&blob) {
+            Ok(items) => {
+                self.world.load_edits(&items);
+                tracing::info!(tenant = %self.key.0, edits = items.len(), "world restored");
+            }
+            Err(e) => {
+                tracing::error!(tenant = %self.key.0, error = %e, "failed to decode world blob")
+            }
+        }
+    }
+
     pub async fn run(mut self) {
+        self.restore_world().await;
         let dt = 1.0 / self.tick_hz as f32;
         let mut interval =
             tokio::time::interval(Duration::from_secs_f64(1.0 / self.tick_hz as f64));
@@ -278,10 +291,10 @@ impl Room {
                 }
             }
         }
-        // Final synchronous save so nothing is lost when the room closes.
+        // Final save (awaited) so nothing is lost when the room closes.
         if self.dirty {
             let blob = sim::encode_edits(&self.world.snapshot());
-            if let Err(e) = crate::persistence::save(&self.key.0, &blob) {
+            if let Err(e) = self.hub.db.save_world(&self.key.0, &blob).await {
                 tracing::error!(tenant = %self.key.0, error = %e, "final world save failed");
             }
         }
@@ -1832,8 +1845,9 @@ impl Room {
         let tenant = self.key.0.clone();
         let blob = sim::encode_edits(&self.world.snapshot());
         tracing::debug!(tenant = %tenant, edits = self.world.edit_count(), bytes = blob.len(), "world flush");
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = crate::persistence::save(&tenant, &blob) {
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.save_world(&tenant, &blob).await {
                 tracing::error!(%tenant, error = %e, "world save failed");
             }
         });
@@ -2479,12 +2493,8 @@ mod tests {
 
     #[tokio::test]
     async fn admin_ban_bans_the_ip_and_removes_target() {
-        // Point the ban store at a throwaway file so the test never writes the real bans list.
-        let mut bans_file = std::env::temp_dir();
-        bans_file.push(format!("room-ban-test-{}.json", std::process::id()));
-        let _ = std::fs::remove_file(&bans_file);
-        std::env::set_var("BANS_FILE", &bans_file);
-
+        // The ban store is db-backed (each test_room has its own in-memory db), so there is nothing to
+        // point at a throwaway file anymore.
         let mut room = test_room().await;
         let _admin_rx = add_player(&mut room, 1, true);
         let _target_rx = add_player(&mut room, 2, false);
@@ -2497,9 +2507,6 @@ mod tests {
             "the banned player is removed"
         );
         assert!(room.hub.bans.is_banned(target_ip), "the ip is banned");
-
-        std::env::remove_var("BANS_FILE");
-        let _ = std::fs::remove_file(&bans_file);
     }
 
     #[tokio::test]

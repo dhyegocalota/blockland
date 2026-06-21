@@ -213,7 +213,7 @@ impl Hub {
             ip_conns: DashMap::new(),
             next_id: AtomicU32::new(1),
             admin_token,
-            bans: Arc::new(Bans::load()),
+            bans: Arc::new(Bans::load(db.clone()).await),
             db,
             claims,
         }

@@ -253,6 +253,25 @@ impl Db {
             .await?;
         self.conn
             .execute(
+                "CREATE TABLE IF NOT EXISTS bans (
+                    ip TEXT PRIMARY KEY,
+                    created_at INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS worlds (
+                    tenant TEXT PRIMARY KEY,
+                    blob BLOB NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        self.conn
+            .execute(
                 "CREATE TABLE IF NOT EXISTS leaderboard (
                     tenant TEXT NOT NULL,
                     account_id TEXT NOT NULL,
@@ -413,6 +432,57 @@ impl Db {
                 "UPDATE tenants SET approval_required = ?2 WHERE id = ?1",
                 params![tenant, on as i64],
             )
+            .await?;
+        Ok(())
+    }
+
+    /// A tenant's persisted world blob (the compressed edit diff), if it has one.
+    pub async fn load_world(&self, tenant: &str) -> Result<Option<Vec<u8>>, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query("SELECT blob FROM worlds WHERE tenant = ?1", params![tenant])
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(Some(row.get::<Vec<u8>>(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Write a tenant's world blob (replacing any previous one).
+    pub async fn save_world(&self, tenant: &str, blob: &[u8]) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO worlds (tenant, blob, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(tenant) DO UPDATE SET blob = ?2, updated_at = ?3",
+                params![tenant, blob.to_vec(), now_ms()],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Every banned IP as a string, to warm the in-memory ban set on startup.
+    pub async fn all_bans(&self) -> Result<Vec<String>, libsql::Error> {
+        let mut rows = self.conn.query("SELECT ip FROM bans", ()).await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row.get::<String>(0)?);
+        }
+        Ok(out)
+    }
+
+    pub async fn add_ban(&self, ip: &str) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO bans (ip, created_at) VALUES (?1, ?2) ON CONFLICT(ip) DO NOTHING",
+                params![ip, now_ms()],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_ban(&self, ip: &str) -> Result<(), libsql::Error> {
+        self.conn
+            .execute("DELETE FROM bans WHERE ip = ?1", params![ip])
             .await?;
         Ok(())
     }
@@ -1308,6 +1378,17 @@ mod tests {
         let db = memory_db().await;
         assert_eq!(db.tenant_playtime("demo").await.unwrap(), (5, 24));
         assert_eq!(db.tenant_playtime("teo").await.unwrap(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn world_blob_round_trips_and_overwrites() {
+        let db = memory_db().await;
+        assert!(db.load_world("teo").await.unwrap().is_none());
+        db.save_world("teo", &[1, 2, 3]).await.unwrap();
+        assert_eq!(db.load_world("teo").await.unwrap(), Some(vec![1, 2, 3]));
+        db.save_world("teo", &[9, 9]).await.unwrap();
+        assert_eq!(db.load_world("teo").await.unwrap(), Some(vec![9, 9]));
+        assert!(db.load_world("other").await.unwrap().is_none());
     }
 
     #[tokio::test]
