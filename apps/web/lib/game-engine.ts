@@ -100,6 +100,7 @@ export interface GameApi {
   kickPlayer(id: number): void;
   banPlayer(id: number): void;
   resetWorld(): void;
+  resetScores(): void;
   setRole(id: number, role: Role): void;
   setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
@@ -435,6 +436,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     kickPlayer: (id) => coop?.sendAdminKick(id),
     banPlayer: (id) => coop?.sendAdminBan(id),
     resetWorld: () => { if (coop) { coop.sendAdminResetWorld(); return; } resetLocalWorld(); },
+    resetScores: () => coop?.sendAdminResetScores(),
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
     setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
     returnToSpawn: () => {

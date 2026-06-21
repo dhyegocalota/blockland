@@ -66,6 +66,8 @@ export const attackPlayer = (id: number): ClientMsg => ({ t: 'attack_player', id
 
 export const adminResetWorld = (): ClientMsg => ({ t: 'admin_reset_world' });
 
+export const adminResetScores = (): ClientMsg => ({ t: 'admin_reset_scores' });
+
 export const adminSetRole = (id: number, role: Role): ClientMsg => ({ t: 'admin_set_role', id, role });
 
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);

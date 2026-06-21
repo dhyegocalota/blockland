@@ -442,6 +442,14 @@ impl Db {
         Ok(())
     }
 
+    /// Wipe every leaderboard score for a tenant (the admin "reset everyone's score" action).
+    pub async fn reset_scores(&self, tenant: &str) -> Result<(), libsql::Error> {
+        self.conn
+            .execute("DELETE FROM leaderboard WHERE tenant = ?1", params![tenant])
+            .await?;
+        Ok(())
+    }
+
     // ---------- Identity: accounts, magic links, claims, events ----------
 
     pub async fn get_account_by_email(

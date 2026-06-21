@@ -18,6 +18,8 @@ export function useRoomAdmin(gameApi: MutableRefObject<GameApi | null>) {
   const [adminOpen, setAdminOpen] = useState(false);
   const [resetArmed, setResetArmed] = useState(false);
   const resetArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [resetScoresArmed, setResetScoresArmed] = useState(false);
+  const resetScoresArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleRoomPeace = useCallback(() => gameApi.current?.setAdminPeace(!room.peace), [gameApi, room.peace]);
   const toggleStructure = useCallback(
@@ -45,6 +47,18 @@ export function useRoomAdmin(gameApi: MutableRefObject<GameApi | null>) {
     gameApi.current?.resetWorld();
   }, [gameApi, resetArmed]);
 
+  const resetScores = useCallback(() => {
+    if (!resetScoresArmed) {
+      setResetScoresArmed(true);
+      if (resetScoresArmTimer.current) clearTimeout(resetScoresArmTimer.current);
+      resetScoresArmTimer.current = setTimeout(() => setResetScoresArmed(false), RESET_ARM_MS);
+      return;
+    }
+    if (resetScoresArmTimer.current) clearTimeout(resetScoresArmTimer.current);
+    setResetScoresArmed(false);
+    gameApi.current?.resetScores();
+  }, [gameApi, resetScoresArmed]);
+
   return {
     room,
     setRoom,
@@ -56,6 +70,8 @@ export function useRoomAdmin(gameApi: MutableRefObject<GameApi | null>) {
     setAdminOpen,
     resetArmed,
     resetWorld,
+    resetScoresArmed,
+    resetScores,
     toggleRoomPeace,
     toggleStructure,
     toggleRoomPvp,

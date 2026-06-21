@@ -8,6 +8,7 @@ import {
   adminBan,
   adminKick,
   adminResetWorld,
+  adminResetScores,
   adminSetChat,
   adminSetPeace,
   adminSetPvp,
@@ -116,6 +117,7 @@ export interface NetClient {
   sendAdminBan(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
+  sendAdminResetScores(): void;
   sendAdminSetRole(id: number, role: Role): void;
   readonly ping: number;
   readonly state: NetState;
@@ -346,6 +348,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminResetWorld(): void {
       rawSend(encodeClientMsg(adminResetWorld()));
+    },
+    sendAdminResetScores(): void {
+      rawSend(encodeClientMsg(adminResetScores()));
     },
     sendAdminSetRole(id, role): void {
       rawSend(encodeClientMsg(adminSetRole(id, role)));

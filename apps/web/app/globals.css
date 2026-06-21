@@ -482,13 +482,13 @@ input, textarea, select { font-size: max(16px, 1em); }
 #adminStructures button.blocked { background: rgba(255,93,46,.4); }
 #adminPlayers button.kick { background: rgba(255,210,63,.3); }
 #adminPlayers button.ban { background: rgba(255,93,46,.45); }
-#adminReset {
+#adminReset, #adminResetScores {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,46,46,.45); border: 2px solid rgba(255,93,46,.7); border-radius: 10px;
   padding: 6px 10px; transition: transform .08s;
 }
-#adminReset.armed { background: rgba(255,46,46,.85); border-color: #fff; }
-#adminReset:active { transform: translateY(2px); }
+#adminReset.armed, #adminResetScores.armed { background: rgba(255,46,46,.85); border-color: #fff; }
+#adminReset:active, #adminResetScores:active { transform: translateY(2px); }
 
 /* On phones the centered top bar used to wrap into a tall column that the side panels collided with.
    Keep it to a single compact row so the presence + admin panels sit clear just below it. */

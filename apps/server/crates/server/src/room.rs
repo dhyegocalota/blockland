@@ -511,6 +511,10 @@ impl Room {
 
         // Resetting the world wipes shared state (edits + creatures), so it is handled before the
         // single-player borrow below.
+        if let ClientMsg::AdminResetScores = msg {
+            self.on_admin_reset_scores(id);
+            return;
+        }
         if let ClientMsg::AdminResetWorld = msg {
             self.on_admin_reset_world(id);
             return;
@@ -688,6 +692,7 @@ impl Room {
             | ClientMsg::AdminKick { .. }
             | ClientMsg::AdminBan { .. }
             | ClientMsg::AdminResetWorld
+            | ClientMsg::AdminResetScores
             | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
@@ -855,6 +860,36 @@ impl Room {
             detail: String::new(),
         });
         tracing::info!(tenant = %self.key.0, %id, "world reset by admin");
+    }
+
+    /// Wipe everyone's score: reset live players to zero and clear the persisted leaderboard. Admin-only
+    /// (it destroys other players' progress), broadcast to the feed.
+    fn on_admin_reset_scores(&mut self, id: PlayerId) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "score reset ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        for p in self.players.values_mut() {
+            p.score = 0;
+        }
+        let db = self.hub.db.clone();
+        let tenant = self.key.0.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.reset_scores(&tenant).await {
+                tracing::error!(error = %e, "reset_scores failed");
+            }
+        });
+        self.broadcast(&ServerMsg::Event {
+            kind: "reset_scores".into(),
+            name: admin_name,
+            detail: String::new(),
+        });
+        tracing::info!(tenant = %self.key.0, %id, "scores reset by admin");
     }
 
     /// Change an online player's role. Admins (parents) may grant any role; moderators (kids) may only
@@ -1702,6 +1737,33 @@ mod tests {
                 .any(|m| matches!(m, ServerMsg::Edit { id: 0, .. })),
             "the break is broadcast",
         );
+    }
+
+    #[tokio::test]
+    async fn admin_reset_scores_zeroes_players_and_broadcasts() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        add_player(&mut room, 2, false);
+        room.players.get_mut(&1).unwrap().score = 5;
+        room.players.get_mut(&2).unwrap().score = 9;
+        room.on_admin_reset_scores(1);
+        assert_eq!(room.players.get(&1).unwrap().score, 0);
+        assert_eq!(room.players.get(&2).unwrap().score, 0);
+        assert!(
+            (0..50)
+                .filter_map(|_| admin_rx.try_recv().ok())
+                .any(|m| matches!(m, ServerMsg::Event { kind, .. } if kind == "reset_scores")),
+            "the reset is announced in the feed",
+        );
+    }
+
+    #[tokio::test]
+    async fn non_admin_reset_scores_is_ignored() {
+        let mut room = test_room().await;
+        add_player(&mut room, 2, false);
+        room.players.get_mut(&2).unwrap().score = 7;
+        room.on_admin_reset_scores(2);
+        assert_eq!(room.players.get(&2).unwrap().score, 7);
     }
 
     #[tokio::test]

@@ -161,6 +161,7 @@ export interface CoopController {
   sendAdminBan(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
+  sendAdminResetScores(): void;
   sendAdminSetRole(id: number, role: Role): void;
   update(now: number): void;
   getColliders(): ActorPos[];
@@ -466,6 +467,10 @@ export function createCoop(opts: CoopOptions): CoopController {
           opts.onWorldReset();
           return;
         }
+        if (msg.kind === 'reset_scores') {
+          opts.hud.onEvent({ kind: 'reset_scores', name: msg.name });
+          return;
+        }
         if (msg.kind === 'server_down') {
           opts.hud.onEvent({ kind: 'server_down', name: msg.name });
           return;
@@ -585,6 +590,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminResetWorld(): void {
       net.sendAdminResetWorld();
+    },
+    sendAdminResetScores(): void {
+      net.sendAdminResetScores();
     },
     sendAdminSetRole(id, role): void {
       net.sendAdminSetRole(id, role);

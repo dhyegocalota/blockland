@@ -76,7 +76,7 @@ export function useGame() {
   const { entries: feed, pushFeedEntry } = useFeed();
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
-    resetArmed, resetWorld, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
+    resetArmed, resetWorld, resetScoresArmed, resetScores, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, setRole,
   } = useRoomAdmin(gameApiRef);
   const {
@@ -354,7 +354,7 @@ export function useGame() {
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
     gameApiRef,
-    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld,
+    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,

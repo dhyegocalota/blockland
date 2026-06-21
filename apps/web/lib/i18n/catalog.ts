@@ -94,6 +94,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.ban': 'Banir',
     'game_admin.reset': '🌍 Resetar mundo',
     'game_admin.reset_confirm': '⚠️ Confirmar reset?',
+    'game_admin.reset_scores': '🏆 Zerar placar de todos',
+    'game_admin.reset_scores_confirm': '⚠️ Confirmar zerar placar?',
 
     // Start screen
     'start.record': '🏆 Recorde: 0',
@@ -186,6 +188,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.renamed': '{old} agora é {name}',
     'feed.kill': '{name} derrotou um {detail}',
     'feed.reset': '🌍 {name} resetou o mundo',
+    'feed.reset_scores': '🏆 {name} zerou o placar de todos',
     'feed.server_down': '⚠️ Servidor vai reiniciar — volte em instantes',
     'feed.admin_peace_on': '{name} acalmou os monstros',
     'feed.admin_peace_off': '{name} soltou os monstros',
@@ -433,6 +436,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.ban': 'Ban',
     'game_admin.reset': '🌍 Reset world',
     'game_admin.reset_confirm': '⚠️ Confirm reset?',
+    'game_admin.reset_scores': '🏆 Reset everyone\'s score',
+    'game_admin.reset_scores_confirm': '⚠️ Confirm score reset?',
 
     // Start screen
     'start.record': '🏆 Record: 0',
@@ -525,6 +530,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.renamed': '{old} is now {name}',
     'feed.kill': '{name} beat a {detail}',
     'feed.reset': '🌍 {name} reset the world',
+    'feed.reset_scores': '🏆 {name} reset everyone\'s score',
     'feed.server_down': '⚠️ Server is restarting — back in a moment',
     'feed.admin_peace_on': '{name} calmed the monsters',
     'feed.admin_peace_off': '{name} unleashed the monsters',

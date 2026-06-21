@@ -29,6 +29,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
   rename: '✏️',
   kill: '⚔️',
   reset: '🌍',
+  reset_scores: '🏆',
   server_down: '⚠️',
   admin: '🛡️',
 };
@@ -38,6 +39,7 @@ function feedText(entry: FeedEntry): string {
   if (entry.kind === 'rename' && entry.detail) return t('feed.renamed', { old: entry.detail, name: entry.name });
   if (entry.kind === 'rename') return entry.name;
   if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });
+  if (entry.kind === 'reset_scores') return t('feed.reset_scores', { name: entry.name });
   if (entry.kind === 'server_down') return t('feed.server_down');
   if (entry.kind === 'admin') {
     const parts = entry.detail ? entry.detail.split('|') : [];
@@ -68,7 +70,7 @@ export default function Game() {
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
     gameApiRef,
-    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld,
+    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
@@ -196,6 +198,11 @@ export default function Game() {
               <button id="adminReset" className={resetArmed ? 'armed' : undefined} onClick={resetWorld}>
                 {resetArmed ? t('game_admin.reset_confirm') : t('game_admin.reset')}
               </button>
+              {isAdmin && (
+                <button id="adminResetScores" className={resetScoresArmed ? 'armed' : undefined} onClick={resetScores}>
+                  {resetScoresArmed ? t('game_admin.reset_scores_confirm') : t('game_admin.reset_scores')}
+                </button>
+              )}
             </div>
           )}
         </div>

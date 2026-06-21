@@ -80,6 +80,8 @@ pub enum ClientMsg {
     },
     /// Moderator+admin: wipe the world (all edits + creatures) for everyone. Ignored from players.
     AdminResetWorld,
+    /// Admin-only: wipe every player's score + the leaderboard for this world. Ignored from non-admins.
+    AdminResetScores,
     /// Admin-only (or moderator setting a moderator): change an online player's role by id. Ignored
     /// when the sender lacks the authority to grant the requested role.
     AdminSetRole {
