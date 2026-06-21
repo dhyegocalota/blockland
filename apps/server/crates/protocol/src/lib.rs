@@ -66,6 +66,11 @@ pub enum ClientMsg {
     AdminSetChat {
         on: bool,
     },
+    /// Admin-only: toggle this player's infinite-resources mode (build without spending). Ignored
+    /// from non-admins.
+    AdminSetInfinite {
+        on: bool,
+    },
     /// Admin-only: disconnect a player by id (they may rejoin). Ignored from non-admins.
     AdminKick {
         id: u32,
@@ -214,6 +219,19 @@ pub enum ServerMsg {
         z: f32,
         hp: u8,
     },
+    /// This player's authoritative block inventory: counts per block id, with `infinite` set while the
+    /// player builds without spending (admins). Sent on join and whenever a count or the flag changes.
+    Inventory {
+        items: Vec<InventoryItem>,
+        infinite: bool,
+    },
+}
+
+/// One block-id count in a player's inventory.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+pub struct InventoryItem {
+    pub id: u8,
+    pub count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -272,6 +290,7 @@ mod export {
             EditOp::decl(),
             Role::decl(),
             EditCell::decl(),
+            InventoryItem::decl(),
             PlayerState::decl(),
             CreatureState::decl(),
             ClientMsg::decl(),

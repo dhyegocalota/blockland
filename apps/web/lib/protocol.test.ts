@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { adminBan, adminKick, adminResetWorld, adminSetChat, adminSetPeace, adminSetPvp, adminSetRole, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
+import { adminBan, adminKick, adminResetWorld, adminSetChat, adminSetInfinite, adminSetPeace, adminSetPvp, adminSetRole, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
 
 describe('protocol factories', () => {
   it('builds a join message', () => {
@@ -42,6 +42,19 @@ describe('protocol factories', () => {
   it('builds an admin reset-world message', () => {
     expect(adminResetWorld()).toEqual({ t: 'admin_reset_world' });
     expect(adminSetRole(7, 'moderator')).toEqual({ t: 'admin_set_role', id: 7, role: 'moderator' });
+  });
+
+  it('builds an admin set-infinite message', () => {
+    expect(adminSetInfinite(false)).toEqual({ t: 'admin_set_infinite', on: false });
+  });
+
+  it('parses a server inventory message', () => {
+    const inv = parseServerMsg('{"t":"inventory","items":[{"id":3,"count":2}],"infinite":false}');
+    expect(inv.t).toBe('inventory');
+    if (inv.t === 'inventory') {
+      expect(inv.infinite).toBe(false);
+      expect(inv.items).toEqual([{ id: 3, count: 2 }]);
+    }
   });
 
   it('round-trips a client message through JSON', () => {

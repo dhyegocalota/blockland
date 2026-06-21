@@ -11,6 +11,7 @@ import {
   adminResetScores,
   adminSuspend,
   adminSetChat,
+  adminSetInfinite,
   adminSetPeace,
   adminSetPvp,
   adminSetRole,
@@ -59,6 +60,7 @@ type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
 type RespawnMsg = Extract<ServerMsg, { t: 'respawn' }>;
+type InventoryMsg = Extract<ServerMsg, { t: 'inventory' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -73,6 +75,7 @@ export interface NetHandlers {
   onRole?(msg: RoleMsg): void;
   onAttack?(msg: AttackMsg): void;
   onRespawn?(msg: RespawnMsg): void;
+  onInventory?(msg: InventoryMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -122,6 +125,7 @@ export interface NetClient {
   sendAdminResetScores(): void;
   sendAdminSuspend(on: boolean): void;
   sendAdminSetRole(id: number, role: Role): void;
+  sendAdminSetInfinite(on: boolean): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -215,6 +219,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'respawn') {
       opts.handlers.onRespawn?.(msg);
+      return;
+    }
+    if (msg.t === 'inventory') {
+      opts.handlers.onInventory?.(msg);
       return;
     }
     if (msg.t === 'ping') {
@@ -362,6 +370,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminSetRole(id, role): void {
       rawSend(encodeClientMsg(adminSetRole(id, role)));
+    },
+    sendAdminSetInfinite(on): void {
+      rawSend(encodeClientMsg(adminSetInfinite(on)));
     },
     get ping(): number {
       return ping;

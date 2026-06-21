@@ -4,7 +4,7 @@
 
 import type { ClientMsg, EditCell, EditOp, Role, ServerMsg } from './protocol.gen';
 
-export type { Brand, ClientMsg, CreatureState, EditCell, EditOp, PlayerState, Role, ServerMsg } from './protocol.gen';
+export type { Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerState, Role, ServerMsg } from './protocol.gen';
 
 export const join = (params: {
   tenant: string;
@@ -57,6 +57,8 @@ export const adminSetStructure = (kind: string, allowed: boolean): ClientMsg => 
 export const adminSetPvp = (on: boolean): ClientMsg => ({ t: 'admin_set_pvp', on });
 
 export const adminSetChat = (on: boolean): ClientMsg => ({ t: 'admin_set_chat', on });
+
+export const adminSetInfinite = (on: boolean): ClientMsg => ({ t: 'admin_set_infinite', on });
 
 export const adminKick = (id: number): ClientMsg => ({ t: 'admin_kick', id });
 

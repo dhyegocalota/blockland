@@ -96,6 +96,9 @@ export interface CoopOptions {
   // recenters them with full health on death or the back-to-spawn button.
   onHealth(hp: number): void;
   onRespawn(x: number, y: number, z: number, hp: number): void;
+  // The server owns block resources in co-op: it pushes this player's authoritative counts + infinite
+  // flag on join and on every change. The engine repaints the hotbar from coop's stored counts.
+  onInventory(): void;
 }
 
 interface Avatar {
@@ -165,6 +168,9 @@ export interface CoopController {
   sendAdminResetScores(): void;
   sendAdminSuspend(on: boolean): void;
   sendAdminSetRole(id: number, role: Role): void;
+  sendAdminSetInfinite(on: boolean): void;
+  inventoryCount(id: number): number;
+  readonly infinite: boolean;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
@@ -186,6 +192,10 @@ export function createCoop(opts: CoopOptions): CoopController {
   let selfPing = 0;
   let selfScore = 0;
   let admin = false;
+  // Server-authoritative block resources for this player: counts per block id + the infinite flag.
+  // The server pushes them; the engine reads them through inventoryCount/infinite to paint the hotbar.
+  const inventory = new Map<number, number>();
+  let infinite = true;
 
   function makeLabel(name: string): THREE.Sprite {
     const canvas = document.createElement('canvas');
@@ -527,6 +537,13 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.onRespawn(msg.x, msg.y, msg.z, msg.hp);
         debug('coop', 'respawn', { x: msg.x, y: msg.y, z: msg.z, hp: msg.hp });
       },
+      onInventory: (msg) => {
+        inventory.clear();
+        for (const item of msg.items) inventory.set(item.id, item.count);
+        infinite = msg.infinite;
+        opts.onInventory();
+        debug('coop', 'inventory', { items: msg.items.length, infinite: msg.infinite });
+      },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });
         opts.hud.onError(code);
@@ -603,6 +620,14 @@ export function createCoop(opts: CoopOptions): CoopController {
     sendAdminSetRole(id, role): void {
       net.sendAdminSetRole(id, role);
     },
+    sendAdminSetInfinite(on): void {
+      net.sendAdminSetInfinite(on);
+    },
+    inventoryCount(id): number {
+      const count = inventory.get(id);
+      if (count === undefined) return 0;
+      return count;
+    },
     update(now): void {
       for (const avatar of avatars.values()) {
         const pose = avatar.interp.sampleAt(now);
@@ -654,6 +679,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     get isAdmin(): boolean {
       return admin;
+    },
+    get infinite(): boolean {
+      return infinite;
     },
     close(): void {
       for (const id of [...avatars.keys()]) removeAvatar(id);

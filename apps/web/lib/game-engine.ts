@@ -332,9 +332,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   let peaceful = true;
   let pvp = false;
   let chatEnabled = true;
-  // Block resources: mining a block banks one of its kind, placing spends one. Infinite by default
-  // (solo sandbox + admins build freely); a co-op join flips this off for non-admin players via
-  // onAdmin, so only regular multiplayer players are constrained. Magic structures are exempt.
+  // Block resources OFFLINE only: mining a block banks one of its kind, placing spends one. Infinite by
+  // default (solo sandbox + admins build freely). In co-op the inventory is server-authoritative (see
+  // coop.inventoryCount / coop.infinite); these locals are unused there. Magic structures are exempt.
   let infiniteResources = true;
   const inventory = new BlockInventory();
   const blockedStructures = new Set<string>();
@@ -440,7 +440,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     resetScores: () => coop?.sendAdminResetScores(),
     suspendRoom: (on) => coop?.sendAdminSuspend(on),
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
-    setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
+    setInfiniteResources: (on) => {
+      if (coop) { coop.sendAdminSetInfinite(on); return; }
+      infiniteResources = on;
+      updateHotbarCounts();
+    },
     returnToSpawn: () => {
       if (coop) { coop.sendRespawn(); return; }
       player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); savePos();
@@ -705,8 +709,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     setVoxel(r.hit[0], r.hit[1], r.hit[2], AIR);
     remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
     player.bag += 1;
-    inventory.bank(removed);
-    updateHotbarCounts();
+    // Co-op banks the block server-side (it credits the broken block and pushes the new counts back);
+    // offline the local inventory is authoritative, so bank + repaint here.
+    if (!coop) { inventory.bank(removed); updateHotbarCounts(); }
     updateStats();
     blip(220, 0.08);
     debug('engine', 'break block', { x: r.hit[0], y: r.hit[1], z: r.hit[2], id: removed });
@@ -717,13 +722,21 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const [px, py, pz] = r.place;
     if (!inBounds(px, py, pz) || getVoxel(px, py, pz) !== AIR) return;
     if (overlapsPlayer(px, py, pz)) return;
-    if (!infiniteResources && !inventory.canPlace(selected)) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
-    if (!infiniteResources) { inventory.spend(selected); updateHotbarCounts(); }
+    if (!canPlaceSelected()) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
+    // Co-op spends the block server-side (it decrements and pushes the new counts back); offline the
+    // local inventory is authoritative, so spend + repaint here.
+    if (!coop && !infiniteResources) { inventory.spend(selected); updateHotbarCounts(); }
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
     sendCoopEdit('place', px, py, pz, selected);
     blip(selected === FACE_ID ? 720 : 520, 0.08);
     debug('engine', 'place block', { x: px, y: py, z: pz, id: selected });
+  }
+  // Whether the selected block can be placed: co-op reads the server-authoritative inventory + infinite
+  // flag; offline reads the local BlockInventory + the local infinite toggle.
+  function canPlaceSelected(): boolean {
+    if (coop) return coop.infinite || coop.inventoryCount(selected) > 0;
+    return infiniteResources || inventory.canPlace(selected);
   }
   // True if the cell would land on the local player or any remote player (no building on people).
   function overlapsPlayer(x: number, y: number, z: number): boolean {
@@ -1026,13 +1039,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     updateHotbarCounts();
   }
   // Admins build freely, so their slots show no counter; regular players see how many of each block
-  // they have banked (∞ would be misleading, so it is simply hidden when resources are infinite).
+  // they have banked (∞ would be misleading, so it is simply hidden when resources are infinite). Co-op
+  // reads the server-authoritative inventory; offline reads the local BlockInventory.
   function updateHotbarCounts(): void {
+    const infinite = coop ? coop.infinite : infiniteResources;
     for (const slot of [...hotbar.children] as HTMLElement[]) {
       const id = Number(slot.dataset.id);
       const badge = slot.querySelector<HTMLElement>('.count');
       if (!badge) continue;
-      badge.textContent = hotbarCountLabel({ infiniteResources, count: inventory.count(id) });
+      const count = coop ? coop.inventoryCount(id) : inventory.count(id);
+      badge.textContent = hotbarCountLabel({ infiniteResources: infinite, count });
     }
   }
   function selectSlot(id: number): void {
@@ -1154,6 +1170,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
         updateStats();
         toast(t('toast.nap'));
       },
+      // The server pushed this player's authoritative inventory (counts + infinite flag): repaint the
+      // hotbar from it.
+      onInventory: updateHotbarCounts,
     });
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   }
