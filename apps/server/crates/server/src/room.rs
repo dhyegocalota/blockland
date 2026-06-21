@@ -39,8 +39,10 @@ const SPAWN_RADIUS: f32 = 28.0;
 const DESPAWN_RADIUS: f32 = 64.0;
 // Top the population up this often (refilling up to SPAWN_BATCH each time for fast recovery after kills).
 const SPAWN_EVERY_TICKS: u64 = 5;
-// A player must be within this distance of a creature for a Hit to land (anti-cheat melee range).
-const MELEE_RANGE: f32 = 4.0;
+// A player must be within this distance of a creature for a Hit to land (anti-cheat melee range). Kept
+// at/above the client's aim reach (REACH = 7) so a hit the client lets you land is never silently
+// rejected here — that mismatch was why creatures "wouldn't die" when struck from a few blocks away.
+const MELEE_RANGE: f32 = 8.0;
 // Player health + how a hostile creature bites it. Mirrors the web rules (MAX_HEARTS, hurt.ts, the 1.2s
 // hurt cooldown) so survival is identical, only now owned by the server.
 const MAX_HP: u8 = 3;
@@ -50,7 +52,7 @@ const HURT_LEVEL_SLACK: f32 = 0.5;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
 const PLAYER_BODY_HEIGHT: f32 = 1.7;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
-const DIG_HITS: u8 = 3;
+const DIG_HITS: u8 = 4;
 
 /// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
 pub struct Appearance {
@@ -2223,7 +2225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dig_breaks_only_after_three_taps_and_resets_on_switch() {
+    async fn dig_breaks_only_after_enough_taps_and_resets_on_switch() {
         let mut room = test_room().await;
         let mut rx = add_player(&mut room, 1, false);
         room.world.set(10, 20, 10, 1);
@@ -2234,19 +2236,21 @@ mod tests {
             p.y = 21.0;
             p.z = 10.5;
         }
-        room.on_dig(1, 10, 20, 10);
-        room.on_dig(1, 10, 20, 10);
+        for _ in 0..DIG_HITS - 1 {
+            room.on_dig(1, 10, 20, 10);
+        }
         assert!(
             room.world.is_solid(10, 20, 10),
-            "two taps leave it standing"
+            "fewer than DIG_HITS taps leave it standing"
         );
-        // switching blocks resets the counter, so the original needs three fresh taps
+        // switching blocks resets the counter, so the original needs a fresh full set of taps
         room.on_dig(1, 11, 20, 10);
-        room.on_dig(1, 10, 20, 10);
-        room.on_dig(1, 10, 20, 10);
+        for _ in 0..DIG_HITS - 1 {
+            room.on_dig(1, 10, 20, 10);
+        }
         assert!(room.world.is_solid(10, 20, 10), "the switch reset progress");
         room.on_dig(1, 10, 20, 10);
-        assert!(!room.world.is_solid(10, 20, 10), "the third tap breaks it");
+        assert!(!room.world.is_solid(10, 20, 10), "the final tap breaks it");
         assert!(
             (0..50)
                 .filter_map(|_| rx.try_recv().ok())

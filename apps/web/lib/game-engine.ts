@@ -1160,7 +1160,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       onCreaturePoof: ({ x, y, z, color }) => spawnPoof(new THREE.Vector3(x, y, z), color),
       onWorldReset: resetLocalWorld,
       onSpawn: (x, y, z) => { player.pos.set(x, y, z); player.vel.set(0, 0, 0); },
-      onHealth: (hp) => { player.hearts = hp; updateStats(); },
+      onHealth: (hp) => {
+        if (hp < player.hearts) flashDamage();
+        player.hearts = hp;
+        updateStats();
+      },
       onRespawn: (x, y, z, hp) => {
         player.pos.set(x, y, z);
         player.vel.set(0, 0, 0);

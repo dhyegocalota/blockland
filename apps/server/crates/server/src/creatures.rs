@@ -139,6 +139,13 @@ impl Creature {
             Some((player, _)) => (player[0] - self.pos[0]).atan2(player[1] - self.pos[2]),
             None => wander_yaw(self.id, tick),
         };
+        // Stop at biting distance so a chaser stands and attacks instead of walking into the player and
+        // jittering at their feet (it keeps facing them; the bite is applied by the room).
+        if let Some((_, dist)) = target {
+            if dist < STOP_DISTANCE {
+                return;
+            }
+        }
         let next_x = self.pos[0] + self.yaw.sin() * config.speed * dt;
         let next_z = self.pos[2] + self.yaw.cos() * config.speed * dt;
         let next_ground = ground_y(next_x, next_z, &height_at);
@@ -157,6 +164,9 @@ impl Creature {
     }
 }
 
+/// How close a chasing creature stops to the player — just inside bite range, so it attacks in place
+/// rather than overrunning the player and oscillating at their feet.
+const STOP_DISTANCE: f32 = 1.0;
 /// Tallest step a creature may climb in a single move (one block).
 const MAX_CLIMB: f32 = 1.0;
 /// How fast a creature falls when it walks off a ledge (blocks per second), so drops are smooth
@@ -223,6 +233,28 @@ mod tests {
         assert_eq!(c.pos[1], 10.0 + GROUND_OFFSET);
         assert_eq!(c.hp, 2);
         assert_eq!(c.max_hp, 2);
+    }
+
+    #[test]
+    fn a_chaser_stops_at_biting_distance_instead_of_overrunning_the_player() {
+        let player = [[5.0, 5.0]];
+        // Spawned 0.5 away (inside STOP_DISTANCE): a hostile creature should hold its ground and bite,
+        // not step into the player and jitter at their feet.
+        let mut close = Creature::spawn(1, CreatureKind::Spider, 5.5, 5.0, flat());
+        let before = close.pos;
+        close.advance(&player, false, 0.1, 0, flat());
+        assert_eq!(
+            close.pos[0], before[0],
+            "a creature within stop distance holds still"
+        );
+        assert_eq!(close.pos[2], before[2]);
+        // From outside biting distance it still closes in.
+        let mut far = Creature::spawn(2, CreatureKind::Spider, 9.0, 5.0, flat());
+        far.advance(&player, false, 0.1, 0, flat());
+        assert!(
+            far.pos[0] < 9.0,
+            "a chaser outside biting distance moves closer"
+        );
     }
 
     #[test]
