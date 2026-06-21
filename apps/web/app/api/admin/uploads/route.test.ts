@@ -34,7 +34,7 @@ describe('POST /api/admin/uploads', () => {
   it('returns 401 without a valid admin key', async () => {
     const form = new FormData();
     form.set('tenantId', 'acme');
-    form.set('kind', 'avatar');
+    form.set('kind', 'image');
     form.set('file', pngFile());
     const res = await POST(uploadRequest(form, false));
     expect(res.status).toBe(401);
@@ -44,7 +44,7 @@ describe('POST /api/admin/uploads', () => {
   it('rejects an invalid tenant id', async () => {
     const form = new FormData();
     form.set('tenantId', 'A');
-    form.set('kind', 'avatar');
+    form.set('kind', 'image');
     form.set('file', pngFile());
     const res = await POST(uploadRequest(form));
     expect(res.status).toBe(400);
@@ -64,7 +64,7 @@ describe('POST /api/admin/uploads', () => {
   it('rejects a missing file', async () => {
     const form = new FormData();
     form.set('tenantId', 'acme');
-    form.set('kind', 'avatar');
+    form.set('kind', 'image');
     const res = await POST(uploadRequest(form));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'missing_file' });
@@ -73,7 +73,7 @@ describe('POST /api/admin/uploads', () => {
   it('rejects an unsupported content type', async () => {
     const form = new FormData();
     form.set('tenantId', 'acme');
-    form.set('kind', 'avatar');
+    form.set('kind', 'image');
     form.set('file', new File([new Uint8Array([1])], 'a.gif', { type: 'image/gif' }));
     const res = await POST(uploadRequest(form));
     expect(res.status).toBe(415);
@@ -81,28 +81,28 @@ describe('POST /api/admin/uploads', () => {
     expect(uploadAssetMock).not.toHaveBeenCalled();
   });
 
-  it('builds the avatar key and forwards the bytes', async () => {
+  it('builds the image key and forwards the bytes', async () => {
     const form = new FormData();
     form.set('tenantId', 'acme');
-    form.set('kind', 'avatar');
+    form.set('kind', 'image');
     form.set('file', pngFile());
     const res = await POST(uploadRequest(form));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: 'https://cdn/asset.png' });
     expect(uploadAssetMock).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'tenants/acme/avatar.png', contentType: 'image/png' }),
+      expect.objectContaining({ key: 'tenants/acme/image.png', contentType: 'image/png' }),
     );
   });
 
-  it('builds the face key from the face kind and jpeg extension', async () => {
+  it('builds the image key from the jpeg extension', async () => {
     const form = new FormData();
     form.set('tenantId', 'acme');
-    form.set('kind', 'face');
+    form.set('kind', 'image');
     form.set('file', new File([new Uint8Array([1])], 'f.jpg', { type: 'image/jpeg' }));
     const res = await POST(uploadRequest(form));
     expect(res.status).toBe(200);
     expect(uploadAssetMock).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'tenants/acme/face.jpg', contentType: 'image/jpeg' }),
+      expect.objectContaining({ key: 'tenants/acme/image.jpg', contentType: 'image/jpeg' }),
     );
   });
 });

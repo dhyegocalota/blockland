@@ -41,7 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
   if (!subdomain) return base;
   const tenant = await getTenant(subdomain);
   if (!tenant) return base;
-  return { ...base, title: tenant.name, icons: { icon: tenant.avatar, apple: tenant.avatar } };
+  return { ...base, title: tenant.name, icons: { icon: tenant.image, apple: tenant.image } };
 }
 
 export const viewport: Viewport = {

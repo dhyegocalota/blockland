@@ -313,12 +313,12 @@ pub struct PendingApproval {
     pub email: String,
 }
 
-/// White-label branding handed to the client on join.
+/// White-label branding handed to the client on join: a display name and one image URL that
+/// serves both the lobby avatar and the in-game face-block texture.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Brand {
     pub name: String,
-    pub primary: String,
-    pub logo: Option<String>,
+    pub image: String,
 }
 
 #[cfg(test)]

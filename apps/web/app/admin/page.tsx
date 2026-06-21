@@ -4,24 +4,15 @@ import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEve
 import { t } from '../../lib/i18n';
 import { tenantSubdomain } from '../../lib/tenants';
 import type { Tenant } from '../../lib/builtins';
+import { DEFAULT_BRAND_COLOR } from '../../lib/engine/tenant-brand';
 import type { ScoreEntry } from '../../lib/api';
 
-const EMPTY: Tenant = {
-  id: '', name: '', hero: '', titleA: '', titleB: '',
-  tagline: '', primary: '#ffd23f', avatar: '', faceTexture: '', faceBlockName: '',
-};
+const EMPTY: Tenant = { id: '', name: '', image: '' };
 
 const FIELDS: [keyof Tenant, string][] = [
   ['id', 'admin.field_id'],
   ['name', 'admin.field_name'],
-  ['hero', 'admin.field_hero'],
-  ['titleA', 'admin.field_titleA'],
-  ['titleB', 'admin.field_titleB'],
-  ['primary', 'admin.field_primary'],
-  ['avatar', 'admin.field_avatar'],
-  ['faceTexture', 'admin.field_face_texture'],
-  ['faceBlockName', 'admin.field_face_block_name'],
-  ['tagline', 'admin.field_tagline'],
+  ['image', 'admin.field_image'],
 ];
 
 const PAGE_SIZE = 8;
@@ -34,9 +25,8 @@ interface AdminStats { room_list: RoomSnapshot[] }
 interface OnlineRow { tenant: string; player: OnlinePlayer }
 interface Account { name: string; email: string; is_admin: boolean }
 
-const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'avatar' | 'face'>> = {
-  avatar: 'avatar',
-  faceTexture: 'face',
+const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'image'>> = {
+  image: 'image',
 };
 
 const UPLOAD_ACCEPT = 'image/png,image/jpeg,image/webp';
@@ -173,7 +163,7 @@ export default function Admin() {
   const set = (field: keyof Tenant) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm({ ...form, [field]: e.target.value });
 
-  async function upload(field: keyof Tenant, kind: 'avatar' | 'face', file: File) {
+  async function upload(field: keyof Tenant, kind: 'image', file: File) {
     if (!TENANT_ID.test(form.id)) { setMsg(t('admin.upload_needs_id')); return; }
     const data = new FormData();
     data.set('tenantId', form.id);
@@ -187,7 +177,7 @@ export default function Admin() {
     setMsg(t('admin.uploaded'));
   }
 
-  const pickFile = (field: keyof Tenant, kind: 'avatar' | 'face') => (e: ChangeEvent<HTMLInputElement>) => {
+  const pickFile = (field: keyof Tenant, kind: 'image') => (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) upload(field, kind, file);
     e.target.value = '';
@@ -221,9 +211,7 @@ export default function Admin() {
           {FIELDS.map(([f, labelKey]) => (
             <label key={f} style={{ display: 'grid', gap: 4 }}>
               <span style={{ color: '#9aa', fontSize: 13 }}>{t(labelKey)}</span>
-              {f === 'tagline'
-                ? <textarea style={{ ...S.input, height: 70 }} value={form[f]} onChange={set(f)} />
-                : <input style={S.input} value={form[f]} onChange={set(f)} />}
+              <input style={S.input} value={form[f]} onChange={set(f)} />
               {UPLOAD_FIELD[f] && (
                 <input style={S.file} type="file" accept={UPLOAD_ACCEPT} onChange={pickFile(f, UPLOAD_FIELD[f]!)} />
               )}
@@ -256,10 +244,10 @@ export default function Admin() {
       <div style={{ display: 'grid', gap: 8, margin: '16px 0 10px' }}>
         {shown.map((tenant) => (
           <div key={tenant.id} style={S.row}>
-            <img src={tenant.avatar} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
+            <img src={tenant.image} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
             <div style={{ flex: 1 }}>
-              <b style={{ color: tenant.primary }}>{tenant.name}</b>
-              <span style={{ color: '#789', marginLeft: 8 }}>/{tenant.id} · {tenant.hero}</span>
+              <b style={{ color: DEFAULT_BRAND_COLOR }}>{tenant.name}</b>
+              <span style={{ color: '#789', marginLeft: 8 }}>/{tenant.id}</span>
             </div>
             <a style={S.link} href={`/?tenant=${tenant.id}`} target="_blank" rel="noreferrer">{t('admin.open')}</a>
             <button style={S.small} onClick={() => startEdit(tenant)}>{t('admin.edit')}</button>

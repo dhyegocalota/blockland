@@ -1,7 +1,7 @@
 // AUTO-GENERATED from apps/server/crates/protocol via ts-rs. Do not edit.
 // Regenerate with: cargo test -p protocol
 
-export type Brand = { name: string, primary: string, logo: string | null, };
+export type Brand = { name: string, image: string, };
 
 export type EditOp = "place" | "break";
 

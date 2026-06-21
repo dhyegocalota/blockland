@@ -17,14 +17,7 @@ const ADMIN_KEY = 'dev-admin-secret';
 const VALID_TENANT: Tenant = {
   id: 'acme',
   name: 'Acme',
-  hero: 'Wile',
-  titleA: 'AC',
-  titleB: 'ME',
-  tagline: 'Beep beep',
-  primary: '#ff0000',
-  avatar: '/tenants/acme/avatar.png',
-  faceTexture: '/tenants/acme/face.png',
-  faceBlockName: 'Me!',
+  image: '/tenants/acme/avatar.png',
 };
 
 function adminRequest(init: RequestInit = {}): Request {

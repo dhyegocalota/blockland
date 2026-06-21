@@ -94,7 +94,7 @@ export default function Game() {
       <div id="hurtFlash"></div>
       <div id="hud">
         <div id="topbar">
-          <img src={brand.avatar} alt={brand.hero} />
+          <img src={brand.image} alt={brand.name} />
           <span className="title">{brand.name}</span>
           <span className="stat" id="hearts">❤️❤️❤️</span>
           <span className="stat" id="stars">⭐ 0</span>
@@ -445,9 +445,9 @@ export default function Game() {
         </div>
 
         <div className="startHero">
-          <img className="avatar" src={brand.avatar} alt={brand.hero} />
-          <h1>{brand.titleA}<span className="accent">{brand.titleB}</span></h1>
-          <p dangerouslySetInnerHTML={{ __html: brand.tagline }} />
+          <img className="avatar" src={brand.image} alt={brand.name} />
+          <h1>{brand.name}</h1>
+          <p>{t('start.tagline')}</p>
           <div className="startBadges">
             <span className="record-badge" id="startRecord">{t('start.record')}</span>
             {lobbyAdmin && <span className="admin-badge" id="startAdmin">{t('lobby.admin_badge')}</span>}

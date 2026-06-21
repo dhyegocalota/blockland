@@ -1,6 +1,6 @@
-// Admin: upload a tenant asset (avatar or face texture) through the signed Storage proxy.
-// Protected by the fixed admin key; builds a tenant-scoped key and forwards the raw bytes
-// to the internal upload endpoint, which validates type/size and stores the object.
+// Admin: upload a tenant's branding image (one image serves the lobby avatar and the face block)
+// through the signed Storage proxy. Protected by the fixed admin key; builds a tenant-scoped key and
+// forwards the raw bytes to the internal upload endpoint, which validates type/size and stores it.
 import { uploadAsset } from '../../../../lib/api';
 import { isAdmin } from '../../../../lib/admin-auth';
 
@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const TENANT_ID = /^[a-z0-9-]{2,32}$/;
-const ASSET_KINDS = ['avatar', 'face'] as const;
+const ASSET_KINDS = ['image'] as const;
 type AssetKind = (typeof ASSET_KINDS)[number];
 
 const EXTENSION_BY_TYPE: Record<string, string> = {

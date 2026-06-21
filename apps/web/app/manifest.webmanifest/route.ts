@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   const subdomain = host ? tenantSubdomainOf(host) : null;
   const tenant = subdomain ? await getTenant(subdomain) : null;
   const name = tenant ? tenant.name : 'Blockland';
-  const icon = tenant ? tenant.avatar : DEFAULT_ICON;
+  const icon = tenant ? tenant.image : DEFAULT_ICON;
   const manifest = {
     name,
     short_name: name,

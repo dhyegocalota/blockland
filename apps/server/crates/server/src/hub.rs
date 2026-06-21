@@ -46,8 +46,7 @@ impl Claims {
 pub struct TenantCfg {
     pub id: String,
     pub name: String,
-    pub primary: String,
-    pub logo: Option<String>,
+    pub image: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -149,7 +148,7 @@ pub struct RoomSnapshot {
 pub struct TenantInfo {
     pub id: String,
     pub name: String,
-    pub primary: String,
+    pub image: String,
     pub rooms: usize,
     pub players: usize,
 }
@@ -326,7 +325,7 @@ impl Hub {
                 TenantInfo {
                     id: t.id.clone(),
                     name: t.name.clone(),
-                    primary: t.primary.clone(),
+                    image: t.image.clone(),
                     rooms,
                     players,
                 }
@@ -360,14 +359,12 @@ fn load_limits() -> Limits {
     }
 }
 
-// The room/brand path only needs id, name, primary color and a logo. The avatar doubles as
-// the white-label logo (matching the old `tenants.toml` mapping).
+// The room/brand path only needs id, name and the one branding image.
 fn tenant_to_cfg(tenant: Tenant) -> TenantCfg {
     TenantCfg {
         id: tenant.id,
         name: tenant.name,
-        primary: tenant.primary,
-        logo: Some(tenant.avatar),
+        image: tenant.image,
     }
 }
 

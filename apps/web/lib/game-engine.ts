@@ -22,6 +22,7 @@ import { moveVector } from './engine/movement';
 import { BlockInventory, hotbarCountLabel } from './engine/inventory';
 import { parseSavedPosition, serializeSavedPosition } from './engine/saved-position';
 import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from './engine/poofs';
+import { faceBlockNameFor } from './engine/tenant-brand';
 import { nextFrame, smoothFps } from './engine/frame-cap';
 import {
   chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
@@ -128,7 +129,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   if (win.__blGameBooted) return win.__blGameCleanup;
   win.__blGameBooted = true;
   const bootStart = performance.now();
-  const FACE_URL = brand.faceTexture;
+  const FACE_URL = brand.image;
+  const FACE_BLOCK_NAME = faceBlockNameFor(brand.name);
   const BEST_KEY = `bl-best-${brand.id}`;
   if (typeof document !== 'undefined') document.title = `${brand.name} — ${PLATFORM_NAME}`;
 
@@ -144,7 +146,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   // ---------- Block names (i18n key, except the tenant face block) ----------
   function blockName(b: BlockDef): string {
-    if (b.id === FACE_ID) return brand.faceBlockName;
+    if (b.id === FACE_ID) return FACE_BLOCK_NAME;
     if (!b.nameKey) throw new Error(`block ${b.id} has no name key`);
     return t(b.nameKey);
   }

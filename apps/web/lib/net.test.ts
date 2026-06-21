@@ -44,7 +44,7 @@ const welcome = {
   you: 1,
   tenant: 'teo',
   world: 'main',
-  brand: { name: 'Teocraft', primary: '#fff', logo: null },
+  brand: { name: 'Teocraft', image: '/tenants/teo/avatar.png' },
   tick_hz: 20,
   spawn: [0, 0, 0],
   admin: false,

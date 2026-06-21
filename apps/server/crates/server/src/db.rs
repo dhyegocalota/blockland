@@ -14,24 +14,13 @@ const ACCOUNT_ID_HEX_CHARS: usize = 24;
 const DEFAULT_EVENT_BACKLOG: u32 = 20;
 const MAX_EVENT_BACKLOG: u32 = 100;
 
-/// White-label branding plus landing-page copy for one tenant. Mirrors the `tenants` table
-/// and the web `Tenant` interface field-for-field.
+/// White-label branding for one tenant: a subdomain id, a display name, and one image URL that
+/// serves both the lobby avatar and the in-game face-block texture. Mirrors the web `Tenant`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tenant {
     pub id: String,
     pub name: String,
-    pub hero: String,
-    #[serde(rename = "titleA")]
-    pub title_a: String,
-    #[serde(rename = "titleB")]
-    pub title_b: String,
-    pub tagline: String,
-    pub primary: String,
-    pub avatar: String,
-    #[serde(rename = "faceTexture")]
-    pub face_texture: String,
-    #[serde(rename = "faceBlockName")]
-    pub face_block_name: String,
+    pub image: String,
 }
 
 /// One leaderboard row in the public top-scores view.
@@ -195,14 +184,7 @@ impl Db {
                 "CREATE TABLE IF NOT EXISTS tenants (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    hero TEXT NOT NULL,
-                    title_a TEXT NOT NULL,
-                    title_b TEXT NOT NULL,
-                    tagline TEXT NOT NULL,
-                    primary_color TEXT NOT NULL,
-                    avatar TEXT NOT NULL,
-                    face_texture TEXT NOT NULL,
-                    face_block_name TEXT NOT NULL,
+                    image TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL
                 )",
                 (),
@@ -235,9 +217,21 @@ impl Db {
             // Per-tenant moderation flags an admin toggles at runtime (both off by default).
             "ALTER TABLE tenants ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE tenants ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0",
+            // The slim branding model: one image replaces the old avatar/face_texture split. On a
+            // legacy-wide db this adds the column and the backfill below seeds it from `avatar`.
+            "ALTER TABLE tenants ADD COLUMN image TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = self.conn.execute(column, ()).await;
         }
+        // Backfill `image` from the legacy `avatar` column where it exists and image is still blank.
+        // The whole statement is ignored on a slim db that never had an `avatar` column.
+        let _ = self
+            .conn
+            .execute(
+                "UPDATE tenants SET image = avatar WHERE image = '' AND avatar IS NOT NULL",
+                (),
+            )
+            .await;
         // Per-account play time used inside the current rolling window (for the play-time limit).
         self.conn
             .execute(
@@ -554,26 +548,13 @@ impl Db {
     async fn insert_tenant(&self, tenant: &Tenant) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "INSERT INTO tenants
-                    (id, name, hero, title_a, title_b, tagline, primary_color, avatar,
-                     face_texture, face_block_name, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(id) DO UPDATE SET
-                    name=excluded.name, hero=excluded.hero, title_a=excluded.title_a,
-                    title_b=excluded.title_b, tagline=excluded.tagline,
-                    primary_color=excluded.primary_color, avatar=excluded.avatar,
-                    face_texture=excluded.face_texture, face_block_name=excluded.face_block_name",
+                "INSERT INTO tenants (id, name, image, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, image=excluded.image",
                 params![
                     tenant.id.clone(),
                     tenant.name.clone(),
-                    tenant.hero.clone(),
-                    tenant.title_a.clone(),
-                    tenant.title_b.clone(),
-                    tenant.tagline.clone(),
-                    tenant.primary.clone(),
-                    tenant.avatar.clone(),
-                    tenant.face_texture.clone(),
-                    tenant.face_block_name.clone(),
+                    tenant.image.clone(),
                     now_ms(),
                 ],
             )
@@ -584,7 +565,10 @@ impl Db {
     pub async fn get_tenant(&self, id: &str) -> Result<Option<Tenant>, libsql::Error> {
         let mut rows = self
             .conn
-            .query("SELECT * FROM tenants WHERE id = ?1", params![id])
+            .query(
+                "SELECT id, name, image FROM tenants WHERE id = ?1",
+                params![id],
+            )
             .await?;
         match rows.next().await? {
             Some(row) => Ok(Some(row_to_tenant(&row)?)),
@@ -595,7 +579,10 @@ impl Db {
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>, libsql::Error> {
         let mut rows = self
             .conn
-            .query("SELECT * FROM tenants ORDER BY created_at ASC", ())
+            .query(
+                "SELECT id, name, image FROM tenants ORDER BY created_at ASC",
+                (),
+            )
             .await?;
         let mut tenants = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -1309,14 +1296,7 @@ fn row_to_tenant(row: &libsql::Row) -> Result<Tenant, libsql::Error> {
     Ok(Tenant {
         id: row.get::<String>(0)?,
         name: row.get::<String>(1)?,
-        hero: row.get::<String>(2)?,
-        title_a: row.get::<String>(3)?,
-        title_b: row.get::<String>(4)?,
-        tagline: row.get::<String>(5)?,
-        primary: row.get::<String>(6)?,
-        avatar: row.get::<String>(7)?,
-        face_texture: row.get::<String>(8)?,
-        face_block_name: row.get::<String>(9)?,
+        image: row.get::<String>(2)?,
     })
 }
 
@@ -1327,26 +1307,12 @@ fn builtin_tenants() -> Vec<Tenant> {
         Tenant {
             id: "teo".into(),
             name: "Teocraft".into(),
-            hero: "Teodoro".into(),
-            title_a: "TEO".into(),
-            title_b: "CRAFT".into(),
-            tagline: "O mundo mágico do <b>Teodoro</b>! Construa castelos, cace os porquinhos, derrote os monstrinhos e junte estrelas. Coloque o seu rosto em blocos pra deixar tudo do seu jeito! 🎉".into(),
-            primary: "#ffd23f".into(),
-            avatar: "/tenants/teo/avatar.png".into(),
-            face_texture: "/tenants/teo/face.png".into(),
-            face_block_name: "Teo!".into(),
+            image: "/tenants/teo/avatar.png".into(),
         },
         Tenant {
             id: "demo".into(),
             name: "Blockland".into(),
-            hero: "você".into(),
-            title_a: "BLOCK".into(),
-            title_b: "LANDIA".into(),
-            tagline: "Seu mundo de blocos! Construa, cace os bichinhos, derrote os monstrinhos e junte estrelas. Coloque o seu rosto em blocos pra deixar tudo do seu jeito! 🎉".into(),
-            primary: "#3dc6ff".into(),
-            avatar: "/tenants/demo/avatar.png".into(),
-            face_texture: "/tenants/demo/face.png".into(),
-            face_block_name: "Eu!".into(),
+            image: "/tenants/demo/avatar.png".into(),
         },
     ]
 }
@@ -1440,25 +1406,64 @@ mod tests {
         let draft = Tenant {
             id: "acme".into(),
             name: "Acme".into(),
-            hero: "Wile".into(),
-            title_a: "AC".into(),
-            title_b: "ME".into(),
-            tagline: "Beep beep".into(),
-            primary: "#ff0000".into(),
-            avatar: "/tenants/acme/avatar.png".into(),
-            face_texture: "/tenants/acme/face.png".into(),
-            face_block_name: "Me!".into(),
+            image: "/tenants/acme/avatar.png".into(),
         };
 
         let saved = db.upsert_tenant(&draft).await.unwrap().unwrap();
         assert_eq!(saved.name, "Acme");
-        assert_eq!(saved.title_a, "AC");
+        assert_eq!(saved.image, "/tenants/acme/avatar.png");
 
         let fetched = db.get_tenant("acme").await.unwrap().unwrap();
-        assert_eq!(fetched.tagline, "Beep beep");
+        assert_eq!(fetched.image, "/tenants/acme/avatar.png");
 
         db.delete_tenant("acme").await.unwrap();
         assert!(db.get_tenant("acme").await.unwrap().is_none());
+    }
+
+    /// A db created with the old wide tenants schema (avatar + the 8 branding columns) migrates to the
+    /// slim model on open: the `image` column is added and backfilled from `avatar`, and the slim
+    /// `Tenant` reads back through the explicit `id, name, image` SELECT without touching dead columns.
+    #[tokio::test]
+    async fn legacy_wide_tenant_migrates_to_slim_image() {
+        let database = Builder::new_local(":memory:").build().await.unwrap();
+        let conn = database.connect().unwrap();
+        conn.execute(
+            "CREATE TABLE tenants (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                hero TEXT NOT NULL,
+                title_a TEXT NOT NULL,
+                title_b TEXT NOT NULL,
+                tagline TEXT NOT NULL,
+                primary_color TEXT NOT NULL,
+                avatar TEXT NOT NULL,
+                face_texture TEXT NOT NULL,
+                face_block_name TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tenants (id, name, hero, title_a, title_b, tagline, primary_color,
+                avatar, face_texture, face_block_name, created_at)
+             VALUES ('old', 'Old', 'Hero', 'A', 'B', 'Tag', '#000',
+                '/tenants/old/avatar.png', '/tenants/old/face.png', 'Old!', 1)",
+            (),
+        )
+        .await
+        .unwrap();
+
+        let db = Db {
+            _database: database,
+            conn,
+        };
+        db.ensure().await.unwrap();
+
+        let migrated = db.get_tenant("old").await.unwrap().unwrap();
+        assert_eq!(migrated.name, "Old");
+        assert_eq!(migrated.image, "/tenants/old/avatar.png");
     }
 
     /// Create an account by `(tenant, email)` claiming `name`, returning its stable id.

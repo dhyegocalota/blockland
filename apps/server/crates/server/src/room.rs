@@ -227,8 +227,7 @@ impl Room {
     ) -> Self {
         let brand = Brand {
             name: tcfg.name.clone(),
-            primary: tcfg.primary.clone(),
-            logo: tcfg.logo.clone(),
+            image: tcfg.image.clone(),
         };
         // The saved world is restored asynchronously in run() (a db read can't happen in this sync
         // constructor); start from the procedural base.
