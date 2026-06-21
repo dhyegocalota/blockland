@@ -19,6 +19,15 @@ export function tenantSubdomainOf(host: string): string | null {
   return null;
 }
 
+// The app root domain for an arbitrary host: drop the tenant subdomain label so a host taken from a
+// preview or prod request maps back to the indexable landing. Bare-localhost dev keeps its host
+// (teo.localhost → localhost). Returns the host unchanged when it already IS the root.
+export function rootDomainOf(host: string): string {
+  const subdomain = tenantSubdomainOf(host);
+  if (!subdomain) return host;
+  return host.slice(subdomain.length + 1);
+}
+
 // The tenant for the current browser host (client-only; reads window).
 export function tenantSubdomain(): string | null {
   return tenantSubdomainOf(window.location.hostname);

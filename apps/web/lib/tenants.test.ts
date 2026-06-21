@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolveTenant, tenantIdFromLocation, tenantSubdomain } from './tenants';
+import { resolveTenant, rootDomainOf, tenantIdFromLocation, tenantSubdomain } from './tenants';
 import { DEFAULT_TENANT } from './builtins';
 
 const PROD_ROOT = 'blockland.dhyegocalota.com.br';
@@ -46,6 +46,23 @@ describe('tenantSubdomain', () => {
     expect(tenantSubdomain()).toBeNull();
     stubLocation({ hostname: 'teo.localhost', search: '' });
     expect(tenantSubdomain()).toBe('teo');
+  });
+});
+
+describe('rootDomainOf', () => {
+  it('returns the production root host unchanged', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    expect(rootDomainOf(PROD_ROOT)).toBe(PROD_ROOT);
+  });
+
+  it('drops a production tenant label back to the root', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    expect(rootDomainOf(`teo.${PROD_ROOT}`)).toBe(PROD_ROOT);
+  });
+
+  it('drops a localhost tenant label to bare localhost', () => {
+    expect(rootDomainOf('teo.localhost')).toBe('localhost');
+    expect(rootDomainOf('localhost')).toBe('localhost');
   });
 });
 
