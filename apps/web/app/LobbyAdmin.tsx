@@ -20,6 +20,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
   const {
     state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
+    pendingApprovals, toggleApprovalRequired, approvePlayer,
   } = lobby;
 
   if (!isAdmin && !isModerator) {
@@ -73,6 +74,26 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
             );
           })}
         </ul>
+        {isAdmin && (
+          <button id="adminApproval" className={room.approvalRequired ? 'on' : undefined} onClick={toggleApprovalRequired}>
+            {room.approvalRequired ? t('game_admin.approval_on') : t('game_admin.approval_off')}
+          </button>
+        )}
+        {isAdmin && pendingApprovals.length > 0 && (
+          <>
+            <span className="adminLabel">{t('game_admin.pending')}</span>
+            <ul id="adminPending">
+              {pendingApprovals.map((entry) => (
+                <li key={entry.accountId}>
+                  <span>{entry.name}</span>
+                  <span className="adminPlayerActions">
+                    <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {isAdmin && (
           <button id="adminReset" className={resetArmed ? 'armed' : undefined} onClick={resetWorld}>
             {resetArmed ? t('game_admin.reset_confirm') : t('game_admin.reset')}
