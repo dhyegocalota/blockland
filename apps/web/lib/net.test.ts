@@ -48,6 +48,8 @@ const welcome = {
   tick_hz: 20,
   spawn: [0, 0, 0],
   admin: false,
+  moderator: false,
+  version: 'test',
 };
 
 function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {

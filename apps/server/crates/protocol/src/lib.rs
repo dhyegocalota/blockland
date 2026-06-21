@@ -159,6 +159,8 @@ pub enum ServerMsg {
         spawn: [f32; 3],
         admin: bool,
         moderator: bool,
+        /// Server build identifier (GIT_SHA when deployed, else the crate version), shown in the debug panel.
+        version: String,
     },
     /// The hot per-tick message, encoded as compactly as possible: single-letter keys and each player
     /// and creature is a fixed-order number array (see `PlayerState`/`CreatureState`) instead of named

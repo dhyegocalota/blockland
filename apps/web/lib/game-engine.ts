@@ -81,6 +81,9 @@ interface GameWindow extends Window {
 
 export type { DebugSnapshot } from './engine/debug-snapshot';
 
+// Web build identifier shown in the debug panel — the deploy's short commit SHA, "dev" when running locally.
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? 'dev';
+
 // The admin command surface shared by the in-game engine and the headless lobby connection, so the
 // same useRoomAdmin dispatch drives both.
 export interface RoomAdminApi {
@@ -420,7 +423,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       x: player.pos.x, y: player.pos.y, z: player.pos.z,
       chunks: chunkMeshes.size,
       tenant: brand.id,
-      coop: coop ? { ping: coop.ping, state: coop.state, onlineCount: coop.onlineCount } : null,
+      frontVersion: APP_VERSION,
+      coop: coop ? { ping: coop.ping, state: coop.state, onlineCount: coop.onlineCount, backendVersion: coop.backendVersion } : null,
     });
   }
   bridge?.bind({

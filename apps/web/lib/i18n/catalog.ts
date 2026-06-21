@@ -239,6 +239,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'debug.pos': 'Posição',
     'debug.chunks': 'Chunks',
     'debug.tenant': 'Tenant',
+    'debug.front_version': 'Front',
+    'debug.back_version': 'Backend',
 
     // Errors
     'error.connect': '😕 Não consegui carregar o mundo. Verifique sua conexão e tente de novo.',
@@ -595,6 +597,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'debug.pos': 'Position',
     'debug.chunks': 'Chunks',
     'debug.tenant': 'Tenant',
+    'debug.front_version': 'Front',
+    'debug.back_version': 'Backend',
 
     // Errors
     'error.connect': "😕 Couldn't load the world. Check your connection and try again.",

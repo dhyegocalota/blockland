@@ -196,6 +196,12 @@ pub struct Room {
     approval_required: bool,
 }
 
+/// The server build identifier shown in the in-game debug panel: the deploy's `GIT_SHA` when set,
+/// otherwise the crate version baked in at compile time.
+fn server_version() -> String {
+    std::env::var("GIT_SHA").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+}
+
 /// Which per-tenant moderation flag a write-through targets.
 enum TenantFlag {
     Suspended,
@@ -208,8 +214,8 @@ const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
 const STATUS_EVERY_TICKS: u64 = 15; // 0.5s @ 30Hz
 const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
 const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
-// Snapshot coordinates are rounded to centimeter precision before going on the wire: full f32
-// precision bloats every number with digits the client can't perceive (interpolation is fine at 1cm).
+                              // Snapshot coordinates are rounded to centimeter precision before going on the wire: full f32
+                              // precision bloats every number with digits the client can't perceive (interpolation is fine at 1cm).
 const SNAPSHOT_DECIMALS: f32 = 100.0;
 
 impl Room {
@@ -557,6 +563,7 @@ impl Room {
             spawn,
             admin: role.is_admin(),
             moderator: role.is_moderator(),
+            version: server_version(),
         };
         let _ = conn.try_send(welcome);
         // Hand the joining player the world that has already been built.

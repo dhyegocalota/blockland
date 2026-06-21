@@ -189,6 +189,7 @@ export interface CoopController {
   readonly state: NetState;
   readonly onlineCount: number;
   readonly isAdmin: boolean;
+  readonly backendVersion: string;
   close(): void;
 }
 
@@ -200,6 +201,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
   const identities = new Map<number, Appearance & { name: string }>();
   let selfId: number | null = null;
+  let backendVersion = '';
   let lastMoveSentAt = 0;
   let onlineCount = 0;
   let selfPing = 0;
@@ -427,6 +429,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     handlers: {
       onState: (state) => opts.hud.onState(state),
       onWelcome: (msg) => {
+        backendVersion = msg.version;
         selfId = msg.you;
         admin = msg.admin;
         opts.onSpawn(msg.spawn[0], msg.spawn[1], msg.spawn[2]);
@@ -716,6 +719,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     get isAdmin(): boolean {
       return admin;
+    },
+    get backendVersion(): string {
+      return backendVersion;
     },
     get infinite(): boolean {
       return infinite;

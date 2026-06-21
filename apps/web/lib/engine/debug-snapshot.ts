@@ -14,19 +14,22 @@ export interface DebugSnapshot {
   z: number;
   chunks: number;
   tenant: string;
+  frontVersion: string;
+  backendVersion: string;
 }
 
 export interface CoopStatus {
   ping: number;
   state: string;
   onlineCount: number;
+  backendVersion: string;
 }
 
 export const OFFLINE_STATE = 'offline';
 export const OFFLINE_ONLINE = 1;
 
 export function buildDebugSnapshot({
-  fps, x, y, z, chunks, tenant, coop,
+  fps, x, y, z, chunks, tenant, frontVersion, coop,
 }: {
   fps: number;
   x: number;
@@ -34,6 +37,7 @@ export function buildDebugSnapshot({
   z: number;
   chunks: number;
   tenant: string;
+  frontVersion: string;
   coop: CoopStatus | null;
 }): DebugSnapshot {
   const base = {
@@ -41,7 +45,10 @@ export function buildDebugSnapshot({
     x: roundCoordinate(x), y: roundCoordinate(y), z: roundCoordinate(z),
     chunks,
     tenant,
+    frontVersion,
   };
-  if (!coop) return { ...base, ping: 0, state: OFFLINE_STATE, online: OFFLINE_ONLINE };
-  return { ...base, ping: coop.ping, state: coop.state, online: coop.onlineCount };
+  if (!coop) {
+    return { ...base, ping: 0, state: OFFLINE_STATE, online: OFFLINE_ONLINE, backendVersion: OFFLINE_STATE };
+  }
+  return { ...base, ping: coop.ping, state: coop.state, online: coop.onlineCount, backendVersion: coop.backendVersion };
 }

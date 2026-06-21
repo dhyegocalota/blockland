@@ -372,6 +372,8 @@ export default function Game() {
           <div><span>{t('debug.pos')}</span><b>{debugData.x.toFixed(2)}, {debugData.y.toFixed(2)}, {debugData.z.toFixed(2)}</b></div>
           <div><span>{t('debug.chunks')}</span><b>{debugData.chunks}</b></div>
           <div><span>{t('debug.tenant')}</span><b>{debugData.tenant}</b></div>
+          <div><span>{t('debug.front_version')}</span><b>{debugData.frontVersion}</b></div>
+          <div><span>{t('debug.back_version')}</span><b>{debugData.backendVersion}</b></div>
         </div>
       )}
 
