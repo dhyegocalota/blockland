@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bestScore, EMPTY_HEART, FULL_HEART, heartsLabel, roundCoordinate } from './scoreboard';
+import { bestScore, EMPTY_HEART, FULL_HEART, heartsLabel, persistedRecord, roundCoordinate } from './scoreboard';
 
 describe('heartsLabel', () => {
   it('fills the remaining hearts as empty', () => {
@@ -15,6 +15,17 @@ describe('bestScore', () => {
   it('keeps the higher of the run and the stored record', () => {
     expect(bestScore({ stars: 5, stored: 12 })).toBe(12);
     expect(bestScore({ stars: 20, stored: 12 })).toBe(20);
+  });
+});
+
+describe('persistedRecord', () => {
+  it('rises only with the server score, keeping the stored record otherwise', () => {
+    expect(persistedRecord({ serverScore: 8, stored: 5 })).toBe(8);
+    expect(persistedRecord({ serverScore: 3, stored: 5 })).toBe(5);
+  });
+
+  it('never exceeds the server score when the stored record matches it (no off-by-one)', () => {
+    expect(persistedRecord({ serverScore: 7, stored: 7 })).toBe(7);
   });
 });
 

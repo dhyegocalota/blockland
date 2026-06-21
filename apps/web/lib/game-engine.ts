@@ -27,7 +27,7 @@ import {
   chunkDistanceSquared, chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
 } from './engine/chunk-grid';
 import { STRUCTURE_KINDS, type StructureKind, structureReach, structureTarget } from './engine/structure-build';
-import { bestScore, heartsLabel, roundCoordinate } from './engine/scoreboard';
+import { bestScore, heartsLabel, persistedRecord, roundCoordinate } from './engine/scoreboard';
 import { STARTING_ROSTER, spawnPosition } from './engine/creature-spawn';
 import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './engine/creature-combat';
 import { chooseCoopTarget, chooseLocalTarget } from './engine/attack-target';
@@ -655,13 +655,14 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const stored = localStorage.getItem(BEST_KEY);
     return stored ? Number(stored) : 0;
   }
+  function recordServerScore(score: number): void {
+    localStorage.setItem(BEST_KEY, String(persistedRecord({ serverScore: score, stored: storedBest() })));
+  }
   function updateStats(): void {
     el('hearts').textContent = heartsLabel({ hearts: player.hearts, maxHearts: MAX_HEARTS });
     el('stars').textContent = `⭐ ${player.stars}`;
     el('bag').textContent = `🎒 ${player.bag}`;
-    const best = bestScore({ stars: player.stars, stored: storedBest() });
-    localStorage.setItem(BEST_KEY, String(best));
-    el('record').textContent = `🏆 ${best}`;
+    el('record').textContent = `🏆 ${bestScore({ stars: player.stars, stored: storedBest() })}`;
   }
 
   // ---------- Voxel raycast (DDA) ----------
@@ -1120,6 +1121,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       ...bridge.hud,
       onScore: (score) => {
         player.stars = score;
+        recordServerScore(score);
         updateStats();
         bridge.hud.onScore(score);
       },
