@@ -490,6 +490,18 @@ input, textarea, select { font-size: max(16px, 1em); }
 #adminReset.armed { background: rgba(255,46,46,.85); border-color: #fff; }
 #adminReset:active { transform: translateY(2px); }
 
+/* Lobby room-admin panel: the same controls the in-game #adminPanel uses (so they reuse those button
+   ids/styles), nested in a dark glass card that sits inside the light start panel. */
+#lobbyAdmin {
+  width: 100%; display: flex; flex-direction: column; gap: 8px;
+  background: rgba(20,12,40,.78); border: 3px solid var(--gold); border-radius: 18px; padding: 12px 14px;
+}
+#lobbyAdmin.connecting { align-items: center; color: #cbb8ff; font-weight: 800; font-size: 13px; }
+#lobbyAdmin .lobbyAdminTitle {
+  color: #fff; font-weight: 900; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; text-align: center;
+}
+#lobbyAdminBody { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow-y: auto; }
+
 /* On phones the centered top bar used to wrap into a tall column that the side panels collided with.
    Keep it to a single compact row so the presence + admin panels sit clear just below it. */
 @media (max-width: 640px) {

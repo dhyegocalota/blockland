@@ -87,12 +87,9 @@ export interface DebugSnapshot {
   tenant: string;
 }
 
-// The bridge connects the React HUD to the engine: the HUD supplies the player name (resolved at
-// connect time so late edits to the name field count) and receives net status / chat updates; the
-// engine exposes chat sending and a live debug snapshot for F3.
-// The control surface the engine binds back to the React HUD: chat, admin commands, debug snapshot.
-export interface GameApi {
-  sendChat(text: string): void;
+// The admin command surface shared by the in-game engine and the headless lobby connection, so the
+// same useRoomAdmin dispatch drives both.
+export interface RoomAdminApi {
   setAdminPeace(on: boolean): void;
   setAdminStructure(kind: string, allowed: boolean): void;
   setAdminPvp(on: boolean): void;
@@ -101,6 +98,14 @@ export interface GameApi {
   banPlayer(id: number): void;
   resetWorld(): void;
   setRole(id: number, role: Role): void;
+}
+
+// The bridge connects the React HUD to the engine: the HUD supplies the player name (resolved at
+// connect time so late edits to the name field count) and receives net status / chat updates; the
+// engine exposes chat sending and a live debug snapshot for F3.
+// The control surface the engine binds back to the React HUD: chat, admin commands, debug snapshot.
+export interface GameApi extends RoomAdminApi {
+  sendChat(text: string): void;
   setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
   debugSnapshot(): DebugSnapshot;

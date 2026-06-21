@@ -6,6 +6,7 @@ import { type FeedEntry, type FeedEventKind } from '../lib/feed';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
+import LobbyAdmin from './LobbyAdmin';
 import { useGame } from './use-game';
 
 const AUTHOR_URL = 'https://dhyegocalota.com.br';
@@ -67,6 +68,7 @@ export default function Game() {
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
+    lobby,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
@@ -414,6 +416,8 @@ export default function Game() {
 
         <div className="startPanel">
           <LobbyPresence tenant={brand.id} />
+
+          {(lobbyAdmin || lobbyModerator) && <LobbyAdmin lobby={lobby} />}
 
           <label id="nameField">
             {t('start.name_label')}

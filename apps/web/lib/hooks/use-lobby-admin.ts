@@ -1,0 +1,87 @@
+'use client';
+
+// Headless lobby admin connection: opens a NetClient (no three.js, no rendering) so a logged-in
+// admin/moderator can manage their world from the start screen — the same admin commands and
+// room/roster updates the in-game panel uses, without joining the 3D world. Reuses useRoomAdmin for
+// the dispatch + two-step reset; the NetClient is adapted into its RoomAdminApi via lobbyAdminApi.
+import { useEffect, useRef, useState } from 'react';
+import { loadSession } from '../session';
+import { createNet, type NetClient, type NetState } from '../net';
+import { MAIN_WORLD, type Appearance, type RoomState, type RosterEntry } from '../coop';
+import type { RoomAdminApi } from '../game-engine';
+import { lobbyAdminApi } from '../lobby-admin-api';
+import { useRoomAdmin } from './use-room-admin';
+import { debug } from '../log';
+
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL;
+
+interface LobbyAdminParams {
+  tenant: string | null;
+  name: string;
+  look: Appearance;
+  active: boolean;
+}
+
+export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) {
+  const apiRef = useRef<RoomAdminApi | null>(null);
+  const admin = useRoomAdmin(apiRef);
+  const { setRoom, setIsAdmin, setIsModerator } = admin;
+  const [state, setState] = useState<NetState | null>(null);
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
+
+  useEffect(() => {
+    if (!active) return;
+    if (!tenant) return;
+    if (!SERVER_URL) return;
+    const session = loadSession();
+    if (!session || session.tenant !== tenant) return;
+    if (session.is_admin !== true && session.is_moderator !== true) return;
+
+    let selfId: number | null = null;
+    const net: NetClient = createNet({
+      url: SERVER_URL,
+      tenant,
+      world: MAIN_WORLD,
+      name,
+      skin: look.skin,
+      shirt: look.shirt,
+      hair: look.hair,
+      claim: session.claim,
+      reconnect: false,
+      handlers: {
+        onState: (next) => setState(next),
+        onWelcome: (msg) => {
+          selfId = msg.you;
+          setIsAdmin(msg.admin);
+          setIsModerator(msg.moderator);
+          debug('lobby-admin', 'welcome', { you: msg.you, admin: msg.admin, moderator: msg.moderator });
+        },
+        onSnapshot: (msg) => {
+          setRoster(msg.players.map((p) => ({ id: p.id, name: p.name, self: p.id === selfId })));
+        },
+        onRoomState: (msg) => {
+          setRoom({
+            peace: msg.peace,
+            blockedStructures: msg.blocked_structures,
+            pvp: msg.pvp,
+            chatEnabled: msg.chat_enabled,
+          });
+        },
+        onRole: (msg) => { setIsAdmin(msg.admin); setIsModerator(msg.moderator); },
+      },
+    });
+    apiRef.current = lobbyAdminApi(net);
+    net.connect();
+    debug('lobby-admin', 'connecting', { tenant, name });
+    return () => {
+      net.close();
+      apiRef.current = null;
+      setState(null);
+      setRoster([]);
+    };
+  }, [active, tenant, name, look.skin, look.shirt, look.hair, setRoom, setIsAdmin, setIsModerator]);
+
+  return { ...admin, state, roster };
+}
+
+export type LobbyRoomState = RoomState;

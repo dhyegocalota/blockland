@@ -15,6 +15,7 @@ import { CHAT_FADE_MS } from '../lib/chat';
 import { useChat } from '../lib/hooks/use-chat';
 import { useFeed } from '../lib/hooks/use-feed';
 import { useRoomAdmin } from '../lib/hooks/use-room-admin';
+import { useLobbyAdmin } from '../lib/hooks/use-lobby-admin';
 import type { NetState } from '../lib/net';
 
 const NAME_KEY = 'bl-name';
@@ -68,6 +69,7 @@ export function useGame() {
   const [lobbyModerator, setLobbyModerator] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
   const [infiniteResources, setInfiniteResources] = useState(true);
+  const [started, setStarted] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
   const soloRef = useRef(false);
@@ -79,6 +81,13 @@ export function useGame() {
     resetArmed, resetWorld, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, setRole,
   } = useRoomAdmin(gameApiRef);
+  const lobbyAdminActive = (lobbyAdmin || lobbyModerator) && !solo && !offline && !started;
+  const lobby = useLobbyAdmin({
+    tenant: brand ? brand.id : null,
+    name,
+    look,
+    active: lobbyAdminActive,
+  });
   const {
     lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
     inputRef: chatInputRef, openChat, sendChat, closeChat, pushChatLine,
@@ -224,6 +233,18 @@ export function useGame() {
     return () => playBtn.removeEventListener('click', gate, { capture: true });
   }, [brand, needsLogin]);
 
+  // Play actually starting the game tears down the headless lobby admin connection so it never
+  // collides with the in-game coop socket on the same claim. The gate above stops propagation when a
+  // login is still needed, so this bubble-phase listener only fires when the engine truly boots.
+  useEffect(() => {
+    if (!brand) return;
+    const playBtn = document.getElementById('playBtn');
+    if (!playBtn) return;
+    function onStart(): void { setStarted(true); }
+    playBtn.addEventListener('click', onStart);
+    return () => playBtn.removeEventListener('click', onStart);
+  }, [brand]);
+
   useEffect(() => {
     if (!brand) return;
     const session = loadSession();
@@ -353,6 +374,7 @@ export function useGame() {
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
+    lobby,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
