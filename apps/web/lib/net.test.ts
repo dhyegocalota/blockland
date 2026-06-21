@@ -105,15 +105,27 @@ describe('net client', () => {
     expect(states).toEqual(['connecting', 'online']);
   });
 
-  it('receiving a snapshot calls onSnapshot', () => {
+  it('decodes a compact numeric snapshot into the named shape', () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
     socket.receive(welcome);
 
-    socket.receive({ t: 'snapshot', tick: 5, players: [] });
-    expect(snapshots).toEqual([{ t: 'snapshot', tick: 5, players: [] }]);
+    socket.receive({
+      t: 'snapshot',
+      k: 5,
+      p: [[1, 2.5, 3, 4, 0.1, 0.2, 30, 7, 3]],
+      c: [[9, 3, 10, 11, 12, 1.5, 2, 4]],
+    });
+    expect(snapshots).toEqual([
+      {
+        t: 'snapshot',
+        tick: 5,
+        players: [{ id: 1, x: 2.5, y: 3, z: 4, yaw: 0.1, pitch: 0.2, ping_ms: 30, score: 7, hp: 3 }],
+        creatures: [{ id: 9, kind: 'slime', x: 10, y: 11, z: 12, yaw: 1.5, hp: 2, max_hp: 4 }],
+      },
+    ]);
   });
 
   it('routes edit_batch to onEditBatch and serializes sendEditBatch', () => {

@@ -160,10 +160,16 @@ pub enum ServerMsg {
         admin: bool,
         moderator: bool,
     },
+    /// The hot per-tick message, encoded as compactly as possible: single-letter keys and each player
+    /// and creature is a fixed-order number array (see `PlayerState`/`CreatureState`) instead of named
+    /// fields. `k` = tick, `p` = players, `c` = creatures. The client decodes it at the net boundary.
     Snapshot {
+        #[serde(rename = "k")]
         #[ts(type = "number")]
         tick: u64,
+        #[serde(rename = "p")]
         players: Vec<PlayerState>,
+        #[serde(rename = "c")]
         creatures: Vec<CreatureState>,
     },
     Edit {
@@ -265,33 +271,37 @@ pub struct PlayerMeta {
     pub hair: String,
 }
 
-/// One player's per-tick dynamics. Identity (name/skin/shirt/hair) is sent separately via `Roster`.
+/// One player's per-tick dynamics as a fixed-order number array (no field names, to keep the hot
+/// Snapshot tiny): `[id, x, y, z, yaw, pitch, ping_ms, score, hp]`. Identity (name/skin/shirt/hair)
+/// is sent separately via `Roster`. The client decodes the index order back into named fields.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct PlayerState {
-    pub id: u32,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub yaw: f32,
-    pub pitch: f32,
-    pub ping_ms: u32,
-    pub score: u32,
-    pub hp: u8,
-}
+pub struct PlayerState(
+    pub u32,
+    pub f32,
+    pub f32,
+    pub f32,
+    pub f32,
+    pub f32,
+    pub u32,
+    pub u32,
+    pub u8,
+);
 
-/// A server-simulated creature every client renders identically. `hp` of 0 never appears (it is
-/// removed on death); `kind` is a slug like "pig"/"slime" the client maps to a model.
+/// A server-simulated creature every client renders identically, as a fixed-order number array:
+/// `[id, kind_index, x, y, z, yaw, hp, max_hp]`. `kind_index` is the position in the shared kind
+/// table (pig=0, chicken=1, cow=2, slime=3, spider=4); the client maps it back to a model. `hp` of 0
+/// never appears (it is removed on death).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct CreatureState {
-    pub id: u32,
-    pub kind: String,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub yaw: f32,
-    pub hp: u8,
-    pub max_hp: u8,
-}
+pub struct CreatureState(
+    pub u32,
+    pub u8,
+    pub f32,
+    pub f32,
+    pub f32,
+    pub f32,
+    pub u8,
+    pub u8,
+);
 
 /// One account awaiting an admin's approval before it can join (name + email for the admin to recognize).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -307,6 +317,115 @@ pub struct Brand {
     pub name: String,
     pub primary: String,
     pub logo: Option<String>,
+}
+
+#[cfg(test)]
+mod snapshot_size {
+    use super::*;
+
+    /// The number of decimals snapshot coordinates are rounded to before going on the wire (the server
+    /// does the rounding); the named baseline below uses the same rounded values for a fair comparison.
+    const DECIMALS: usize = 2;
+    /// The shared creature kind table (mirrors the server `CreatureKind::ALL`), used only to rebuild
+    /// the old slug-carrying named baseline for the size comparison.
+    const KIND_SLUGS: [&str; 5] = ["pig", "chicken", "cow", "slime", "spider"];
+
+    fn sample_snapshot() -> ServerMsg {
+        let players = (0..10)
+            .map(|i| {
+                PlayerState(
+                    i,
+                    round(i as f32 * 1.37 + 12.5),
+                    round(64.25),
+                    round(i as f32 * -2.11 - 8.0),
+                    round(i as f32 * 0.31),
+                    round(0.05),
+                    20 + i,
+                    i * 3,
+                    3,
+                )
+            })
+            .collect();
+        let creatures = (0..20)
+            .map(|i| {
+                CreatureState(
+                    100 + i,
+                    (i % 5) as u8,
+                    round(i as f32 * 0.9 - 30.0),
+                    round(63.5),
+                    round(i as f32 * 1.4 + 5.0),
+                    round(i as f32 * 0.2),
+                    2,
+                    3,
+                )
+            })
+            .collect();
+        ServerMsg::Snapshot {
+            tick: 1_234,
+            players,
+            creatures,
+        }
+    }
+
+    fn round(value: f32) -> f32 {
+        let scale = 10f32.powi(DECIMALS as i32);
+        (value * scale).round() / scale
+    }
+
+    /// Rebuild the same snapshot in the OLD named-field JSON shape, to measure what the compact numeric
+    /// encoding saves. Mirrors the pre-change wire (objects with `id`/`x`/.../`hp` and `kind` slugs).
+    fn named_baseline_bytes(msg: &ServerMsg) -> usize {
+        let ServerMsg::Snapshot {
+            tick,
+            players,
+            creatures,
+        } = msg
+        else {
+            unreachable!()
+        };
+        let players: Vec<_> = players
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.0, "x": p.1, "y": p.2, "z": p.3, "yaw": p.4,
+                    "pitch": p.5, "ping_ms": p.6, "score": p.7, "hp": p.8,
+                })
+            })
+            .collect();
+        let creatures: Vec<_> = creatures
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "id": c.0, "kind": KIND_SLUGS[c.1 as usize], "x": c.2, "y": c.3,
+                    "z": c.4, "yaw": c.5, "hp": c.6, "max_hp": c.7,
+                })
+            })
+            .collect();
+        let named = serde_json::json!({
+            "t": "snapshot", "tick": tick, "players": players, "creatures": creatures,
+        });
+        serde_json::to_string(&named).unwrap().len()
+    }
+
+    /// The compact numeric snapshot for 10 players + 20 creatures must stay tiny and be materially
+    /// smaller than the old named-field JSON. Measured (this build): compact 1075 B vs named 3816 B
+    /// (~28%). The bounds below leave headroom while guarding against an accidental shape regression.
+    #[test]
+    fn numeric_snapshot_is_far_smaller_than_named_json() {
+        let msg = sample_snapshot();
+        let compact = serde_json::to_string(&msg).unwrap();
+        let compact_bytes = compact.len();
+        let named_bytes = named_baseline_bytes(&msg);
+
+        assert!(
+            compact_bytes < 1_200,
+            "compact snapshot grew past its bound: {compact_bytes} bytes\n{compact}"
+        );
+        assert!(
+            compact_bytes * 100 < named_bytes * 55,
+            "compact {compact_bytes} B is not < 55% of named {named_bytes} B"
+        );
+    }
 }
 
 #[cfg(test)]

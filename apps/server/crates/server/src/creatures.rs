@@ -81,6 +81,18 @@ impl CreatureKind {
         }
     }
 
+    /// Compact wire index into the fixed kind table (`ALL` order), so the per-tick snapshot carries a
+    /// small integer instead of the slug string. The client maps it back via the same table.
+    pub fn index(self) -> u8 {
+        match self {
+            Self::Pig => 0,
+            Self::Chicken => 1,
+            Self::Cow => 2,
+            Self::Slime => 3,
+            Self::Spider => 4,
+        }
+    }
+
     /// Every kind, for spawning a varied population.
     pub const ALL: [CreatureKind; 5] = [
         Self::Pig,
@@ -225,6 +237,12 @@ mod tests {
     fn slugs_are_the_web_kinds() {
         let slugs: Vec<&str> = CreatureKind::ALL.iter().map(|k| k.slug()).collect();
         assert_eq!(slugs, ["pig", "chicken", "cow", "slime", "spider"]);
+    }
+
+    #[test]
+    fn index_is_the_position_in_the_kind_table() {
+        let indices: Vec<u8> = CreatureKind::ALL.iter().map(|k| k.index()).collect();
+        assert_eq!(indices, [0, 1, 2, 3, 4]);
     }
 
     #[test]

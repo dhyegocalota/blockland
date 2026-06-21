@@ -67,9 +67,9 @@ describe('protocol factories', () => {
     expect(JSON.parse(encodeClientMsg(msg))).toEqual(msg);
   });
 
-  it('parses a server snapshot', () => {
-    const snap = parseServerMsg('{"t":"snapshot","tick":5,"players":[]}');
+  it('parses a compact server snapshot', () => {
+    const snap = parseServerMsg('{"t":"snapshot","k":5,"p":[],"c":[]}');
     expect(snap.t).toBe('snapshot');
-    if (snap.t === 'snapshot') expect(snap.tick).toBe(5);
+    if (snap.t === 'snapshot') expect(snap.k).toBe(5);
   });
 });

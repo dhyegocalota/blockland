@@ -52,8 +52,55 @@ export type NetState =
   | 'time_up'
   | 'needs_approval';
 
+// The per-tick Snapshot travels as a compact numeric array (no field names) to keep it tiny; this
+// module decodes it back into the named shape the rest of the client consumes, so only net.ts knows
+// the index order and the kind table. Index order mirrors `PlayerState`/`CreatureState` in the Rust
+// protocol crate, and the kind table mirrors `CreatureKind::ALL` (the `index()` the server emits).
+const CREATURE_KINDS = ['pig', 'chicken', 'cow', 'slime', 'spider'] as const;
+
+export interface SnapshotPlayer {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  ping_ms: number;
+  score: number;
+  hp: number;
+}
+
+export interface SnapshotCreature {
+  id: number;
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  hp: number;
+  max_hp: number;
+}
+
+export interface SnapshotMsg {
+  t: 'snapshot';
+  tick: number;
+  players: SnapshotPlayer[];
+  creatures: SnapshotCreature[];
+}
+
+function decodeSnapshot(msg: Extract<ServerMsg, { t: 'snapshot' }>): SnapshotMsg {
+  const players: SnapshotPlayer[] = msg.p.map(
+    ([id, x, y, z, yaw, pitch, ping_ms, score, hp]) => ({ id, x, y, z, yaw, pitch, ping_ms, score, hp }),
+  );
+  const creatures: SnapshotCreature[] = msg.c.map(([id, kindIndex, x, y, z, yaw, hp, max_hp]) => {
+    const kind = CREATURE_KINDS[kindIndex];
+    if (!kind) throw new Error(`unknown creature kind index ${kindIndex}`);
+    return { id, kind, x, y, z, yaw, hp, max_hp };
+  });
+  return { t: 'snapshot', tick: msg.k, players, creatures };
+}
+
 type WelcomeMsg = Extract<ServerMsg, { t: 'welcome' }>;
-type SnapshotMsg = Extract<ServerMsg, { t: 'snapshot' }>;
 type EditMsg = Extract<ServerMsg, { t: 'edit' }>;
 type EditBatchMsg = Extract<ServerMsg, { t: 'edit_batch' }>;
 type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
@@ -191,7 +238,7 @@ export function createNet(opts: NetOptions): NetClient {
       return;
     }
     if (msg.t === 'snapshot') {
-      opts.handlers.onSnapshot?.(msg);
+      opts.handlers.onSnapshot?.(decodeSnapshot(msg));
       return;
     }
     if (msg.t === 'edit') {

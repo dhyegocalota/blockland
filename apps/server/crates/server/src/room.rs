@@ -208,6 +208,9 @@ const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
 const STATUS_EVERY_TICKS: u64 = 15; // 0.5s @ 30Hz
 const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
 const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
+// Snapshot coordinates are rounded to centimeter precision before going on the wire: full f32
+// precision bloats every number with digits the client can't perceive (interpolation is fine at 1cm).
+const SNAPSHOT_DECIMALS: f32 = 100.0;
 
 impl Room {
     pub fn new(
@@ -1534,34 +1537,39 @@ impl Room {
         // Maintain and advance the creature population before snapshotting it.
         self.simulate_creatures(dt);
 
-        // Broadcast the world snapshot.
+        // Broadcast the world snapshot. Each state is a fixed-order number array (see protocol) so the
+        // hot per-tick payload carries no field names; coordinates are rounded to keep the digits small.
         let states: Vec<PlayerState> = self
             .players
             .values()
-            .map(|p| PlayerState {
-                id: p.id,
-                x: p.x,
-                y: p.y,
-                z: p.z,
-                yaw: p.yaw,
-                pitch: p.pitch,
-                ping_ms: p.ping_ms,
-                score: p.score,
-                hp: p.hp,
+            .map(|p| {
+                PlayerState(
+                    p.id,
+                    round_snapshot(p.x),
+                    round_snapshot(p.y),
+                    round_snapshot(p.z),
+                    round_snapshot(p.yaw),
+                    round_snapshot(p.pitch),
+                    p.ping_ms,
+                    p.score,
+                    p.hp,
+                )
             })
             .collect();
         let creatures: Vec<CreatureState> = self
             .creatures
             .iter()
-            .map(|c| CreatureState {
-                id: c.id,
-                kind: c.kind.slug().to_string(),
-                x: c.pos[0],
-                y: c.pos[1],
-                z: c.pos[2],
-                yaw: c.yaw,
-                hp: c.hp,
-                max_hp: c.max_hp,
+            .map(|c| {
+                CreatureState(
+                    c.id,
+                    c.kind.index(),
+                    round_snapshot(c.pos[0]),
+                    round_snapshot(c.pos[1]),
+                    round_snapshot(c.pos[2]),
+                    round_snapshot(c.yaw),
+                    c.hp,
+                    c.max_hp,
+                )
             })
             .collect();
         let snap = ServerMsg::Snapshot {
@@ -1924,6 +1932,11 @@ fn sanitize_color(raw: &str, default: &str) -> String {
     } else {
         default.to_string()
     }
+}
+
+/// Round a snapshot coordinate to centimeter precision so the wire number stays short.
+fn round_snapshot(value: f32) -> f32 {
+    (value * SNAPSHOT_DECIMALS).round() / SNAPSHOT_DECIMALS
 }
 
 /// Horizontal distance from a creature position to its nearest player; `f32::MAX` when none exist.
