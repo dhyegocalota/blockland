@@ -5,9 +5,11 @@
 
 import { debug } from './log';
 import {
+  adminApprove,
   adminBan,
   adminKick,
   adminResetWorld,
+  adminSetApproval,
   adminSetChat,
   adminSetPeace,
   adminSetPvp,
@@ -42,7 +44,8 @@ export type NetState =
   | 'offline'
   | 'banned'
   | 'kicked'
-  | 'room_closed';
+  | 'room_closed'
+  | 'needs_approval';
 
 type WelcomeMsg = Extract<ServerMsg, { t: 'welcome' }>;
 type SnapshotMsg = Extract<ServerMsg, { t: 'snapshot' }>;
@@ -51,6 +54,7 @@ type EditBatchMsg = Extract<ServerMsg, { t: 'edit_batch' }>;
 type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
 type EventMsg = Extract<ServerMsg, { t: 'event' }>;
 type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
+type PendingApprovalsMsg = Extract<ServerMsg, { t: 'pending_approvals' }>;
 type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
@@ -65,6 +69,7 @@ export interface NetHandlers {
   onChat?(msg: ChatMsg): void;
   onEvent?(msg: EventMsg): void;
   onRoomState?(msg: RoomStateMsg): void;
+  onPendingApprovals?(msg: PendingApprovalsMsg): void;
   onHurt?(msg: HurtMsg): void;
   onRole?(msg: RoleMsg): void;
   onAttack?(msg: AttackMsg): void;
@@ -115,6 +120,8 @@ export interface NetClient {
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminSetRole(id: number, role: Role): void;
+  sendAdminSetApproval(on: boolean): void;
+  sendAdminApprove(accountId: string): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -194,6 +201,10 @@ export function createNet(opts: NetOptions): NetClient {
       opts.handlers.onRoomState?.(msg);
       return;
     }
+    if (msg.t === 'pending_approvals') {
+      opts.handlers.onPendingApprovals?.(msg);
+      return;
+    }
     if (msg.t === 'hurt') {
       opts.handlers.onHurt?.(msg);
       return;
@@ -231,6 +242,8 @@ export function createNet(opts: NetOptions): NetClient {
     room_closed: 'room_closed',
     reclaimed: 'kicked',
     claim_required: 'kicked',
+    needs_login: 'kicked',
+    needs_approval: 'needs_approval',
   };
 
   function handleError(code: string, message: string): void {
@@ -344,6 +357,12 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminSetRole(id, role): void {
       rawSend(encodeClientMsg(adminSetRole(id, role)));
+    },
+    sendAdminSetApproval(on): void {
+      rawSend(encodeClientMsg(adminSetApproval(on)));
+    },
+    sendAdminApprove(accountId): void {
+      rawSend(encodeClientMsg(adminApprove(accountId)));
     },
     get ping(): number {
       return ping;

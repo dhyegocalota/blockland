@@ -22,6 +22,7 @@
 //!   POST   /internal/auth/rename         rename a logged-in account: { tenant, claim, newName } -> { ok, name } | { ok:false, error }
 //!   POST   /internal/waitlist            join the pre-launch waitlist: { email, name?, phone? } -> { ok }
 
+mod approvals;
 mod auth;
 mod bans;
 mod conn;
@@ -29,6 +30,7 @@ mod creatures;
 mod db;
 mod hub;
 mod internal_auth;
+mod notify;
 mod persistence;
 mod room;
 mod storage;

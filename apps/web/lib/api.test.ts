@@ -36,6 +36,23 @@ describe('api signer', () => {
   });
 });
 
+describe('verifyInternalSignature', () => {
+  it('accepts a fresh, correctly signed request and rejects a tampered one', () => {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const params = { method: 'POST', path: '/api/internal/approval-notify', ts, nonce: 'abc', body: '{"name":"Kid"}' };
+    const signature = api.sign(params);
+    expect(api.verifyInternalSignature({ ...params, signature })).toBe(true);
+    expect(api.verifyInternalSignature({ ...params, signature, body: '{"name":"Other"}' })).toBe(false);
+  });
+
+  it('rejects a stale timestamp', () => {
+    const ts = (Math.floor(Date.now() / 1000) - 120).toString();
+    const params = { method: 'POST', path: '/api/internal/approval-notify', ts, nonce: 'abc', body: '{}' };
+    const signature = api.sign(params);
+    expect(api.verifyInternalSignature({ ...params, signature })).toBe(false);
+  });
+});
+
 describe('signedFetch', () => {
   it('sets the three signing headers and hits the right URL', async () => {
     const fetchMock = vi

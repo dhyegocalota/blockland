@@ -250,6 +250,46 @@ describe('net client', () => {
     expect(states).toEqual([incoming]);
   });
 
+  it('routes pending_approvals to onPendingApprovals', () => {
+    const lists: unknown[] = [];
+    const { client } = makeClient({ handlers: { onPendingApprovals: (m) => lists.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const incoming = { t: 'pending_approvals', pending: [{ account_id: 'a1', name: 'Kid', email: 'kid@x.com' }] };
+    socket.receive(incoming);
+    expect(lists).toEqual([incoming]);
+  });
+
+  it('a needs_approval error is terminal and does not reconnect', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'error', code: 'needs_approval', msg: 'waiting' });
+    expect(client.state).toBe('needs_approval');
+    socket.serverClose();
+    vi.runAllTimers();
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it('serializes admin approval toggle and approve messages', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    client.sendAdminSetApproval(true);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_approval', on: true }));
+    client.sendAdminApprove('acc1');
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_approve', account_id: 'acc1' }));
+  });
+
   it('routes hurt to onHurt', () => {
     const hits: unknown[] = [];
     const { client } = makeClient({ handlers: { onHurt: (m) => hits.push(m) } });

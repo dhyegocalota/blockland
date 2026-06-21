@@ -143,6 +143,14 @@ pub struct TimelineEvent {
     pub detail: String,
 }
 
+/// One account waiting for an admin to let it into a tenant whose approval gate is on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingApproval {
+    pub account_id: String,
+    pub name: String,
+    pub email: String,
+}
+
 /// Owns the libSQL handle. Cloneable connections are cheap; we hold the `Database` so the
 /// file stays open for the process lifetime.
 pub struct Db {
@@ -270,6 +278,32 @@ impl Db {
                     name TEXT NOT NULL,
                     detail TEXT NOT NULL,
                     created_at INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        // An approved account (allowed in while the tenant's approval gate is on) is a row here.
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS approvals (
+                    tenant TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    approved_at INTEGER NOT NULL,
+                    PRIMARY KEY (tenant, account_id)
+                )",
+                (),
+            )
+            .await?;
+        // A not-yet-approved account that tried to join while the gate was on, awaiting an admin.
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS approval_requests (
+                    tenant TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    requested_at INTEGER NOT NULL,
+                    PRIMARY KEY (tenant, account_id)
                 )",
                 (),
             )
@@ -892,6 +926,112 @@ impl Db {
         Ok(out)
     }
 
+    /// Whether the account is approved to play in the tenant (only consulted when the gate is on).
+    pub async fn is_approved(
+        &self,
+        tenant: &str,
+        account_id: &str,
+    ) -> Result<bool, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT 1 FROM approvals WHERE tenant = ?1 AND account_id = ?2",
+                params![tenant, account_id],
+            )
+            .await?;
+        Ok(rows.next().await?.is_some())
+    }
+
+    /// Approve an account: insert it into `approvals` and drop any pending request. Idempotent.
+    pub async fn approve_account(
+        &self,
+        tenant: &str,
+        account_id: &str,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO approvals (tenant, account_id, approved_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(tenant, account_id) DO NOTHING",
+                params![tenant, account_id, now_ms()],
+            )
+            .await?;
+        self.clear_approval_request(tenant, account_id).await?;
+        Ok(())
+    }
+
+    /// Record (or refresh) a pending request from an account held out by the gate, for the admin list.
+    pub async fn record_approval_request(
+        &self,
+        tenant: &str,
+        account_id: &str,
+        name: &str,
+        email: &str,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO approval_requests (tenant, account_id, name, email, requested_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(tenant, account_id) DO UPDATE SET name = ?3, email = ?4, requested_at = ?5",
+                params![tenant, account_id, name, email, now_ms()],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn clear_approval_request(
+        &self,
+        tenant: &str,
+        account_id: &str,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "DELETE FROM approval_requests WHERE tenant = ?1 AND account_id = ?2",
+                params![tenant, account_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Every account still awaiting approval for a tenant, oldest-first, for the in-game admin list.
+    pub async fn pending_approvals(
+        &self,
+        tenant: &str,
+    ) -> Result<Vec<PendingApproval>, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT account_id, name, email FROM approval_requests
+                 WHERE tenant = ?1 ORDER BY requested_at ASC",
+                params![tenant],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(PendingApproval {
+                account_id: row.get::<String>(0)?,
+                name: row.get::<String>(1)?,
+                email: row.get::<String>(2)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Email addresses of a tenant's admins, so a held-out join can notify the grown-ups.
+    pub async fn tenant_admin_emails(&self, tenant: &str) -> Result<Vec<String>, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT email FROM accounts WHERE tenant = ?1 AND is_admin = 1 ORDER BY created_at ASC",
+                params![tenant],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row.get::<String>(0)?);
+        }
+        Ok(out)
+    }
+
     /// Record an interested parent on the pre-launch waitlist. Re-submitting the same email refreshes
     /// their name/phone instead of failing, so the public form is idempotent.
     pub async fn add_waitlist_entry(
@@ -1393,6 +1533,38 @@ mod tests {
             .map(|e| (e.name.as_str(), e.detail.as_str()))
             .collect();
         assert_eq!(pairs, vec![("Annie", "Ann"), ("AnnieB", "Annie")]);
+    }
+
+    #[tokio::test]
+    async fn approval_request_then_approve_clears_pending_and_marks_approved() {
+        let db = memory_db().await;
+        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        assert!(!db.is_approved("teo", &ann).await.unwrap());
+
+        db.record_approval_request("teo", &ann, "Ann", "ann@x.com")
+            .await
+            .unwrap();
+        let pending = db.pending_approvals("teo").await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].account_id, ann);
+
+        db.approve_account("teo", &ann).await.unwrap();
+        assert!(db.is_approved("teo", &ann).await.unwrap());
+        assert!(
+            db.pending_approvals("teo").await.unwrap().is_empty(),
+            "approving clears the pending request"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_admin_emails_lists_only_that_tenant_admins() {
+        let db = memory_db().await;
+        // The first account of a tenant is its admin.
+        let _admin = account(&db, "teo", "parent@x.com", "Parent").await;
+        let _kid = account(&db, "teo", "kid@x.com", "Kid").await;
+        let _other = account(&db, "demo", "zoe@x.com", "Zoe").await;
+        let emails = db.tenant_admin_emails("teo").await.unwrap();
+        assert_eq!(emails, vec!["parent@x.com".to_string()]);
     }
 
     #[tokio::test]

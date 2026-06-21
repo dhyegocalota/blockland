@@ -52,6 +52,13 @@ export interface RoomState {
   blockedStructures: string[];
   pvp: boolean;
   chatEnabled: boolean;
+  approvalRequired: boolean;
+}
+
+export interface PendingApproval {
+  accountId: string;
+  name: string;
+  email: string;
 }
 
 export interface CoopHud {
@@ -64,6 +71,7 @@ export interface CoopHud {
   onScore(score: number): void;
   onRole(role: { admin: boolean; moderator: boolean }): void;
   onRoomState(room: RoomState): void;
+  onPendingApprovals(pending: PendingApproval[]): void;
   onError(code: string): void;
 }
 
@@ -160,6 +168,8 @@ export interface CoopController {
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminSetRole(id: number, role: Role): void;
+  sendAdminSetApproval(on: boolean): void;
+  sendAdminApprove(accountId: string): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
@@ -481,10 +491,16 @@ export function createCoop(opts: CoopOptions): CoopController {
           blockedStructures: msg.blocked_structures,
           pvp: msg.pvp,
           chatEnabled: msg.chat_enabled,
+          approvalRequired: msg.approval_required,
         };
         opts.applyRoomState(room);
         opts.hud.onRoomState(room);
-        debug('coop', 'room state', { peace: msg.peace, blocked: msg.blocked_structures.length, pvp: msg.pvp, chat: msg.chat_enabled });
+        debug('coop', 'room state', { peace: msg.peace, blocked: msg.blocked_structures.length, pvp: msg.pvp, chat: msg.chat_enabled, approval: msg.approval_required });
+      },
+      onPendingApprovals: (msg) => {
+        const pending = msg.pending.map((p) => ({ accountId: p.account_id, name: p.name, email: p.email }));
+        opts.hud.onPendingApprovals(pending);
+        debug('coop', 'pending approvals', { count: pending.length });
       },
       onHurt: (msg) => {
         opts.applyHurt(msg.by);
@@ -583,6 +599,12 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminSetRole(id, role): void {
       net.sendAdminSetRole(id, role);
+    },
+    sendAdminSetApproval(on): void {
+      net.sendAdminSetApproval(on);
+    },
+    sendAdminApprove(accountId): void {
+      net.sendAdminApprove(accountId);
     },
     update(now): void {
       for (const avatar of avatars.values()) {

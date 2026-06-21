@@ -78,6 +78,7 @@ export function useGame() {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
     resetArmed, resetWorld, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, setRole,
+    pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer,
   } = useRoomAdmin(gameApiRef);
   const {
     lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
@@ -147,6 +148,7 @@ export function useGame() {
         onScore: () => undefined,
         onRole: (role) => { setIsAdmin(role.admin); setIsModerator(role.moderator); },
         onRoomState: (state) => setRoom(state),
+        onPendingApprovals: (pending) => setPendingApprovals(pending),
         onError: (code) => {
           const key = AUTH_ERROR_KEYS[code];
           if (key) setAuthToast(t(key));
@@ -160,7 +162,7 @@ export function useGame() {
       cleanup = mod.initGame(brand, bridge);
     });
     return () => { alive = false; if (cleanup) cleanup(); };
-  }, [brand, pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom]);
+  }, [brand, pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom, setPendingApprovals]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -356,6 +358,7 @@ export function useGame() {
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
+    pendingApprovals, toggleApprovalRequired, approvePlayer,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   };

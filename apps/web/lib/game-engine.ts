@@ -33,7 +33,7 @@ import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreatu
 import { chooseCoopTarget, chooseLocalTarget } from './engine/attack-target';
 import { groundHeight as groundHeightAt } from './engine/terrain-column';
 import { readJoystick } from './engine/joystick';
-import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer } from './coop';
+import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer, type RoomState } from './coop';
 import type { EditCell, EditOp, Role } from './protocol';
 
 interface Creature {
@@ -101,6 +101,8 @@ export interface GameApi {
   banPlayer(id: number): void;
   resetWorld(): void;
   setRole(id: number, role: Role): void;
+  setApprovalRequired(on: boolean): void;
+  approvePlayer(accountId: string): void;
   setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
   debugSnapshot(): DebugSnapshot;
@@ -330,6 +332,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   let peaceful = true;
   let pvp = false;
   let chatEnabled = true;
+  // Approval gate (server-authoritative, off by default). Offline there is no gate, so it stays false.
+  let approvalRequired = false;
   // Block resources: mining a block banks one of its kind, placing spends one. Infinite by default
   // (solo sandbox + admins build freely); a co-op join flips this off for non-admin players via
   // onAdmin, so only regular multiplayer players are constrained. Magic structures are exempt.
@@ -377,19 +381,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   // Room-wide settings (admin-controlled, server-authoritative): peace calms the local creatures for
   // everyone, and blocked structures disable those entries in the build menu.
-  function applyRoomState({ peace, blockedStructures: blocked, pvp: pvpOn, chatEnabled: chatOn }: { peace: boolean; blockedStructures: string[]; pvp: boolean; chatEnabled: boolean }): void {
+  function applyRoomState({ peace, blockedStructures: blocked, pvp: pvpOn, chatEnabled: chatOn, approvalRequired: approval }: RoomState): void {
     peaceful = peace;
     pvp = pvpOn;
     chatEnabled = chatOn;
+    approvalRequired = approval;
     blockedStructures.clear();
     for (const kind of blocked) blockedStructures.add(kind);
     syncBuildMenu();
-    debug('engine', 'room state applied', { peace, blocked: blocked.length, pvp: pvpOn, chat: chatOn });
+    debug('engine', 'room state applied', { peace, blocked: blocked.length, pvp: pvpOn, chat: chatOn, approval });
   }
   // Offline there is no server room: admin toggles mutate the local state directly and refresh the HUD
   // (online always routes through coop instead, so the two paths never mix).
-  const currentRoom = () => ({ peace: peaceful, blockedStructures: [...blockedStructures], pvp, chatEnabled });
-  function applyLocalRoom(next: { peace: boolean; blockedStructures: string[]; pvp: boolean; chatEnabled: boolean }): void {
+  const currentRoom = (): RoomState => ({ peace: peaceful, blockedStructures: [...blockedStructures], pvp, chatEnabled, approvalRequired });
+  function applyLocalRoom(next: RoomState): void {
     applyRoomState(next);
     bridge?.hud.onRoomState(next);
   }
@@ -430,6 +435,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     banPlayer: (id) => coop?.sendAdminBan(id),
     resetWorld: () => { if (coop) { coop.sendAdminResetWorld(); return; } resetLocalWorld(); },
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
+    setApprovalRequired: (on) => coop?.sendAdminSetApproval(on),
+    approvePlayer: (accountId) => coop?.sendAdminApprove(accountId),
     setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
     returnToSpawn: () => {
       if (coop) { coop.sendRespawn(); return; }
