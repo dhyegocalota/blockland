@@ -2,12 +2,15 @@
 // channel contract (METHOD\nPATH\nTS\nNONCE\nSHA256_HEX(BODY)) and proxies to the
 // backend; the browser never talks to the database directly.
 import 'server-only';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Tenant } from './builtins';
 
 const DEFAULT_API_URL = 'http://localhost:8080';
 const NONCE_BYTES = 16;
 const DEFAULT_TOP_LIMIT = 10;
+// The Rust server signs its inbound calls (e.g. approval notices) with the same scheme; reject
+// anything whose timestamp drifts past this, matching the server's MAX_CLOCK_SKEW_SECS.
+const MAX_CLOCK_SKEW_SECS = 30;
 
 export interface ScoreEntry {
   name: string;
@@ -50,6 +53,27 @@ export function sign(params: {
       : createHash('sha256').update(params.body).digest('hex');
   const canonical = [params.method, params.path, params.ts, params.nonce, bodyHash].join('\n');
   return createHmac('sha256', secret()).update(canonical, 'utf8').digest('hex');
+}
+
+// Verify an inbound request signed by the Rust server (the reverse of `sign`): the timestamp must be
+// fresh and the signature must match in constant time. Returns false on any mismatch.
+export function verifyInternalSignature(params: {
+  method: string;
+  path: string;
+  ts: string;
+  nonce: string;
+  signature: string;
+  body: string;
+}): boolean {
+  const timestamp = Number(params.ts);
+  if (!Number.isFinite(timestamp)) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestamp) > MAX_CLOCK_SKEW_SECS) return false;
+  const expected = sign({ method: params.method, path: params.path, ts: params.ts, nonce: params.nonce, body: params.body });
+  const expectedBytes = Buffer.from(expected, 'hex');
+  const providedBytes = Buffer.from(params.signature, 'hex');
+  if (expectedBytes.length !== providedBytes.length) return false;
+  return timingSafeEqual(expectedBytes, providedBytes);
 }
 
 async function signedSend(params: {

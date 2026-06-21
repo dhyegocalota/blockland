@@ -27,6 +27,8 @@ function recordingNet() {
     sendAdminResetWorld: record('sendAdminResetWorld'),
     sendAdminResetScores: record('sendAdminResetScores'),
     sendAdminSuspend: record('sendAdminSuspend'),
+    sendAdminSetApproval: record('sendAdminSetApproval'),
+    sendAdminApprove: record('sendAdminApprove'),
     sendAdminSetRole: record('sendAdminSetRole'),
     ping: 0,
     state: 'online' as const,
@@ -49,6 +51,8 @@ describe('lobbyAdminApi', () => {
     api.resetWorld();
     api.resetScores();
     api.suspendRoom(true);
+    api.setApprovalRequired(true);
+    api.approvePlayer('acc1');
 
     expect(calls).toEqual([
       ['sendAdminSetPeace', false],
@@ -61,6 +65,8 @@ describe('lobbyAdminApi', () => {
       ['sendAdminResetWorld'],
       ['sendAdminResetScores'],
       ['sendAdminSuspend', true],
+      ['sendAdminSetApproval', true],
+      ['sendAdminApprove', 'acc1'],
     ]);
   });
 });

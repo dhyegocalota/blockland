@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use crate::approvals::ApprovalGate;
 use crate::bans::Bans;
 use crate::db::{Db, Tenant};
 use crate::room::{Room, RoomCmd};
@@ -173,6 +174,7 @@ pub struct Hub {
     pub admin_token: String,
     pub bans: Arc<Bans>,
     pub suspensions: Arc<Suspensions>,
+    pub approval_gate: Arc<ApprovalGate>,
     pub db: Arc<Db>,
     pub claims: Claims,
 }
@@ -217,6 +219,7 @@ impl Hub {
             admin_token,
             bans: Arc::new(Bans::load()),
             suspensions: Arc::new(Suspensions::load()),
+            approval_gate: Arc::new(ApprovalGate::load()),
             db,
             claims,
         }

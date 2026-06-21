@@ -74,6 +74,10 @@ export const adminSuspend = (on: boolean): ClientMsg => ({ t: 'admin_suspend', o
 
 export const adminSetRole = (id: number, role: Role): ClientMsg => ({ t: 'admin_set_role', id, role });
 
+export const adminSetApproval = (on: boolean): ClientMsg => ({ t: 'admin_set_approval', on });
+
+export const adminApprove = (accountId: string): ClientMsg => ({ t: 'admin_approve', account_id: accountId });
+
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 
 export const parseServerMsg = (data: string): ServerMsg => JSON.parse(data) as ServerMsg;

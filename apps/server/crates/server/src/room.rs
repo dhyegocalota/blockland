@@ -397,6 +397,35 @@ impl Room {
             let _ = reply.send(Err("suspended".into()));
             return;
         }
+        // Approval gate (per-tenant, off by default): while on, admins always get in (to manage),
+        // but a guest must log in first and a logged-in player must be approved. A held-out player is
+        // recorded as pending and the admins are notified; they approve in-game (and by email).
+        if self.hub.approval_gate.is_required(&self.key.0) && !role.is_admin() {
+            if account_id.is_empty() {
+                let _ = conn.try_send(ServerMsg::Error {
+                    code: "needs_login".into(),
+                    msg: "Please log in so a grown-up can let you in.".into(),
+                });
+                let _ = reply.send(Err("needs_login".into()));
+                return;
+            }
+            if !self
+                .hub
+                .db
+                .is_approved(&self.key.0, &account_id)
+                .await
+                .unwrap_or(false)
+            {
+                self.hold_for_approval(&account_id, &authoritative_name)
+                    .await;
+                let _ = conn.try_send(ServerMsg::Error {
+                    code: "needs_approval".into(),
+                    msg: "Waiting for a grown-up to let you in.".into(),
+                });
+                let _ = reply.send(Err("needs_approval".into()));
+                return;
+            }
+        }
         // Play-time budget (per-tenant, logged-in accounts only): cache the tenant's config and turn an
         // over-budget player away with "time_up".
         let (limit_min, window_h) = self
@@ -526,6 +555,10 @@ impl Room {
         }
         // Hand the joining connection the current room-wide settings, after Welcome + world + backlog.
         let _ = conn.try_send(self.room_state());
+        // An admin also gets the current pending-approval list so they can manage it right away.
+        if role.is_admin() {
+            send_pending(&self.hub.db, &self.key.0, std::slice::from_ref(&conn)).await;
+        }
         self.players.insert(id, player);
         // The fresh player's inventory (empty + infinite by default), sent after it is registered.
         self.send_inventory(id);
@@ -597,6 +630,16 @@ impl Room {
         // Role changes touch another account + the whole player map, so handle before the borrow.
         if let ClientMsg::AdminSetRole { id: target, role } = msg {
             self.on_admin_set_role(id, target, role);
+            return;
+        }
+
+        // Approval toggle + approve touch shared/per-account state and async db, so they own the handler.
+        if let ClientMsg::AdminSetApproval { on } = msg {
+            self.on_admin_set_approval(id, on);
+            return;
+        }
+        if let ClientMsg::AdminApprove { account_id } = msg {
+            self.on_admin_approve(id, account_id);
             return;
         }
 
@@ -788,6 +831,8 @@ impl Room {
             | ClientMsg::AdminResetScores
             | ClientMsg::AdminSuspend { .. }
             | ClientMsg::AdminSetRole { .. }
+            | ClientMsg::AdminSetApproval { .. }
+            | ClientMsg::AdminApprove { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
             | ClientMsg::Respawn
@@ -1121,6 +1166,126 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %actor_id, %target_id, ?role, "role changed in-game");
     }
 
+    /// Record a held-out account as pending, email the tenant's admins, and refresh the in-game
+    /// pending list for any online admin so they can approve immediately.
+    async fn hold_for_approval(&mut self, account_id: &str, name: &str) {
+        let email = match self.hub.db.get_account_by_id(account_id).await {
+            Ok(Some(account)) => account.email,
+            Ok(None) => {
+                tracing::warn!(%account_id, "approval hold skipped: account vanished");
+                return;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "approval hold: account lookup failed");
+                return;
+            }
+        };
+        if let Err(e) = self
+            .hub
+            .db
+            .record_approval_request(&self.key.0, account_id, name, &email)
+            .await
+        {
+            tracing::error!(error = %e, "approval request persist failed");
+            return;
+        }
+        tracing::info!(tenant = %self.key.0, %account_id, "player held for approval");
+        let db = self.hub.db.clone();
+        let tenant = self.key.0.clone();
+        let player_name = name.to_string();
+        tokio::spawn(async move {
+            crate::notify::approval_request(&db, &tenant, &player_name).await;
+        });
+        self.broadcast_pending_to_admins().await;
+    }
+
+    /// Turn the per-tenant approval gate on or off. Admin-only; persists the flag, broadcasts the new
+    /// RoomState, and (when turning it on) hands online admins the current pending list.
+    fn on_admin_set_approval(&mut self, id: PlayerId, on: bool) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "approval toggle ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        let changed = self.hub.approval_gate.set(&self.key.0, on);
+        if !changed {
+            return;
+        }
+        let state = self.room_state();
+        self.broadcast(&state);
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: if on {
+                "approval_on".into()
+            } else {
+                "approval_off".into()
+            },
+        });
+        let tenant = self.key.0.clone();
+        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+            .players
+            .values()
+            .filter(|p| p.is_admin)
+            .map(|p| p.conn.clone())
+            .collect();
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            send_pending(&db, &tenant, &admin_conns).await;
+        });
+        tracing::info!(tenant = %self.key.0, %id, on, "approval gate set by admin");
+    }
+
+    /// Approve a pending account. Admin-only; records the approval, tells the waiting player they can
+    /// join (so their client retries), and refreshes the pending list for online admins.
+    fn on_admin_approve(&mut self, id: PlayerId, account_id: String) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "approve ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("approve|{account_id}"),
+        });
+        let tenant = self.key.0.clone();
+        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+            .players
+            .values()
+            .filter(|p| p.is_admin)
+            .map(|p| p.conn.clone())
+            .collect();
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.approve_account(&tenant, &account_id).await {
+                tracing::error!(error = %e, "approve_account persist failed");
+                return;
+            }
+            tracing::info!(%tenant, %account_id, "account approved by admin");
+            send_pending(&db, &tenant, &admin_conns).await;
+        });
+    }
+
+    /// Push the current pending-approval list to every online admin (no-op if none are online).
+    async fn broadcast_pending_to_admins(&self) {
+        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+            .players
+            .values()
+            .filter(|p| p.is_admin)
+            .map(|p| p.conn.clone())
+            .collect();
+        send_pending(&self.hub.db, &self.key.0, &admin_conns).await;
+    }
+
     /// A PvP melee attack on another player. Ignored unless pvp is on and the attacker is within melee
     /// range of the target; the server never damages server-side (the client owns hearts) and only
     /// tells the target it was hit so it takes one heart of damage.
@@ -1178,6 +1343,7 @@ impl Room {
             pvp: self.pvp,
             chat_enabled: self.chat_enabled,
             suspended: self.hub.suspensions.is_suspended(&self.key.0),
+            approval_required: self.hub.approval_gate.is_required(&self.key.0),
         }
     }
 
@@ -1695,6 +1861,33 @@ fn epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Load the tenant's pending-approval list and send it to each given (admin) connection.
+async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<ServerMsg>]) {
+    if conns.is_empty() {
+        return;
+    }
+    let pending = match db.pending_approvals(tenant).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!(error = %e, "pending approvals load failed");
+            return;
+        }
+    };
+    let wire: Vec<protocol::PendingApproval> = pending
+        .into_iter()
+        .map(|p| protocol::PendingApproval {
+            account_id: p.account_id,
+            name: p.name,
+            email: p.email,
+        })
+        .collect();
+    for conn in conns {
+        let _ = conn.try_send(ServerMsg::PendingApprovals {
+            pending: wire.clone(),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1705,9 +1898,17 @@ mod tests {
     /// A room wired to a fresh memory-db hub. The command receiver is owned by the room; tests drive
     /// it by calling its handlers directly rather than through the channel.
     async fn test_room() -> Room {
+        // Keep the file-backed approval gate out of the tracked data dir (tests persist on toggle).
+        std::env::set_var(
+            "APPROVALS_FILE",
+            std::env::temp_dir().join("bl-test-approvals.json"),
+        );
         let db = Arc::new(Db::memory().await);
         let hub = Arc::new(Hub::load(db).await);
         let tcfg = hub.tenants.get("teo").unwrap().clone();
+        // The approval gate is file-backed and process-global; force it off in memory so a parallel
+        // gate test never leaks its state into another room (each test sets what it needs explicitly).
+        hub.approval_gate.set("teo", false);
         let (_tx, rx) = mpsc::channel::<RoomCmd>(16);
         Room::new(hub, &tcfg, "main".into(), rx)
     }
@@ -2485,6 +2686,175 @@ mod tests {
         let player = room.players.get(&id).unwrap();
         assert_eq!(player.name, format!("Guest{id}"));
         assert!(player.account_id.is_empty(), "a guest has no account");
+    }
+
+    /// Drive `admit` for a logged-in account with the given id/name/role and return its outcome plus
+    /// the captured connection. Mirrors the on_join → admit path without the claim resolution.
+    async fn admit_account(
+        room: &mut Room,
+        account_id: &str,
+        name: &str,
+        role: Role,
+    ) -> (Result<PlayerId, String>, mpsc::Receiver<ServerMsg>) {
+        let (conn, conn_rx) = mpsc::channel::<ServerMsg>(64);
+        let (reply, reply_rx) = oneshot::channel();
+        let look = Appearance {
+            skin: "#fff".into(),
+            shirt: "#fff".into(),
+            hair: "#fff".into(),
+        };
+        room.admit(
+            account_id.to_string(),
+            name.to_string(),
+            role,
+            "claim".into(),
+            look,
+            "127.0.0.1".parse().unwrap(),
+            conn,
+            reply,
+        )
+        .await;
+        (reply_rx.await.unwrap(), conn_rx)
+    }
+
+    #[tokio::test]
+    async fn approval_off_by_default_lets_everyone_in() {
+        let mut room = test_room().await;
+        room.hub.approval_gate.set(&room.key.0, false);
+        let acc = room
+            .hub
+            .db
+            .claim_account("teo", "kid@x.com", "Kid")
+            .await
+            .unwrap()
+            .account_id;
+        let (result, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
+        assert!(result.is_ok(), "approval off admits a normal player");
+    }
+
+    #[tokio::test]
+    async fn approval_required_refuses_unapproved_then_admits_after_approve() {
+        let mut room = test_room().await;
+        room.hub.approval_gate.set(&room.key.0, true);
+        let acc = room
+            .hub
+            .db
+            .claim_account("teo", "kid@x.com", "Kid")
+            .await
+            .unwrap()
+            .account_id;
+
+        let (refused, mut rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
+        assert_eq!(refused, Err("needs_approval".into()));
+        let coded = std::iter::from_fn(|| rx.try_recv().ok()).find_map(|m| match m {
+            ServerMsg::Error { code, .. } => Some(code),
+            _ => None,
+        });
+        assert_eq!(coded.as_deref(), Some("needs_approval"));
+        // The held-out account is now pending.
+        let pending = room.hub.db.pending_approvals("teo").await.unwrap();
+        assert_eq!(pending.len(), 1);
+
+        // After an admin approves it, the same account is admitted.
+        room.hub.db.approve_account("teo", &acc).await.unwrap();
+        let (allowed, _rx2) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
+        assert!(allowed.is_ok(), "an approved account is admitted");
+    }
+
+    #[tokio::test]
+    async fn approval_required_always_admits_admins() {
+        let mut room = test_room().await;
+        room.hub.approval_gate.set(&room.key.0, true);
+        let acc = room
+            .hub
+            .db
+            .claim_account("teo", "parent@x.com", "Parent")
+            .await
+            .unwrap()
+            .account_id;
+        let (result, _rx) = admit_account(&mut room, &acc, "Parent", Role::Admin).await;
+        assert!(result.is_ok(), "an admin is never held out by the gate");
+        assert!(
+            room.hub
+                .db
+                .pending_approvals("teo")
+                .await
+                .unwrap()
+                .is_empty(),
+            "an admin never becomes a pending request"
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_required_refuses_a_guest_with_needs_login() {
+        let mut room = test_room().await;
+        room.hub.approval_gate.set(&room.key.0, true);
+        let (refused, _rx) = admit_account(&mut room, "", "", Role::Player).await;
+        assert_eq!(refused, Err("needs_login".into()));
+    }
+
+    #[tokio::test]
+    async fn admin_toggles_approval_and_approves_a_pending_account() {
+        let mut room = test_room().await;
+        room.hub.approval_gate.set(&room.key.0, false);
+        let mut admin_rx = add_player(&mut room, 1, true);
+        let acc = room
+            .hub
+            .db
+            .claim_account("teo", "kid@x.com", "Kid")
+            .await
+            .unwrap()
+            .account_id;
+
+        room.on_input(1, ClientMsg::AdminSetApproval { on: true });
+        assert!(room.hub.approval_gate.is_required(&room.key.0));
+        let required = std::iter::from_fn(|| admin_rx.try_recv().ok()).find_map(|m| match m {
+            ServerMsg::RoomState {
+                approval_required, ..
+            } => Some(approval_required),
+            _ => None,
+        });
+        assert_eq!(required, Some(true), "the toggle broadcasts RoomState");
+
+        room.hub
+            .db
+            .record_approval_request("teo", &acc, "Kid", "kid@x.com")
+            .await
+            .unwrap();
+        room.on_input(
+            1,
+            ClientMsg::AdminApprove {
+                account_id: acc.clone(),
+            },
+        );
+        // The approve is spawned async; let it run, then confirm the account is approved + cleared.
+        tokio::task::yield_now().await;
+        for _ in 0..50 {
+            if room.hub.db.is_approved("teo", &acc).await.unwrap() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(room.hub.db.is_approved("teo", &acc).await.unwrap());
+        assert!(room
+            .hub
+            .db
+            .pending_approvals("teo")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_admin_approval_toggle_is_ignored() {
+        let mut room = test_room().await;
+        room.hub.approval_gate.set(&room.key.0, false);
+        add_player(&mut room, 2, false);
+        room.on_input(2, ClientMsg::AdminSetApproval { on: true });
+        assert!(
+            !room.hub.approval_gate.is_required(&room.key.0),
+            "a non-admin cannot turn approval on"
+        );
     }
 
     #[tokio::test]

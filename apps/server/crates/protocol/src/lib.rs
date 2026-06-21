@@ -98,6 +98,16 @@ pub enum ClientMsg {
         id: u32,
         role: Role,
     },
+    /// Admin-only: require approval for new players (or turn it off). While on, a logged-in player who
+    /// is not yet approved is held out until an admin approves them. Ignored from non-admins.
+    AdminSetApproval {
+        on: bool,
+    },
+    /// Admin-only: approve a pending account so it may join. Clears its pending request. Ignored from
+    /// non-admins.
+    AdminApprove {
+        account_id: String,
+    },
     /// Ask the server to send the player back to spawn (the "back to start" button, and on death). The
     /// server moves them authoritatively and re-baselines the anti-cheat so the teleport is not rejected.
     Respawn,
@@ -195,6 +205,12 @@ pub enum ServerMsg {
         pvp: bool,
         chat_enabled: bool,
         suspended: bool,
+        approval_required: bool,
+    },
+    /// The accounts waiting for an admin to approve them; sent to admins on join and whenever the
+    /// pending list changes (a held-out join arrives, or an admin approves someone).
+    PendingApprovals {
+        pending: Vec<PendingApproval>,
     },
     /// Sent to a player who was just hit by another player in PvP; the client takes the damage.
     Hurt {
@@ -265,6 +281,14 @@ pub struct CreatureState {
     pub max_hp: u8,
 }
 
+/// One account awaiting an admin's approval before it can join (name + email for the admin to recognize).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct PendingApproval {
+    pub account_id: String,
+    pub name: String,
+    pub email: String,
+}
+
 /// White-label branding handed to the client on join.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Brand {
@@ -293,6 +317,7 @@ mod export {
             InventoryItem::decl(),
             PlayerState::decl(),
             CreatureState::decl(),
+            PendingApproval::decl(),
             ClientMsg::decl(),
             ServerMsg::decl(),
         ] {

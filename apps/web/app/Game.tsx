@@ -20,9 +20,10 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   kicked: 'coop.kicked',
   room_closed: 'coop.room_closed',
   time_up: 'coop.time_up',
+  needs_approval: 'coop.needs_approval',
 };
 
-const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up'];
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'needs_approval'];
 
 const FEED_ICONS: Record<FeedEventKind, string> = {
   join: '➕',
@@ -75,6 +76,7 @@ export default function Game() {
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
+    pendingApprovals, toggleApprovalRequired, approvePlayer,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   } = useGame();
@@ -156,6 +158,30 @@ export default function Game() {
                 >
                   {room.chatEnabled ? t('game_admin.chat_on') : t('game_admin.chat_off')}
                 </button>
+              )}
+              {isAdmin && (
+                <button
+                  id="adminApproval"
+                  className={room.approvalRequired ? 'on' : undefined}
+                  onClick={toggleApprovalRequired}
+                >
+                  {room.approvalRequired ? t('game_admin.approval_on') : t('game_admin.approval_off')}
+                </button>
+              )}
+              {isAdmin && pendingApprovals.length > 0 && (
+                <>
+                  <span className="adminLabel">{t('game_admin.pending')}</span>
+                  <ul id="adminPending">
+                    {pendingApprovals.map((entry) => (
+                      <li key={entry.accountId}>
+                        <span>{entry.name}</span>
+                        <span className="adminPlayerActions">
+                          <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
               {isAdmin && (
                 <button

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type MutableRefObject } from 'react';
-import type { RoomState } from '../coop';
+import type { PendingApproval, RoomState } from '../coop';
 import type { RoomAdminApi } from '../game-engine';
 import type { Role } from '../protocol';
 
@@ -7,7 +7,7 @@ import type { Role } from '../protocol';
 // window or it disarms itself — a misclick can never wipe the world.
 const RESET_ARM_MS = 4000;
 
-const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false };
+const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false };
 
 // Owns the room settings + admin authority the engine reports (setRoom/setIsAdmin feed the bridge),
 // the admin panel open state, and the admin command dispatch incl. the two-step world reset.
@@ -20,6 +20,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const resetArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [resetScoresArmed, setResetScoresArmed] = useState(false);
   const resetScoresArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
 
   const toggleRoomPeace = useCallback(() => gameApi.current?.setAdminPeace(!room.peace), [gameApi, room.peace]);
   const toggleStructure = useCallback(
@@ -35,6 +36,11 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const banPlayer = useCallback((id: number) => gameApi.current?.banPlayer(id), [gameApi]);
   const setRole = useCallback((id: number, role: Role) => gameApi.current?.setRole(id, role), [gameApi]);
   const suspendRoom = useCallback(() => gameApi.current?.suspendRoom(!room.suspended), [gameApi, room.suspended]);
+  const toggleApprovalRequired = useCallback(
+    () => gameApi.current?.setApprovalRequired(!room.approvalRequired),
+    [gameApi, room.approvalRequired],
+  );
+  const approvePlayer = useCallback((accountId: string) => gameApi.current?.approvePlayer(accountId), [gameApi]);
 
   const resetWorld = useCallback(() => {
     if (!resetArmed) {
@@ -81,5 +87,9 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     banPlayer,
     setRole,
     suspendRoom,
+    pendingApprovals,
+    setPendingApprovals,
+    toggleApprovalRequired,
+    approvePlayer,
   };
 }
