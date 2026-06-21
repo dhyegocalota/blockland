@@ -188,6 +188,16 @@ pub struct Room {
     // account that exceeds `playtime_limit_ms` within `playtime_window_ms` is sent to the lobby.
     playtime_limit_ms: i64,
     playtime_window_ms: i64,
+    // Per-tenant moderation flags, cached from the `tenants` row (refreshed on join, written through on
+    // toggle). This room is the only writer for its tenant, so the cache is authoritative at runtime.
+    suspended: bool,
+    approval_required: bool,
+}
+
+/// Which per-tenant moderation flag a write-through targets.
+enum TenantFlag {
+    Suspended,
+    ApprovalRequired,
 }
 
 const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
@@ -242,6 +252,8 @@ impl Room {
             next_creature_id: 1,
             playtime_limit_ms: 0,
             playtime_window_ms: 0,
+            suspended: false,
+            approval_required: false,
             hub,
         }
     }
@@ -388,8 +400,18 @@ impl Room {
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
+        // Refresh the per-tenant moderation flags from the db (this room is the single writer, so the
+        // cache stays authoritative between joins).
+        let (suspended, approval_required) = self
+            .hub
+            .db
+            .tenant_flags(&self.key.0)
+            .await
+            .unwrap_or((false, false));
+        self.suspended = suspended;
+        self.approval_required = approval_required;
         // A suspended world turns everyone away except admins, who still need to get in to resume it.
-        if self.hub.suspensions.is_suspended(&self.key.0) && !role.is_admin() {
+        if self.suspended && !role.is_admin() {
             let _ = conn.try_send(ServerMsg::Error {
                 code: "suspended".into(),
                 msg: "This world is paused by an admin.".into(),
@@ -400,7 +422,7 @@ impl Room {
         // Approval gate (per-tenant, off by default): while on, admins always get in (to manage),
         // but a guest must log in first and a logged-in player must be approved. A held-out player is
         // recorded as pending and the admins are notified; they approve in-game (and by email).
-        if self.hub.approval_gate.is_required(&self.key.0) && !role.is_admin() {
+        if self.approval_required && !role.is_admin() {
             if account_id.is_empty() {
                 let _ = conn.try_send(ServerMsg::Error {
                     code: "needs_login".into(),
@@ -1082,7 +1104,8 @@ impl Room {
             return;
         }
         let admin_name = admin.name.clone();
-        self.hub.suspensions.set(&self.key.0, on);
+        self.suspended = on;
+        self.persist_tenant_flag(TenantFlag::Suspended, on);
         let state = self.room_state();
         self.broadcast(&state);
         self.broadcast(&ServerMsg::Event {
@@ -1215,10 +1238,11 @@ impl Room {
             return;
         }
         let admin_name = admin.name.clone();
-        let changed = self.hub.approval_gate.set(&self.key.0, on);
-        if !changed {
+        if self.approval_required == on {
             return;
         }
+        self.approval_required = on;
+        self.persist_tenant_flag(TenantFlag::ApprovalRequired, on);
         let state = self.room_state();
         self.broadcast(&state);
         self.broadcast(&ServerMsg::Event {
@@ -1339,6 +1363,22 @@ impl Room {
         tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
     }
 
+    /// Write a per-tenant moderation flag through to the `tenants` row off the hot path; the caller has
+    /// already updated the in-memory cache.
+    fn persist_tenant_flag(&self, flag: TenantFlag, on: bool) {
+        let db = self.hub.db.clone();
+        let tenant = self.key.0.clone();
+        tokio::spawn(async move {
+            let result = match flag {
+                TenantFlag::Suspended => db.set_tenant_suspended(&tenant, on).await,
+                TenantFlag::ApprovalRequired => db.set_tenant_approval_required(&tenant, on).await,
+            };
+            if let Err(e) = result {
+                tracing::error!(error = %e, "failed to persist tenant flag");
+            }
+        });
+    }
+
     /// The static identity of every online player, so the per-tick Snapshot can stay slim. Broadcast on
     /// join and on the periodic sweep (not every tick).
     fn roster_msg(&self) -> ServerMsg {
@@ -1364,8 +1404,8 @@ impl Room {
             blocked_structures: self.blocked_structures.iter().cloned().collect(),
             pvp: self.pvp,
             chat_enabled: self.chat_enabled,
-            suspended: self.hub.suspensions.is_suspended(&self.key.0),
-            approval_required: self.hub.approval_gate.is_required(&self.key.0),
+            suspended: self.suspended,
+            approval_required: self.approval_required,
         }
     }
 
@@ -1922,17 +1962,11 @@ mod tests {
     /// A room wired to a fresh memory-db hub. The command receiver is owned by the room; tests drive
     /// it by calling its handlers directly rather than through the channel.
     async fn test_room() -> Room {
-        // Keep the file-backed approval gate out of the tracked data dir (tests persist on toggle).
-        std::env::set_var(
-            "APPROVALS_FILE",
-            std::env::temp_dir().join("bl-test-approvals.json"),
-        );
+        // Each test gets a fresh in-memory db, so the per-tenant flags (suspended/approval) start off
+        // with no cross-test leak — no file-backed-gate reset needed anymore.
         let db = Arc::new(Db::memory().await);
         let hub = Arc::new(Hub::load(db).await);
         let tcfg = hub.tenants.get("teo").unwrap().clone();
-        // The approval gate is file-backed and process-global; force it off in memory so a parallel
-        // gate test never leaks its state into another room (each test sets what it needs explicitly).
-        hub.approval_gate.set("teo", false);
         let (_tx, rx) = mpsc::channel::<RoomCmd>(16);
         Room::new(hub, &tcfg, "main".into(), rx)
     }
@@ -2278,27 +2312,25 @@ mod tests {
     #[tokio::test]
     async fn admin_suspend_clears_the_room_then_an_admin_resumes() {
         let mut room = test_room().await;
-        room.hub.suspensions.set(&room.key.0, false);
         add_player(&mut room, 1, true);
         add_player(&mut room, 2, false);
         room.on_admin_suspend(1, true);
-        assert!(room.hub.suspensions.is_suspended(&room.key.0));
+        assert!(room.suspended);
         assert!(
             !room.players.contains_key(&2),
             "the player is sent to the lobby"
         );
         assert!(room.players.contains_key(&1), "the admin stays to resume");
         room.on_admin_suspend(1, false);
-        assert!(!room.hub.suspensions.is_suspended(&room.key.0));
+        assert!(!room.suspended);
     }
 
     #[tokio::test]
     async fn non_admin_suspend_is_ignored() {
         let mut room = test_room().await;
-        room.hub.suspensions.set(&room.key.0, false);
         add_player(&mut room, 2, false);
         room.on_admin_suspend(2, true);
-        assert!(!room.hub.suspensions.is_suspended(&room.key.0));
+        assert!(!room.suspended);
     }
 
     #[tokio::test]
@@ -2763,7 +2795,6 @@ mod tests {
     #[tokio::test]
     async fn approval_off_by_default_lets_everyone_in() {
         let mut room = test_room().await;
-        room.hub.approval_gate.set(&room.key.0, false);
         let acc = room
             .hub
             .db
@@ -2778,7 +2809,11 @@ mod tests {
     #[tokio::test]
     async fn approval_required_refuses_unapproved_then_admits_after_approve() {
         let mut room = test_room().await;
-        room.hub.approval_gate.set(&room.key.0, true);
+        room.hub
+            .db
+            .set_tenant_approval_required(&room.key.0, true)
+            .await
+            .unwrap();
         let acc = room
             .hub
             .db
@@ -2807,7 +2842,11 @@ mod tests {
     #[tokio::test]
     async fn approval_required_always_admits_admins() {
         let mut room = test_room().await;
-        room.hub.approval_gate.set(&room.key.0, true);
+        room.hub
+            .db
+            .set_tenant_approval_required(&room.key.0, true)
+            .await
+            .unwrap();
         let acc = room
             .hub
             .db
@@ -2831,7 +2870,11 @@ mod tests {
     #[tokio::test]
     async fn approval_required_refuses_a_guest_with_needs_login() {
         let mut room = test_room().await;
-        room.hub.approval_gate.set(&room.key.0, true);
+        room.hub
+            .db
+            .set_tenant_approval_required(&room.key.0, true)
+            .await
+            .unwrap();
         let (refused, _rx) = admit_account(&mut room, "", "", Role::Player).await;
         assert_eq!(refused, Err("needs_login".into()));
     }
@@ -2839,7 +2882,6 @@ mod tests {
     #[tokio::test]
     async fn admin_toggles_approval_and_approves_a_pending_account() {
         let mut room = test_room().await;
-        room.hub.approval_gate.set(&room.key.0, false);
         let mut admin_rx = add_player(&mut room, 1, true);
         let acc = room
             .hub
@@ -2850,7 +2892,7 @@ mod tests {
             .account_id;
 
         room.on_input(1, ClientMsg::AdminSetApproval { on: true });
-        assert!(room.hub.approval_gate.is_required(&room.key.0));
+        assert!(room.approval_required);
         let required = std::iter::from_fn(|| admin_rx.try_recv().ok()).find_map(|m| match m {
             ServerMsg::RoomState {
                 approval_required, ..
@@ -2891,11 +2933,10 @@ mod tests {
     #[tokio::test]
     async fn non_admin_approval_toggle_is_ignored() {
         let mut room = test_room().await;
-        room.hub.approval_gate.set(&room.key.0, false);
         add_player(&mut room, 2, false);
         room.on_input(2, ClientMsg::AdminSetApproval { on: true });
         assert!(
-            !room.hub.approval_gate.is_required(&room.key.0),
+            !room.approval_required,
             "a non-admin cannot turn approval on"
         );
     }

@@ -22,7 +22,6 @@
 //!   POST   /internal/auth/rename         rename a logged-in account: { tenant, claim, newName } -> { ok, name } | { ok:false, error }
 //!   POST   /internal/waitlist            join the pre-launch waitlist: { email, name?, phone? } -> { ok }
 
-mod approvals;
 mod auth;
 mod bans;
 mod conn;
@@ -34,7 +33,6 @@ mod notify;
 mod persistence;
 mod room;
 mod storage;
-mod suspensions;
 mod uploads;
 
 use std::net::{IpAddr, SocketAddr};
@@ -191,7 +189,12 @@ async fn public_online(
     Path(tenant): Path<String>,
 ) -> impl IntoResponse {
     let (count, names) = hub.online_for(&tenant);
-    let suspended = hub.suspensions.is_suspended(&tenant);
+    let suspended = hub
+        .db
+        .tenant_flags(&tenant)
+        .await
+        .map(|(suspended, _)| suspended)
+        .unwrap_or(false);
     Json(OnlineResp {
         count,
         names,

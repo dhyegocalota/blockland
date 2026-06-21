@@ -232,6 +232,9 @@ impl Db {
             // Per-tenant play-time budget: 0 = unlimited (the default for normal worlds).
             "ALTER TABLE tenants ADD COLUMN playtime_limit_min INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE tenants ADD COLUMN playtime_window_h INTEGER NOT NULL DEFAULT 0",
+            // Per-tenant moderation flags an admin toggles at runtime (both off by default).
+            "ALTER TABLE tenants ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE tenants ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = self.conn.execute(column, ()).await;
         }
@@ -373,6 +376,45 @@ impl Db {
             Some(row) => Ok((row.get::<i64>(0)?, row.get::<i64>(1)?)),
             None => Ok((0, 0)),
         }
+    }
+
+    /// A tenant's runtime moderation flags: (suspended, approval_required). Both off for a fresh tenant.
+    pub async fn tenant_flags(&self, tenant: &str) -> Result<(bool, bool), libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT suspended, approval_required FROM tenants WHERE id = ?1",
+                params![tenant],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok((row.get::<i64>(0)? != 0, row.get::<i64>(1)? != 0)),
+            None => Ok((false, false)),
+        }
+    }
+
+    pub async fn set_tenant_suspended(&self, tenant: &str, on: bool) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE tenants SET suspended = ?2 WHERE id = ?1",
+                params![tenant, on as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_tenant_approval_required(
+        &self,
+        tenant: &str,
+        on: bool,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE tenants SET approval_required = ?2 WHERE id = ?1",
+                params![tenant, on as i64],
+            )
+            .await?;
+        Ok(())
     }
 
     /// Milliseconds the account has played inside the current window (0 if the window has rolled over).
@@ -1266,6 +1308,17 @@ mod tests {
         let db = memory_db().await;
         assert_eq!(db.tenant_playtime("demo").await.unwrap(), (5, 24));
         assert_eq!(db.tenant_playtime("teo").await.unwrap(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn tenant_flags_default_off_and_round_trip() {
+        let db = memory_db().await;
+        assert_eq!(db.tenant_flags("teo").await.unwrap(), (false, false));
+        db.set_tenant_suspended("teo", true).await.unwrap();
+        db.set_tenant_approval_required("teo", true).await.unwrap();
+        assert_eq!(db.tenant_flags("teo").await.unwrap(), (true, true));
+        db.set_tenant_suspended("teo", false).await.unwrap();
+        assert_eq!(db.tenant_flags("teo").await.unwrap(), (false, true));
     }
 
     #[tokio::test]
