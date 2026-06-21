@@ -8,6 +8,7 @@ import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
 import { useGame } from './use-game';
+import { rootHomeUrl } from '../lib/seo';
 
 const AUTHOR_URL = 'https://dhyegocalota.com.br';
 
@@ -513,7 +514,7 @@ export default function Game() {
         <Leaderboard tenant={brand.id} />
 
         <footer id="startFooter">
-          <a className="wantGame" href="/welcome">{t('lobby.want_game')}</a>
+          <a className="wantGame" href={rootHomeUrl(window.location.hostname)}>{t('lobby.want_game')}</a>
           <a className="credit" href={AUTHOR_URL} target="_blank" rel="noopener noreferrer">{t('lobby.credit')}</a>
         </footer>
       </div>

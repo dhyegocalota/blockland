@@ -13,6 +13,11 @@ function rewrittenTo(req: NextRequest): string | null {
   return res.headers.get('x-middleware-rewrite');
 }
 
+function redirect(req: NextRequest): { status: number; location: string | null } {
+  const res = middleware(req);
+  return { status: res.status, location: res.headers.get('location') };
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -47,5 +52,25 @@ describe('middleware', () => {
   it('leaves non-root paths on the app root untouched', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
     expect(rewrittenTo(request({ host: PROD_ROOT, path: '/admin' }))).toBeNull();
+  });
+
+  it('308-redirects a tenant subdomain hitting /welcome to the root home', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    expect(redirect(request({ host: `teo.${PROD_ROOT}`, path: '/welcome' }))).toEqual({
+      status: 308,
+      location: `https://${PROD_ROOT}/`,
+    });
+  });
+
+  it('308-redirects a localhost tenant on /welcome to bare localhost', () => {
+    expect(redirect(request({ host: 'teo.localhost', path: '/welcome' }))).toEqual({
+      status: 308,
+      location: 'http://localhost/',
+    });
+  });
+
+  it('serves /welcome on the app root (no redirect)', () => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
+    expect(redirect(request({ host: PROD_ROOT, path: '/welcome' })).location).toBeNull();
   });
 });
