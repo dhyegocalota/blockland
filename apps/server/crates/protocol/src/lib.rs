@@ -82,6 +82,11 @@ pub enum ClientMsg {
     AdminResetWorld,
     /// Admin-only: wipe every player's score + the leaderboard for this world. Ignored from non-admins.
     AdminResetScores,
+    /// Admin-only: suspend (or resume) the world. While suspended everyone is disconnected to the lobby
+    /// and no one can join, until an admin resumes it. Ignored from non-admins.
+    AdminSuspend {
+        on: bool,
+    },
     /// Admin-only (or moderator setting a moderator): change an online player's role by id. Ignored
     /// when the sender lacks the authority to grant the requested role.
     AdminSetRole {
@@ -184,6 +189,7 @@ pub enum ServerMsg {
         blocked_structures: Vec<String>,
         pvp: bool,
         chat_enabled: bool,
+        suspended: bool,
     },
     /// Sent to a player who was just hit by another player in PvP; the client takes the damage.
     Hurt {

@@ -27,6 +27,7 @@ function baseUrl(): string {
 export interface OnlinePresence {
   count: number;
   names: string[];
+  suspended: boolean;
 }
 
 // Public lobby presence (no HMAC): who and how many are online in a tenant right now.

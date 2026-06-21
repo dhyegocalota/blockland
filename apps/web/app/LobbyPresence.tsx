@@ -29,10 +29,14 @@ export default function LobbyPresence({ tenant }: { tenant: string }) {
     return () => { alive = false; clearInterval(timer); };
   }, [tenant]);
 
-  if (!presence || presence.count === 0) return null;
+  if (!presence) return null;
+  if (presence.count === 0 && !presence.suspended) return null;
   return (
     <div id="lobbyPresence">
-      <span className="count">{t('lobby.online', { count: String(presence.count) })}</span>
+      {presence.suspended && <span className="suspended">{t('lobby.suspended')}</span>}
+      {presence.count > 0 && (
+        <span className="count">{t('lobby.online', { count: String(presence.count) })}</span>
+      )}
       {presence.names.length > 0 && (
         <span className="names">{presence.names.slice(0, NAMES_SHOWN).join(' · ')}</span>
       )}

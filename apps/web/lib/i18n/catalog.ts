@@ -96,6 +96,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.reset_confirm': '⚠️ Confirmar reset?',
     'game_admin.reset_scores': '🏆 Zerar placar de todos',
     'game_admin.reset_scores_confirm': '⚠️ Confirmar zerar placar?',
+    'game_admin.suspend': '⏸️ Suspender sala',
+    'game_admin.resume': '▶️ Retomar sala',
 
     // Start screen
     'start.record': '🏆 Recorde: 0',
@@ -116,6 +118,7 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // Lobby presence + footer
     'lobby.online': '👥 {count} online agora',
+    'lobby.suspended': '⏸️ Sala pausada pelo responsável',
     'lobby.want_game': '🧡 Quero um jogo desse pro meu filho também',
     'lobby.credit': 'Feito com 🧡 por Dhyego Calota',
     'lobby.admin_badge': '👑 Você é admin',
@@ -196,6 +199,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.admin_pvp_off': '{name} desligou o PvP',
     'feed.admin_chat_on': '{name} ligou o chat',
     'feed.admin_chat_off': '{name} desligou o chat',
+    'feed.admin_suspend_on': '⏸️ {name} suspendeu a sala',
+    'feed.admin_suspend_off': '▶️ {name} retomou a sala',
     'feed.admin_structure_allowed': '{name} liberou uma construção',
     'feed.admin_structure_blocked': '{name} bloqueou uma construção',
     'feed.admin_kick': '{name} expulsou {target}',
@@ -438,6 +443,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.reset_confirm': '⚠️ Confirm reset?',
     'game_admin.reset_scores': '🏆 Reset everyone\'s score',
     'game_admin.reset_scores_confirm': '⚠️ Confirm score reset?',
+    'game_admin.suspend': '⏸️ Suspend world',
+    'game_admin.resume': '▶️ Resume world',
 
     // Start screen
     'start.record': '🏆 Record: 0',
@@ -458,6 +465,7 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // Lobby presence + footer
     'lobby.online': '👥 {count} online now',
+    'lobby.suspended': '⏸️ Paused by the parent',
     'lobby.want_game': '🧡 I want a game like this for my kid too',
     'lobby.credit': 'Built with 🧡 by Dhyego Calota',
     'lobby.admin_badge': '👑 You are admin',
@@ -538,6 +546,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.admin_pvp_off': '{name} turned PvP off',
     'feed.admin_chat_on': '{name} turned chat on',
     'feed.admin_chat_off': '{name} turned chat off',
+    'feed.admin_suspend_on': '⏸️ {name} suspended the world',
+    'feed.admin_suspend_off': '▶️ {name} resumed the world',
     'feed.admin_structure_allowed': '{name} allowed a build',
     'feed.admin_structure_blocked': '{name} blocked a build',
     'feed.admin_kick': '{name} kicked {target}',

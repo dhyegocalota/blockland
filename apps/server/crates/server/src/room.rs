@@ -373,6 +373,15 @@ impl Room {
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
+        // A suspended world turns everyone away except admins, who still need to get in to resume it.
+        if self.hub.suspensions.is_suspended(&self.key.0) && !role.is_admin() {
+            let _ = conn.try_send(ServerMsg::Error {
+                code: "suspended".into(),
+                msg: "This world is paused by an admin.".into(),
+            });
+            let _ = reply.send(Err("suspended".into()));
+            return;
+        }
         let id = self.hub.alloc_id();
         // A guest arrives without a name; give them a unique, recognizable one so two guests never
         // collide on a generic label. A logged-in player keeps their authoritative account name.
@@ -513,6 +522,10 @@ impl Room {
         // single-player borrow below.
         if let ClientMsg::AdminResetScores = msg {
             self.on_admin_reset_scores(id);
+            return;
+        }
+        if let ClientMsg::AdminSuspend { on } = msg {
+            self.on_admin_suspend(id, on);
             return;
         }
         if let ClientMsg::AdminResetWorld = msg {
@@ -693,6 +706,7 @@ impl Room {
             | ClientMsg::AdminBan { .. }
             | ClientMsg::AdminResetWorld
             | ClientMsg::AdminResetScores
+            | ClientMsg::AdminSuspend { .. }
             | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
@@ -892,6 +906,45 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %id, "scores reset by admin");
     }
 
+    /// Suspend or resume the world. Admin-only: suspending persists the flag (so it survives a restart),
+    /// announces it, and disconnects everyone to the lobby — no one can rejoin until an admin resumes it.
+    fn on_admin_suspend(&mut self, id: PlayerId, on: bool) {
+        let Some(admin) = self.players.get(&id) else {
+            return;
+        };
+        if !admin.is_admin {
+            tracing::debug!(%id, "suspend ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        self.hub.suspensions.set(&self.key.0, on);
+        let state = self.room_state();
+        self.broadcast(&state);
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: if on {
+                "suspend_on".into()
+            } else {
+                "suspend_off".into()
+            },
+        });
+        if on {
+            // Everyone is sent to the lobby except the admin who suspended it, who stays to resume.
+            let ids: Vec<PlayerId> = self.players.keys().copied().filter(|&p| p != id).collect();
+            for pid in ids {
+                if let Some(p) = self.players.remove(&pid) {
+                    let _ = p.conn.try_send(ServerMsg::Error {
+                        code: "suspended".into(),
+                        msg: "This world is paused by an admin.".into(),
+                    });
+                }
+                self.broadcast(&ServerMsg::Left { id: pid });
+            }
+        }
+        tracing::info!(tenant = %self.key.0, %id, on, "world suspension set by admin");
+    }
+
     /// Change an online player's role. Admins (parents) may grant any role; moderators (kids) may only
     /// add or remove other moderators (never touch an admin, never grant admin). The change takes
     /// effect live (the target's flags + a Role message) and is persisted to the account.
@@ -1008,6 +1061,7 @@ impl Room {
             blocked_structures: self.blocked_structures.iter().cloned().collect(),
             pvp: self.pvp,
             chat_enabled: self.chat_enabled,
+            suspended: self.hub.suspensions.is_suspended(&self.key.0),
         }
     }
 
@@ -1764,6 +1818,32 @@ mod tests {
         room.players.get_mut(&2).unwrap().score = 7;
         room.on_admin_reset_scores(2);
         assert_eq!(room.players.get(&2).unwrap().score, 7);
+    }
+
+    #[tokio::test]
+    async fn admin_suspend_clears_the_room_then_an_admin_resumes() {
+        let mut room = test_room().await;
+        room.hub.suspensions.set(&room.key.0, false);
+        add_player(&mut room, 1, true);
+        add_player(&mut room, 2, false);
+        room.on_admin_suspend(1, true);
+        assert!(room.hub.suspensions.is_suspended(&room.key.0));
+        assert!(
+            !room.players.contains_key(&2),
+            "the player is sent to the lobby"
+        );
+        assert!(room.players.contains_key(&1), "the admin stays to resume");
+        room.on_admin_suspend(1, false);
+        assert!(!room.hub.suspensions.is_suspended(&room.key.0));
+    }
+
+    #[tokio::test]
+    async fn non_admin_suspend_is_ignored() {
+        let mut room = test_room().await;
+        room.hub.suspensions.set(&room.key.0, false);
+        add_player(&mut room, 2, false);
+        room.on_admin_suspend(2, true);
+        assert!(!room.hub.suspensions.is_suspended(&room.key.0));
     }
 
     #[tokio::test]

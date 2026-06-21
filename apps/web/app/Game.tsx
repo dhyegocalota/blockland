@@ -71,7 +71,7 @@ export default function Game() {
     infiniteResources, setInfiniteResources,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
-    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
+    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   } = useGame();
@@ -201,6 +201,11 @@ export default function Game() {
               {isAdmin && (
                 <button id="adminResetScores" className={resetScoresArmed ? 'armed' : undefined} onClick={resetScores}>
                   {resetScoresArmed ? t('game_admin.reset_scores_confirm') : t('game_admin.reset_scores')}
+                </button>
+              )}
+              {isAdmin && (
+                <button id="adminSuspend" className={room.suspended ? 'on' : undefined} onClick={suspendRoom}>
+                  {room.suspended ? t('game_admin.resume') : t('game_admin.suspend')}
                 </button>
               )}
             </div>

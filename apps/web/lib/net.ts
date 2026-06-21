@@ -9,6 +9,7 @@ import {
   adminKick,
   adminResetWorld,
   adminResetScores,
+  adminSuspend,
   adminSetChat,
   adminSetPeace,
   adminSetPvp,
@@ -118,6 +119,7 @@ export interface NetClient {
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
+  sendAdminSuspend(on: boolean): void;
   sendAdminSetRole(id: number, role: Role): void;
   readonly ping: number;
   readonly state: NetState;
@@ -233,6 +235,7 @@ export function createNet(opts: NetOptions): NetClient {
     idle_timeout: 'kicked',
     kicked: 'kicked',
     room_closed: 'room_closed',
+    suspended: 'room_closed',
     reclaimed: 'kicked',
     claim_required: 'kicked',
   };
@@ -351,6 +354,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminResetScores(): void {
       rawSend(encodeClientMsg(adminResetScores()));
+    },
+    sendAdminSuspend(on): void {
+      rawSend(encodeClientMsg(adminSuspend(on)));
     },
     sendAdminSetRole(id, role): void {
       rawSend(encodeClientMsg(adminSetRole(id, role)));

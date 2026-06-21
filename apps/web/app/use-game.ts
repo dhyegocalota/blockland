@@ -77,7 +77,7 @@ export function useGame() {
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
     resetArmed, resetWorld, resetScoresArmed, resetScores, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
-    kickPlayer, banPlayer, setRole,
+    kickPlayer, banPlayer, setRole, suspendRoom,
   } = useRoomAdmin(gameApiRef);
   const {
     lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
@@ -355,7 +355,7 @@ export function useGame() {
     infiniteResources, setInfiniteResources,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
-    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole,
+    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   };

@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use crate::bans::Bans;
 use crate::db::{Db, Tenant};
 use crate::room::{Room, RoomCmd};
+use crate::suspensions::Suspensions;
 
 pub type RoomKey = (String, String);
 
@@ -171,6 +172,7 @@ pub struct Hub {
     next_id: AtomicU32,
     pub admin_token: String,
     pub bans: Arc<Bans>,
+    pub suspensions: Arc<Suspensions>,
     pub db: Arc<Db>,
     pub claims: Claims,
 }
@@ -214,6 +216,7 @@ impl Hub {
             next_id: AtomicU32::new(1),
             admin_token,
             bans: Arc::new(Bans::load()),
+            suspensions: Arc::new(Suspensions::load()),
             db,
             claims,
         }

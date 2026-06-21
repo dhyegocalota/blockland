@@ -32,6 +32,7 @@ mod internal_auth;
 mod persistence;
 mod room;
 mod storage;
+mod suspensions;
 mod uploads;
 
 use std::net::{IpAddr, SocketAddr};
@@ -179,6 +180,7 @@ fn client_ip(headers: &HeaderMap, peer: IpAddr) -> IpAddr {
 struct OnlineResp {
     count: usize,
     names: Vec<String>,
+    suspended: bool,
 }
 
 /// Public lobby presence for a tenant (no auth): who and how many are online right now.
@@ -187,7 +189,12 @@ async fn public_online(
     Path(tenant): Path<String>,
 ) -> impl IntoResponse {
     let (count, names) = hub.online_for(&tenant);
-    Json(OnlineResp { count, names })
+    let suspended = hub.suspensions.is_suspended(&tenant);
+    Json(OnlineResp {
+        count,
+        names,
+        suspended,
+    })
 }
 
 #[derive(Deserialize)]

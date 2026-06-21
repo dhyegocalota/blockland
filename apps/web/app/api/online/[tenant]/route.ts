@@ -9,11 +9,11 @@ const CACHE_CONTROL = 'public, s-maxage=10, stale-while-revalidate=20';
 
 export async function GET(_req: Request, { params }: { params: { tenant: string } }) {
   const tenant = params.tenant.trim();
-  if (tenant === '') return Response.json({ count: 0, names: [] }, { status: 400 });
+  if (tenant === '') return Response.json({ count: 0, names: [], suspended: false }, { status: 400 });
   try {
     const presence = await fetchOnline(tenant);
     return Response.json(presence, { headers: { 'Cache-Control': CACHE_CONTROL } });
   } catch {
-    return Response.json({ count: 0, names: [] });
+    return Response.json({ count: 0, names: [], suspended: false });
   }
 }

@@ -53,6 +53,7 @@ export interface RoomState {
   blockedStructures: string[];
   pvp: boolean;
   chatEnabled: boolean;
+  suspended: boolean;
 }
 
 export interface CoopHud {
@@ -162,6 +163,7 @@ export interface CoopController {
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
+  sendAdminSuspend(on: boolean): void;
   sendAdminSetRole(id: number, role: Role): void;
   update(now: number): void;
   getColliders(): ActorPos[];
@@ -488,6 +490,7 @@ export function createCoop(opts: CoopOptions): CoopController {
           blockedStructures: msg.blocked_structures,
           pvp: msg.pvp,
           chatEnabled: msg.chat_enabled,
+          suspended: msg.suspended,
         };
         opts.applyRoomState(room);
         opts.hud.onRoomState(room);
@@ -593,6 +596,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminResetScores(): void {
       net.sendAdminResetScores();
+    },
+    sendAdminSuspend(on): void {
+      net.sendAdminSuspend(on);
     },
     sendAdminSetRole(id, role): void {
       net.sendAdminSetRole(id, role);

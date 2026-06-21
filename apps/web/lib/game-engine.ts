@@ -101,6 +101,7 @@ export interface GameApi {
   banPlayer(id: number): void;
   resetWorld(): void;
   resetScores(): void;
+  suspendRoom(on: boolean): void;
   setRole(id: number, role: Role): void;
   setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
@@ -395,8 +396,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   // Offline there is no server room: admin toggles mutate the local state directly and refresh the HUD
   // (online always routes through coop instead, so the two paths never mix).
-  const currentRoom = () => ({ peace: peaceful, blockedStructures: [...blockedStructures], pvp, chatEnabled });
-  function applyLocalRoom(next: { peace: boolean; blockedStructures: string[]; pvp: boolean; chatEnabled: boolean }): void {
+  const currentRoom = () => ({ peace: peaceful, blockedStructures: [...blockedStructures], pvp, chatEnabled, suspended: false });
+  function applyLocalRoom(next: { peace: boolean; blockedStructures: string[]; pvp: boolean; chatEnabled: boolean; suspended: boolean }): void {
     applyRoomState(next);
     bridge?.hud.onRoomState(next);
   }
@@ -437,6 +438,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     banPlayer: (id) => coop?.sendAdminBan(id),
     resetWorld: () => { if (coop) { coop.sendAdminResetWorld(); return; } resetLocalWorld(); },
     resetScores: () => coop?.sendAdminResetScores(),
+    suspendRoom: (on) => coop?.sendAdminSuspend(on),
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
     setInfiniteResources: (on) => { infiniteResources = on; updateHotbarCounts(); },
     returnToSpawn: () => {

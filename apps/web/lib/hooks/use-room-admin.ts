@@ -7,7 +7,7 @@ import type { Role } from '../protocol';
 // window or it disarms itself — a misclick can never wipe the world.
 const RESET_ARM_MS = 4000;
 
-const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false, chatEnabled: true };
+const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false };
 
 // Owns the room settings + admin authority the engine reports (setRoom/setIsAdmin feed the bridge),
 // the admin panel open state, and the admin command dispatch incl. the two-step world reset.
@@ -34,6 +34,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<GameApi | null>) {
   const kickPlayer = useCallback((id: number) => gameApi.current?.kickPlayer(id), [gameApi]);
   const banPlayer = useCallback((id: number) => gameApi.current?.banPlayer(id), [gameApi]);
   const setRole = useCallback((id: number, role: Role) => gameApi.current?.setRole(id, role), [gameApi]);
+  const suspendRoom = useCallback(() => gameApi.current?.suspendRoom(!room.suspended), [gameApi, room.suspended]);
 
   const resetWorld = useCallback(() => {
     if (!resetArmed) {
@@ -79,5 +80,6 @@ export function useRoomAdmin(gameApi: MutableRefObject<GameApi | null>) {
     kickPlayer,
     banPlayer,
     setRole,
+    suspendRoom,
   };
 }
