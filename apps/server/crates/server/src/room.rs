@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{
-    Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerId, PlayerState,
-    ServerMsg,
+    Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerId, PlayerMeta,
+    PlayerState, ServerMsg,
 };
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
@@ -562,6 +562,10 @@ impl Room {
         self.players.insert(id, player);
         // The fresh player's inventory (empty + infinite by default), sent after it is registered.
         self.send_inventory(id);
+        // Everyone gets the refreshed identity roster so the new player's avatar can render at once
+        // (the per-tick Snapshot is slim and carries no names/colors).
+        let roster = self.roster_msg();
+        self.broadcast(&roster);
         self.empty_since = None;
         let _ = reply.send(Ok(id));
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player joined");
@@ -1335,6 +1339,24 @@ impl Room {
         tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
     }
 
+    /// The static identity of every online player, so the per-tick Snapshot can stay slim. Broadcast on
+    /// join and on the periodic sweep (not every tick).
+    fn roster_msg(&self) -> ServerMsg {
+        ServerMsg::Roster {
+            players: self
+                .players
+                .values()
+                .map(|p| PlayerMeta {
+                    id: p.id,
+                    name: p.name.clone(),
+                    skin: p.skin.clone(),
+                    shirt: p.shirt.clone(),
+                    hair: p.hair.clone(),
+                })
+                .collect(),
+        }
+    }
+
     /// Snapshot the room-wide settings as the wire message broadcast on change and sent on join.
     fn room_state(&self) -> ServerMsg {
         ServerMsg::RoomState {
@@ -1463,10 +1485,6 @@ impl Room {
             .values()
             .map(|p| PlayerState {
                 id: p.id,
-                name: p.name.clone(),
-                skin: p.skin.clone(),
-                shirt: p.shirt.clone(),
-                hair: p.hair.clone(),
                 x: p.x,
                 y: p.y,
                 z: p.z,
@@ -1500,6 +1518,12 @@ impl Room {
 
         if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
             self.publish_stats(now);
+            // Refresh the identity roster so late joiners + renames reach everyone within the sweep
+            // cadence; the per-tick Snapshot stays slim.
+            if !self.players.is_empty() {
+                let roster = self.roster_msg();
+                self.broadcast(&roster);
+            }
         }
 
         // Persist the world diff at most every PERSIST_SECS, and only when it changed.
@@ -2181,6 +2205,25 @@ mod tests {
                 .any(|m| matches!(m, ServerMsg::Edit { id: 0, .. })),
             "the break is broadcast",
         );
+    }
+
+    #[tokio::test]
+    async fn roster_carries_every_players_identity_so_the_snapshot_can_stay_slim() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        add_player(&mut room, 2, true);
+        {
+            let p = room.players.get_mut(&1).unwrap();
+            p.name = "Alice".into();
+            p.skin = "#abc123".into();
+        }
+        let ServerMsg::Roster { players } = room.roster_msg() else {
+            panic!("expected a roster message");
+        };
+        assert_eq!(players.len(), 2);
+        let alice = players.iter().find(|p| p.id == 1).unwrap();
+        assert_eq!(alice.name, "Alice");
+        assert_eq!(alice.skin, "#abc123");
     }
 
     #[tokio::test]

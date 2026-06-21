@@ -250,6 +250,19 @@ describe('net client', () => {
     expect(states).toEqual([incoming]);
   });
 
+  it('routes roster to onRoster', () => {
+    const rosters: unknown[] = [];
+    const { client } = makeClient({ handlers: { onRoster: (m) => rosters.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const incoming = { t: 'roster', players: [{ id: 7, name: 'Kid', skin: '#abc', shirt: '#def', hair: '#123' }] };
+    socket.receive(incoming);
+    expect(rosters).toEqual([incoming]);
+  });
+
   it('routes pending_approvals to onPendingApprovals', () => {
     const lists: unknown[] = [];
     const { client } = makeClient({ handlers: { onPendingApprovals: (m) => lists.push(m) } });

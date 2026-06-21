@@ -241,6 +241,11 @@ pub enum ServerMsg {
         items: Vec<InventoryItem>,
         infinite: bool,
     },
+    /// The static identity (name + look) of every online player. Sent on join and on the periodic sweep
+    /// so the per-tick Snapshot can stay slim (dynamics only) instead of re-sending names + colors 30×/s.
+    Roster {
+        players: Vec<PlayerMeta>,
+    },
 }
 
 /// One block-id count in a player's inventory.
@@ -250,13 +255,20 @@ pub struct InventoryItem {
     pub count: u32,
 }
 
+/// A player's unchanging identity, carried by `Roster` so `PlayerState` (per tick) can omit it.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct PlayerState {
+pub struct PlayerMeta {
     pub id: u32,
     pub name: String,
     pub skin: String,
     pub shirt: String,
     pub hair: String,
+}
+
+/// One player's per-tick dynamics. Identity (name/skin/shirt/hair) is sent separately via `Roster`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct PlayerState {
+    pub id: u32,
     pub x: f32,
     pub y: f32,
     pub z: f32,
@@ -315,6 +327,7 @@ mod export {
             Role::decl(),
             EditCell::decl(),
             InventoryItem::decl(),
+            PlayerMeta::decl(),
             PlayerState::decl(),
             CreatureState::decl(),
             PendingApproval::decl(),

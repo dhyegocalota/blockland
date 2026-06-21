@@ -196,6 +196,9 @@ export function createCoop(opts: CoopOptions): CoopController {
   const { three, scene } = opts;
   const avatars = new Map<number, Avatar>();
   const creatures = new Map<number, ServerCreature>();
+  // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
+  // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
+  const identities = new Map<number, Appearance & { name: string }>();
   let selfId: number | null = null;
   let lastMoveSentAt = 0;
   let onlineCount = 0;
@@ -444,9 +447,12 @@ export function createCoop(opts: CoopOptions): CoopController {
             avatars.get(p.id)!.interp.push({ t: performance.now(), x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
             continue;
           }
-          const avatar = spawnAvatar(p.id, p.name, { skin: p.skin, shirt: p.shirt, hair: p.hair });
+          // Identity arrives via Roster; until it does (a tick before the join roster) skip the spawn.
+          const identity = identities.get(p.id);
+          if (!identity) continue;
+          const avatar = spawnAvatar(p.id, identity.name, { skin: identity.skin, shirt: identity.shirt, hair: identity.hair });
           avatar.interp.push({ t: performance.now(), x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
-          opts.hud.onEvent({ kind: 'join', name: p.name });
+          opts.hud.onEvent({ kind: 'join', name: identity.name });
         }
         for (const id of [...avatars.keys()]) {
           if (seen.has(id)) continue;
@@ -469,7 +475,11 @@ export function createCoop(opts: CoopOptions): CoopController {
         }
         onlineCount = msg.players.length;
         opts.hud.onCount(onlineCount);
-        opts.hud.onRoster(msg.players.map((p) => ({ id: p.id, name: p.name, self: p.id === selfId })));
+        opts.hud.onRoster(
+          msg.players
+            .filter((p) => identities.has(p.id))
+            .map((p) => ({ id: p.id, name: identities.get(p.id)!.name, self: p.id === selfId })),
+        );
         opts.hud.onPing(selfPing);
         opts.hud.onScore(selfScore);
       },
@@ -559,6 +569,11 @@ export function createCoop(opts: CoopOptions): CoopController {
         infinite = msg.infinite;
         opts.onInventory();
         debug('coop', 'inventory', { items: msg.items.length, infinite: msg.infinite });
+      },
+      onRoster: (msg) => {
+        identities.clear();
+        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair });
+        debug('coop', 'roster', { players: msg.players.length });
       },
       onError: (code, message) => {
         debug('coop', 'server error', { code, msg: message });

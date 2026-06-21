@@ -65,6 +65,7 @@ type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
 type RespawnMsg = Extract<ServerMsg, { t: 'respawn' }>;
 type InventoryMsg = Extract<ServerMsg, { t: 'inventory' }>;
+type RosterMsg = Extract<ServerMsg, { t: 'roster' }>;
 
 export interface NetHandlers {
   onState?(state: NetState): void;
@@ -81,6 +82,7 @@ export interface NetHandlers {
   onAttack?(msg: AttackMsg): void;
   onRespawn?(msg: RespawnMsg): void;
   onInventory?(msg: InventoryMsg): void;
+  onRoster?(msg: RosterMsg): void;
   onError?(code: string, msg: string): void;
 }
 
@@ -234,6 +236,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'inventory') {
       opts.handlers.onInventory?.(msg);
+      return;
+    }
+    if (msg.t === 'roster') {
+      opts.handlers.onRoster?.(msg);
       return;
     }
     if (msg.t === 'ping') {

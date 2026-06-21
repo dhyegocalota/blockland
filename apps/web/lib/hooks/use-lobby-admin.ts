@@ -38,6 +38,7 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
     if (session.is_admin !== true && session.is_moderator !== true) return;
 
     let selfId: number | null = null;
+    const names = new Map<number, string>();
     const net: NetClient = createNet({
       url: SERVER_URL,
       tenant,
@@ -57,7 +58,15 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
           debug('lobby-admin', 'welcome', { you: msg.you, admin: msg.admin, moderator: msg.moderator });
         },
         onSnapshot: (msg) => {
-          setRoster(msg.players.map((p) => ({ id: p.id, name: p.name, self: p.id === selfId })));
+          setRoster(
+            msg.players
+              .filter((p) => names.has(p.id))
+              .map((p) => ({ id: p.id, name: names.get(p.id)!, self: p.id === selfId })),
+          );
+        },
+        onRoster: (msg) => {
+          names.clear();
+          for (const p of msg.players) names.set(p.id, p.name);
         },
         onRoomState: (msg) => {
           setRoom({
