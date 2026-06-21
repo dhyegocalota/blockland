@@ -18,9 +18,10 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   banned: 'coop.banned',
   kicked: 'coop.kicked',
   room_closed: 'coop.room_closed',
+  time_up: 'coop.time_up',
 };
 
-const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed'];
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up'];
 
 const FEED_ICONS: Record<FeedEventKind, string> = {
   join: '➕',

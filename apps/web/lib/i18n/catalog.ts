@@ -172,6 +172,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.banned': '⛔ Você foi banido deste mundo',
     'coop.kicked': '👋 Você foi removido da sala',
     'coop.room_closed': '🌙 Este mundo foi fechado',
+    'coop.time_up': '⏰ Você já jogou seu tempo de hoje! Volte amanhã.',
     'coop.back_to_lobby': '🏠 Voltar ao início',
     'coop.ping': '📶 {ping}ms',
 
@@ -519,6 +520,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.banned': '⛔ You were banned from this world',
     'coop.kicked': '👋 You were removed from the room',
     'coop.room_closed': '🌙 This world has been closed',
+    'coop.time_up': '⏰ You\'ve used your play time for today! Come back tomorrow.',
     'coop.back_to_lobby': '🏠 Back to start',
     'coop.ping': '📶 {ping}ms',
 

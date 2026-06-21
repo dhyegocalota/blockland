@@ -221,9 +221,25 @@ impl Db {
         for column in [
             "ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE accounts ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0",
+            // Per-tenant play-time budget: 0 = unlimited (the default for normal worlds).
+            "ALTER TABLE tenants ADD COLUMN playtime_limit_min INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE tenants ADD COLUMN playtime_window_h INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = self.conn.execute(column, ()).await;
         }
+        // Per-account play time used inside the current rolling window (for the play-time limit).
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS playtime (
+                    tenant TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    window_start_ms INTEGER NOT NULL,
+                    used_ms INTEGER NOT NULL,
+                    PRIMARY KEY (tenant, account_id)
+                )",
+                (),
+            )
+            .await?;
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS leaderboard (
@@ -299,8 +315,92 @@ impl Db {
             for tenant in builtin_tenants() {
                 self.insert_tenant(&tenant).await?;
             }
+            // The demo world is a 5-minutes-per-24h taste; real tenants stay unlimited.
+            self.conn
+                .execute(
+                    "UPDATE tenants SET playtime_limit_min = 5, playtime_window_h = 24 WHERE id = 'demo'",
+                    (),
+                )
+                .await?;
         }
         Ok(())
+    }
+
+    /// A tenant's play-time budget: (minutes allowed, window hours). Both 0 means unlimited.
+    pub async fn tenant_playtime(&self, tenant: &str) -> Result<(i64, i64), libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT playtime_limit_min, playtime_window_h FROM tenants WHERE id = ?1",
+                params![tenant],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok((row.get::<i64>(0)?, row.get::<i64>(1)?)),
+            None => Ok((0, 0)),
+        }
+    }
+
+    /// Milliseconds the account has played inside the current window (0 if the window has rolled over).
+    pub async fn playtime_used(
+        &self,
+        tenant: &str,
+        account_id: &str,
+        window_ms: i64,
+        now_ms: i64,
+    ) -> Result<i64, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT window_start_ms, used_ms FROM playtime WHERE tenant = ?1 AND account_id = ?2",
+                params![tenant, account_id],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => {
+                let start = row.get::<i64>(0)?;
+                if now_ms - start > window_ms {
+                    return Ok(0);
+                }
+                Ok(row.get::<i64>(1)?)
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Add `delta_ms` to the account's used time, rolling the window over when it has expired. Returns
+    /// the used total after the update.
+    pub async fn add_playtime(
+        &self,
+        tenant: &str,
+        account_id: &str,
+        delta_ms: i64,
+        window_ms: i64,
+        now_ms: i64,
+    ) -> Result<i64, libsql::Error> {
+        let used = self
+            .playtime_used(tenant, account_id, window_ms, now_ms)
+            .await?;
+        let fresh = used == 0;
+        let new_used = used + delta_ms;
+        if fresh {
+            self.conn
+                .execute(
+                    "INSERT INTO playtime (tenant, account_id, window_start_ms, used_ms)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(tenant, account_id) DO UPDATE SET window_start_ms = ?3, used_ms = ?4",
+                    params![tenant, account_id, now_ms, new_used],
+                )
+                .await?;
+        } else {
+            self.conn
+                .execute(
+                    "UPDATE playtime SET used_ms = ?3 WHERE tenant = ?1 AND account_id = ?2",
+                    params![tenant, account_id, new_used],
+                )
+                .await?;
+        }
+        Ok(new_used)
     }
 
     /// Raw tenant upsert. Kept separate from `ensure()` so seeding never re-enters schema
@@ -1023,6 +1123,45 @@ mod tests {
             .collect();
         assert!(ids.contains(&"teo".to_string()));
         assert!(ids.contains(&"demo".to_string()));
+    }
+
+    #[tokio::test]
+    async fn demo_tenant_has_a_playtime_budget_others_unlimited() {
+        let db = memory_db().await;
+        assert_eq!(db.tenant_playtime("demo").await.unwrap(), (5, 24));
+        assert_eq!(db.tenant_playtime("teo").await.unwrap(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn playtime_accrues_and_resets_with_the_window() {
+        let db = memory_db().await;
+        let window = 1000;
+        assert_eq!(db.playtime_used("teo", "acc", window, 0).await.unwrap(), 0);
+        assert_eq!(
+            db.add_playtime("teo", "acc", 400, window, 0).await.unwrap(),
+            400
+        );
+        assert_eq!(
+            db.playtime_used("teo", "acc", window, 100).await.unwrap(),
+            400
+        );
+        assert_eq!(
+            db.add_playtime("teo", "acc", 300, window, 200)
+                .await
+                .unwrap(),
+            700
+        );
+        // once the window has rolled over, the used time resets
+        assert_eq!(
+            db.playtime_used("teo", "acc", window, 5000).await.unwrap(),
+            0
+        );
+        assert_eq!(
+            db.add_playtime("teo", "acc", 100, window, 5000)
+                .await
+                .unwrap(),
+            100
+        );
     }
 
     #[tokio::test]

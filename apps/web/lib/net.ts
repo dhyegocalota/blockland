@@ -45,7 +45,8 @@ export type NetState =
   | 'offline'
   | 'banned'
   | 'kicked'
-  | 'room_closed';
+  | 'room_closed'
+  | 'time_up';
 
 type WelcomeMsg = Extract<ServerMsg, { t: 'welcome' }>;
 type SnapshotMsg = Extract<ServerMsg, { t: 'snapshot' }>;
@@ -236,6 +237,7 @@ export function createNet(opts: NetOptions): NetClient {
     kicked: 'kicked',
     room_closed: 'room_closed',
     suspended: 'room_closed',
+    time_up: 'time_up',
     reclaimed: 'kicked',
     claim_required: 'kicked',
   };

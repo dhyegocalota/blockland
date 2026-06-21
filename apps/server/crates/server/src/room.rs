@@ -145,6 +145,10 @@ struct Player {
     // The block currently being chipped and how many taps have landed, so the server decides the break.
     dig_block: Option<[i32; 3]>,
     dig_hits: u8,
+    // Play-time accounting: the account's used time before this session, and how much of this session
+    // has already been persisted (so the periodic flush only writes the new delta).
+    playtime_baseline_ms: i64,
+    playtime_persisted_ms: i64,
     joined_at_ms: u64,
     ping_nonce: u32,
     ping_sent_at: Instant,
@@ -175,6 +179,10 @@ pub struct Room {
     // Server-authoritative creature population and the monotonic id counter that names each one.
     creatures: Vec<Creature>,
     next_creature_id: u32,
+    // Per-tenant play-time budget, cached from the db on the first join (0 = unlimited). A logged-in
+    // account that exceeds `playtime_limit_ms` within `playtime_window_ms` is sent to the lobby.
+    playtime_limit_ms: i64,
+    playtime_window_ms: i64,
 }
 
 const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
@@ -227,6 +235,8 @@ impl Room {
             chat_enabled: true,
             creatures: Vec::new(),
             next_creature_id: 1,
+            playtime_limit_ms: 0,
+            playtime_window_ms: 0,
             hub,
         }
     }
@@ -382,6 +392,38 @@ impl Room {
             let _ = reply.send(Err("suspended".into()));
             return;
         }
+        // Play-time budget (per-tenant, logged-in accounts only): cache the tenant's config and turn an
+        // over-budget player away with "time_up".
+        let (limit_min, window_h) = self
+            .hub
+            .db
+            .tenant_playtime(&self.key.0)
+            .await
+            .unwrap_or((0, 0));
+        self.playtime_limit_ms = limit_min * 60_000;
+        self.playtime_window_ms = window_h * 3_600_000;
+        let mut playtime_baseline = 0;
+        if self.playtime_limit_ms > 0 && !account_id.is_empty() {
+            playtime_baseline = self
+                .hub
+                .db
+                .playtime_used(
+                    &self.key.0,
+                    &account_id,
+                    self.playtime_window_ms,
+                    epoch_ms() as i64,
+                )
+                .await
+                .unwrap_or(0);
+            if playtime_baseline >= self.playtime_limit_ms {
+                let _ = conn.try_send(ServerMsg::Error {
+                    code: "time_up".into(),
+                    msg: "You've used your play time for now.".into(),
+                });
+                let _ = reply.send(Err("time_up".into()));
+                return;
+            }
+        }
         let id = self.hub.alloc_id();
         // A guest arrives without a name; give them a unique, recognizable one so two guests never
         // collide on a generic label. A logged-in player keeps their authoritative account name.
@@ -419,6 +461,8 @@ impl Room {
             hurt_at: now,
             dig_block: None,
             dig_hits: 0,
+            playtime_baseline_ms: playtime_baseline,
+            playtime_persisted_ms: 0,
             joined_at_ms: epoch_ms(),
             ping_nonce: 0,
             ping_sent_at: now,
@@ -1116,6 +1160,49 @@ impl Room {
                 self.players.remove(&id);
                 self.broadcast(&ServerMsg::Left { id });
             }
+
+            // Play-time accounting: flush each logged-in player's session delta to the db and send the
+            // ones who hit their budget to the lobby.
+            if self.playtime_limit_ms > 0 {
+                let limit = self.playtime_limit_ms;
+                let window = self.playtime_window_ms;
+                let now_ms = epoch_ms() as i64;
+                let tenant = self.key.0.clone();
+                let mut time_up: Vec<PlayerId> = Vec::new();
+                for p in self.players.values_mut() {
+                    if p.account_id.is_empty() {
+                        continue;
+                    }
+                    let session = now_ms - p.joined_at_ms as i64;
+                    let delta = session - p.playtime_persisted_ms;
+                    if delta > 0 {
+                        p.playtime_persisted_ms = session;
+                        let db = self.hub.db.clone();
+                        let tenant = tenant.clone();
+                        let account = p.account_id.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = db
+                                .add_playtime(&tenant, &account, delta, window, now_ms)
+                                .await
+                            {
+                                tracing::error!(error = %e, "add_playtime failed");
+                            }
+                        });
+                    }
+                    if p.playtime_baseline_ms + session >= limit {
+                        time_up.push(p.id);
+                    }
+                }
+                for id in time_up {
+                    if let Some(p) = self.players.remove(&id) {
+                        let _ = p.conn.try_send(ServerMsg::Error {
+                            code: "time_up".into(),
+                            msg: "You've used your play time for now.".into(),
+                        });
+                    }
+                    self.broadcast(&ServerMsg::Left { id });
+                }
+            }
         }
 
         // Server-initiated ping for authoritative latency measurement.
@@ -1557,6 +1644,8 @@ mod tests {
             hurt_at: now,
             dig_block: None,
             dig_hits: 0,
+            playtime_baseline_ms: 0,
+            playtime_persisted_ms: 0,
             joined_at_ms: 0,
             ping_nonce: 0,
             ping_sent_at: now,
