@@ -24,10 +24,14 @@ import { parseSavedPosition, serializeSavedPosition } from './engine/saved-posit
 import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from './engine/poofs';
 import { nextFrame, smoothFps } from './engine/frame-cap';
 import {
-  chunkDistanceSquared, chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
+  chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
 } from './engine/chunk-grid';
+import { type QueuedChunk, enqueueChunks, shouldMeshDequeued, sortQueueByDistance } from './engine/mesh-queue';
 import { STRUCTURE_KINDS, type StructureKind, structureReach, structureTarget } from './engine/structure-build';
-import { bestScore, heartsLabel, persistedRecord, roundCoordinate } from './engine/scoreboard';
+import { bestScore, heartsLabel, persistedRecord } from './engine/scoreboard';
+import { aimPitch, aimYaw, lookDirection } from './engine/aim';
+import { type DebugSnapshot, buildDebugSnapshot } from './engine/debug-snapshot';
+import { canPlaceSelected as canPlaceOffline, shouldSpendBlock } from './engine/place-eligibility';
 import { STARTING_ROSTER, spawnPosition } from './engine/creature-spawn';
 import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './engine/creature-combat';
 import { chooseCoopTarget, chooseLocalTarget } from './engine/attack-target';
@@ -75,17 +79,7 @@ interface GameWindow extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
-export interface DebugSnapshot {
-  fps: number;
-  ping: number;
-  state: string;
-  online: number;
-  x: number;
-  y: number;
-  z: number;
-  chunks: number;
-  tenant: string;
-}
+export type { DebugSnapshot } from './engine/debug-snapshot';
 
 // The admin command surface shared by the in-game engine and the headless lobby connection, so the
 // same useRoomAdmin dispatch drives both.
@@ -227,21 +221,20 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   const LOAD_R = isTouch ? 4 : 6;
   let lastPlayerChunkX: number | null = null, lastPlayerChunkZ: number | null = null;
-  interface QueuedChunk { cx: number; cz: number; key: number; }
   const meshQueue: QueuedChunk[] = [];
   const queuedKeys = new Set<number>();
+  const isMeshed = (key: number): boolean => (chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key);
   function updateChunks(force?: boolean): void {
     const center = playerChunk(player.pos);
     if (!force && center.cx === lastPlayerChunkX && center.cz === lastPlayerChunkZ) return;
     lastPlayerChunkX = center.cx; lastPlayerChunkZ = center.cz;
-    for (const { cx, cz } of chunksInRadius({ center, radius: LOAD_R, chunksX, chunksZ })) {
-      const key = chunkKey(cx, cz);
-      if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key) || queuedKeys.has(key)) continue;
-      queuedKeys.add(key);
-      meshQueue.push({ cx, cz, key });
+    const candidates = chunksInRadius({ center, radius: LOAD_R, chunksX, chunksZ })
+      .map(({ cx, cz }) => ({ cx, cz, key: chunkKey(cx, cz) }));
+    for (const chunk of enqueueChunks({ candidates, isMeshed, isQueued: (key) => queuedKeys.has(key) })) {
+      queuedKeys.add(chunk.key);
+      meshQueue.push(chunk);
     }
-    meshQueue.sort((a, b) =>
-      chunkDistanceSquared({ chunk: a, center }) - chunkDistanceSquared({ chunk: b, center }));
+    sortQueueByDistance({ queue: meshQueue, center });
     for (const [key, meshes] of chunkMeshes) {
       const chunk = decodeChunkKey({ key: Number(key), chunksZ });
       if (!chunkOutsideKeepRange({ chunk, center, radius: LOAD_R })) continue;
@@ -255,11 +248,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     while (done < budget && meshQueue.length) {
       const next = meshQueue.shift();
       if (!next) break;
-      const { cx, cz, key } = next;
-      queuedKeys.delete(key);
-      if ((chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key)) continue;
-      if (chunkOutsideKeepRange({ chunk: { cx, cz }, center, radius: LOAD_R })) continue;
-      meshChunk(cx, cz);
+      queuedKeys.delete(next.key);
+      if (!shouldMeshDequeued({ chunk: next, center, radius: LOAD_R, isMeshed })) continue;
+      meshChunk(next.cx, next.cz);
       done++;
     }
   }
@@ -424,14 +415,13 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     coop?.sendEdit(op, x, y, z, id);
   }
   function debugSnapshot(): DebugSnapshot {
-    const base = {
-      fps: Math.round(fps),
-      x: roundCoordinate(player.pos.x), y: roundCoordinate(player.pos.y), z: roundCoordinate(player.pos.z),
+    return buildDebugSnapshot({
+      fps,
+      x: player.pos.x, y: player.pos.y, z: player.pos.z,
       chunks: chunkMeshes.size,
       tenant: brand.id,
-    };
-    if (!coop) return { ...base, ping: 0, state: 'offline', online: 1 };
-    return { ...base, ping: coop.ping, state: coop.state, online: coop.onlineCount };
+      coop: coop ? { ping: coop.ping, state: coop.state, onlineCount: coop.onlineCount } : null,
+    });
   }
   bridge?.bind({
     sendChat: (text) => { if (chatEnabled) coop?.sendChat(text); },
@@ -737,7 +727,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (!canPlaceSelected()) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
     // Co-op spends the block server-side (it decrements and pushes the new counts back); offline the
     // local inventory is authoritative, so spend + repaint here.
-    if (!coop && !infiniteResources) { inventory.spend(selected); updateHotbarCounts(); }
+    if (!coop && shouldSpendBlock({ infiniteResources })) { inventory.spend(selected); updateHotbarCounts(); }
     setVoxel(px, py, pz, selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
     sendCoopEdit('place', px, py, pz, selected);
@@ -748,7 +738,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // flag; offline reads the local BlockInventory + the local infinite toggle.
   function canPlaceSelected(): boolean {
     if (coop) return coop.infinite || coop.inventoryCount(selected) > 0;
-    return infiniteResources || inventory.canPlace(selected);
+    return canPlaceOffline({ infiniteResources, count: inventory.count(selected) });
   }
   // True if the cell would land on the local player or any remote player (no building on people).
   function overlapsPlayer(x: number, y: number, z: number): boolean {
@@ -853,12 +843,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     clampToWorld(player.pos);
 
     camera.position.copy(player.pos);
-    const lookDir = new THREE.Vector3(
-      Math.sin(player.yaw) * Math.cos(player.pitch),
-      Math.sin(player.pitch),
-      Math.cos(player.yaw) * Math.cos(player.pitch)
-    );
-    camera.lookAt(camera.position.clone().add(lookDir));
+    const look = lookDirection({ yaw: player.yaw, pitch: player.pitch });
+    camera.lookAt(camera.position.clone().add(new THREE.Vector3(look.x, look.y, look.z)));
 
     const r = raycastVoxel();
     if (r) { highlight.visible = true; highlight.position.set(r.hit[0] + 0.5, r.hit[1] + 0.5, r.hit[2] + 0.5); }
@@ -1241,10 +1227,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       fly: () => player.fly,
       teleport: (x: number, y: number, z: number) => { player.pos.set(x, y + EYE_HEIGHT, z); player.vel.set(0, 0, 0); },
       setFly: (on: boolean) => { player.fly = on; },
-      face: (x: number, z: number) => { player.yaw = Math.atan2(x - player.pos.x, z - player.pos.z); player.pitch = 0; },
+      face: (x: number, z: number) => { player.yaw = aimYaw({ targetX: x, targetZ: z, fromX: player.pos.x, fromZ: player.pos.z }); player.pitch = 0; },
       attackAt: (x: number, y: number, z: number) => {
-        player.yaw = Math.atan2(x - player.pos.x, z - player.pos.z);
-        player.pitch = Math.atan2(y - player.pos.y, Math.hypot(x - player.pos.x, z - player.pos.z));
+        player.yaw = aimYaw({ targetX: x, targetZ: z, fromX: player.pos.x, fromZ: player.pos.z });
+        player.pitch = aimPitch({ targetX: x, targetY: y, targetZ: z, fromX: player.pos.x, fromY: player.pos.y, fromZ: player.pos.z });
         camera.position.copy(player.pos);
         camera.lookAt(x, y, z);
         primaryAction();
