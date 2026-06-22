@@ -23,9 +23,9 @@ function seoMetadata(host: string): Metadata {
   };
 }
 
-// Per-tenant title + favicon: only an actual tenant subdomain (teo.<root>) shows its own name +
+// Per-tenant title + favicon: only an actual tenant subdomain (acme.<root>) shows its own name +
 // avatar. The app root (and its global pages like /admin, /welcome) stays generic "Blockland" — it
-// must NOT inherit the default tenant's branding.
+// must NOT inherit any tenant's branding.
 export async function generateMetadata(): Promise<Metadata> {
   const host = headers().get('host')?.split(':')[0];
   if (!host) return { title: 'Blockland', description: DESCRIPTION, manifest: '/manifest.webmanifest' };

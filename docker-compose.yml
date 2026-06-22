@@ -11,7 +11,7 @@ services:
       RUST_LOG: info,server=debug
       DATABASE_PATH: /data/db/blockland.db
     volumes:
-      - ./apps/server/tenants.toml:/etc/teocraft/tenants.toml:ro
+      - ./apps/server/tenants.toml:/etc/blockland/tenants.toml:ro
       - blockland-db:/data/db
     restart: unless-stopped
     # keep an abuser/runaway from eating the host

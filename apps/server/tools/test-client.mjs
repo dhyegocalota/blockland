@@ -2,7 +2,7 @@
 //   node tools/test-client.mjs [count] [tenant] [world]
 const URL = process.env.URL || 'ws://localhost:8080/ws';
 const COUNT = Number(process.argv[2] || 3);
-const TENANT = process.argv[3] || 'teo';
+const TENANT = process.argv[3] || 'acme';
 const WORLD = process.argv[4] || 'lobby';
 
 const last = {}; // bot index -> last snapshot

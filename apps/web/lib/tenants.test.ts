@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveTenant, rootDomainOf, tenantIdFromLocation, tenantSubdomain } from './tenants';
-import { DEFAULT_TENANT } from './builtins';
 
 const PROD_ROOT = 'blockland.dhyegocalota.com.br';
 
@@ -37,15 +36,15 @@ describe('tenantSubdomain', () => {
 
   it('extracts the tenant from a production subdomain', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    stubLocation({ hostname: `teo.${PROD_ROOT}`, search: '' });
-    expect(tenantSubdomain()).toBe('teo');
+    stubLocation({ hostname: `acme.${PROD_ROOT}`, search: '' });
+    expect(tenantSubdomain()).toBe('acme');
   });
 
   it('is null on bare localhost and a tenant on a localhost subdomain', () => {
     stubLocation({ hostname: 'localhost', search: '' });
     expect(tenantSubdomain()).toBeNull();
-    stubLocation({ hostname: 'teo.localhost', search: '' });
-    expect(tenantSubdomain()).toBe('teo');
+    stubLocation({ hostname: 'acme.localhost', search: '' });
+    expect(tenantSubdomain()).toBe('acme');
   });
 });
 
@@ -57,11 +56,11 @@ describe('rootDomainOf', () => {
 
   it('drops a production tenant label back to the root', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(rootDomainOf(`teo.${PROD_ROOT}`)).toBe(PROD_ROOT);
+    expect(rootDomainOf(`acme.${PROD_ROOT}`)).toBe(PROD_ROOT);
   });
 
   it('drops a localhost tenant label to bare localhost', () => {
-    expect(rootDomainOf('teo.localhost')).toBe('localhost');
+    expect(rootDomainOf('acme.localhost')).toBe('localhost');
     expect(rootDomainOf('localhost')).toBe('localhost');
   });
 });
@@ -74,39 +73,39 @@ describe('tenantIdFromLocation', () => {
   });
 
   it('resolves a localhost subdomain', () => {
-    stubLocation({ hostname: 'teo.localhost', search: '' });
-    expect(tenantIdFromLocation()).toBe('teo');
+    stubLocation({ hostname: 'acme.localhost', search: '' });
+    expect(tenantIdFromLocation()).toBe('acme');
   });
 
   it('resolves a production subdomain', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    stubLocation({ hostname: `teo.${PROD_ROOT}`, search: '' });
-    expect(tenantIdFromLocation()).toBe('teo');
+    stubLocation({ hostname: `acme.${PROD_ROOT}`, search: '' });
+    expect(tenantIdFromLocation()).toBe('acme');
   });
 
-  it('falls back to the default tenant on the app root', () => {
+  it('is null on the production app root (no tenant resolved)', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
     stubLocation({ hostname: PROD_ROOT, search: '' });
-    expect(tenantIdFromLocation()).toBe(DEFAULT_TENANT);
+    expect(tenantIdFromLocation()).toBeNull();
   });
 
-  it('falls back to the default tenant on bare localhost', () => {
+  it('is null on bare localhost (no tenant resolved)', () => {
     stubLocation({ hostname: 'localhost', search: '' });
-    expect(tenantIdFromLocation()).toBe(DEFAULT_TENANT);
+    expect(tenantIdFromLocation()).toBeNull();
   });
 });
 
 describe('resolveTenant', () => {
   it('returns the tenant from the data API as online', async () => {
-    stubLocation({ hostname: 'teo.localhost', search: '' });
-    const tenant = { id: 'teo', name: 'Teocraft' };
+    stubLocation({ hostname: 'acme.localhost', search: '' });
+    const tenant = { id: 'acme', name: 'Acme' };
     stubFetch({ ok: true, json: () => Promise.resolve(tenant) });
     await expect(resolveTenant()).resolves.toEqual({ tenant, offline: false });
   });
 
   it('falls back to the bundled tenant.json as offline when the API fails', async () => {
-    stubLocation({ hostname: 'teo.localhost', search: '' });
-    const tenant = { id: 'teo', name: 'Teocraft' };
+    stubLocation({ hostname: 'acme.localhost', search: '' });
+    const tenant = { id: 'acme', name: 'Acme' };
     stubFetchByUrl({ api: { ok: false }, bundle: { ok: true, json: () => Promise.resolve(tenant) } });
     await expect(resolveTenant()).resolves.toEqual({ tenant, offline: true });
   });
@@ -115,5 +114,10 @@ describe('resolveTenant', () => {
     stubLocation({ hostname: 'ghost.localhost', search: '' });
     stubFetchByUrl({ api: { ok: false }, bundle: { ok: false } });
     await expect(resolveTenant()).rejects.toThrow('tenant_unavailable:ghost');
+  });
+
+  it('throws when no tenant resolves from the host or query', async () => {
+    stubLocation({ hostname: 'localhost', search: '' });
+    await expect(resolveTenant()).rejects.toThrow('tenant_unresolved');
   });
 });

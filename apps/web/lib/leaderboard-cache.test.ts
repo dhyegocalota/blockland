@@ -5,24 +5,24 @@ afterEach(() => clearCache());
 
 describe('leaderboard cache', () => {
   it('returns null for an unknown key', () => {
-    expect(readCache('teo:all', 0)).toBeNull();
+    expect(readCache('acme:all', 0)).toBeNull();
   });
 
   it('reads back a written record within the ttl', () => {
     const scores = [{ name: 'Ana', score: 42 }];
-    writeCache('teo:all', scores, 1_000);
-    expect(readCache('teo:all', 1_000 + LEADERBOARD_TTL_MS - 1)).toEqual(scores);
+    writeCache('acme:all', scores, 1_000);
+    expect(readCache('acme:all', 1_000 + LEADERBOARD_TTL_MS - 1)).toEqual(scores);
   });
 
   it('expires a record once the ttl has passed', () => {
-    writeCache('teo:all', [{ name: 'Ana', score: 42 }], 1_000);
-    expect(readCache('teo:all', 1_000 + LEADERBOARD_TTL_MS)).toBeNull();
+    writeCache('acme:all', [{ name: 'Ana', score: 42 }], 1_000);
+    expect(readCache('acme:all', 1_000 + LEADERBOARD_TTL_MS)).toBeNull();
   });
 
   it('keeps the all-time and month boards under separate keys', () => {
-    writeCache('teo:all', [{ name: 'Ana', score: 42 }], 0);
-    writeCache('teo:month', [{ name: 'Bea', score: 9 }], 0);
-    expect(readCache('teo:month', 0)).toEqual([{ name: 'Bea', score: 9 }]);
+    writeCache('acme:all', [{ name: 'Ana', score: 42 }], 0);
+    writeCache('acme:month', [{ name: 'Bea', score: 9 }], 0);
+    expect(readCache('acme:month', 0)).toEqual([{ name: 'Bea', score: 9 }]);
   });
 
   it('never grows past the entry ceiling', () => {

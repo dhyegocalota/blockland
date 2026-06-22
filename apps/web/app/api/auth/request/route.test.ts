@@ -23,7 +23,7 @@ afterEach(() => vi.clearAllMocks());
 
 describe('POST /api/auth/request', () => {
   it('rejects a missing field as invalid', async () => {
-    const res = await POST(post({ tenant: 'teo', name: 'Ann' }));
+    const res = await POST(post({ tenant: 'acme', name: 'Ann' }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: 'invalid' });
     expect(authRequestMock).not.toHaveBeenCalled();
@@ -31,7 +31,7 @@ describe('POST /api/auth/request', () => {
 
   it('sends the email with the magic link + code and never leaks them to the browser', async () => {
     authRequestMock.mockResolvedValue({ ok: true, token: 'tok123', code: '654321', name: 'Ann', email: 'a@x.io' });
-    const res = await POST(post({ tenant: 'teo', name: 'Ann', email: 'a@x.io' }));
+    const res = await POST(post({ tenant: 'acme', name: 'Ann', email: 'a@x.io' }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(sendMock).toHaveBeenCalledTimes(1);
@@ -43,7 +43,7 @@ describe('POST /api/auth/request', () => {
 
   it('maps not_owner to an error response', async () => {
     authRequestMock.mockResolvedValue({ ok: false, error: 'not_owner' });
-    const res = await POST(post({ tenant: 'teo', name: 'Ann', email: 'a@x.io' }));
+    const res = await POST(post({ tenant: 'acme', name: 'Ann', email: 'a@x.io' }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: 'not_owner' });
     expect(sendMock).not.toHaveBeenCalled();

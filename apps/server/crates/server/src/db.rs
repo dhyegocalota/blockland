@@ -1337,9 +1337,9 @@ fn row_to_tenant(row: &libsql::Row) -> Result<Tenant, libsql::Error> {
 fn builtin_tenants() -> Vec<Tenant> {
     vec![
         Tenant {
-            id: "teo".into(),
-            name: "Teocraft".into(),
-            image: "/tenants/teo/avatar.png".into(),
+            id: "acme".into(),
+            name: "Acme".into(),
+            image: "/tenants/acme/avatar.png".into(),
         },
         Tenant {
             id: "demo".into(),
@@ -1367,7 +1367,7 @@ mod tests {
             .into_iter()
             .map(|t| t.id)
             .collect();
-        assert!(ids.contains(&"teo".to_string()));
+        assert!(ids.contains(&"acme".to_string()));
         assert!(ids.contains(&"demo".to_string()));
     }
 
@@ -1375,57 +1375,59 @@ mod tests {
     async fn demo_tenant_has_a_playtime_budget_others_unlimited() {
         let db = memory_db().await;
         assert_eq!(db.tenant_playtime("demo").await.unwrap(), (5, 24));
-        assert_eq!(db.tenant_playtime("teo").await.unwrap(), (0, 0));
+        assert_eq!(db.tenant_playtime("acme").await.unwrap(), (0, 0));
     }
 
     #[tokio::test]
     async fn world_blob_round_trips_and_overwrites() {
         let db = memory_db().await;
-        assert!(db.load_world("teo").await.unwrap().is_none());
-        db.save_world("teo", &[1, 2, 3]).await.unwrap();
-        assert_eq!(db.load_world("teo").await.unwrap(), Some(vec![1, 2, 3]));
-        db.save_world("teo", &[9, 9]).await.unwrap();
-        assert_eq!(db.load_world("teo").await.unwrap(), Some(vec![9, 9]));
+        assert!(db.load_world("acme").await.unwrap().is_none());
+        db.save_world("acme", &[1, 2, 3]).await.unwrap();
+        assert_eq!(db.load_world("acme").await.unwrap(), Some(vec![1, 2, 3]));
+        db.save_world("acme", &[9, 9]).await.unwrap();
+        assert_eq!(db.load_world("acme").await.unwrap(), Some(vec![9, 9]));
         assert!(db.load_world("other").await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn tenant_flags_default_off_and_round_trip() {
         let db = memory_db().await;
-        assert_eq!(db.tenant_flags("teo").await.unwrap(), (false, false));
-        db.set_tenant_suspended("teo", true).await.unwrap();
-        db.set_tenant_approval_required("teo", true).await.unwrap();
-        assert_eq!(db.tenant_flags("teo").await.unwrap(), (true, true));
-        db.set_tenant_suspended("teo", false).await.unwrap();
-        assert_eq!(db.tenant_flags("teo").await.unwrap(), (false, true));
+        assert_eq!(db.tenant_flags("acme").await.unwrap(), (false, false));
+        db.set_tenant_suspended("acme", true).await.unwrap();
+        db.set_tenant_approval_required("acme", true).await.unwrap();
+        assert_eq!(db.tenant_flags("acme").await.unwrap(), (true, true));
+        db.set_tenant_suspended("acme", false).await.unwrap();
+        assert_eq!(db.tenant_flags("acme").await.unwrap(), (false, true));
     }
 
     #[tokio::test]
     async fn playtime_accrues_and_resets_with_the_window() {
         let db = memory_db().await;
         let window = 1000;
-        assert_eq!(db.playtime_used("teo", "acc", window, 0).await.unwrap(), 0);
+        assert_eq!(db.playtime_used("acme", "acc", window, 0).await.unwrap(), 0);
         assert_eq!(
-            db.add_playtime("teo", "acc", 400, window, 0).await.unwrap(),
+            db.add_playtime("acme", "acc", 400, window, 0)
+                .await
+                .unwrap(),
             400
         );
         assert_eq!(
-            db.playtime_used("teo", "acc", window, 100).await.unwrap(),
+            db.playtime_used("acme", "acc", window, 100).await.unwrap(),
             400
         );
         assert_eq!(
-            db.add_playtime("teo", "acc", 300, window, 200)
+            db.add_playtime("acme", "acc", 300, window, 200)
                 .await
                 .unwrap(),
             700
         );
         // once the window has rolled over, the used time resets
         assert_eq!(
-            db.playtime_used("teo", "acc", window, 5000).await.unwrap(),
+            db.playtime_used("acme", "acc", window, 5000).await.unwrap(),
             0
         );
         assert_eq!(
-            db.add_playtime("teo", "acc", 100, window, 5000)
+            db.add_playtime("acme", "acc", 100, window, 5000)
                 .await
                 .unwrap(),
             100
@@ -1518,10 +1520,10 @@ mod tests {
     #[tokio::test]
     async fn full_flow_account_submit_then_top_scores() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.submit_score(&ann, 42).await.unwrap();
 
-        let top = db.top_scores("teo", default_top_limit()).await.unwrap();
+        let top = db.top_scores("acme", default_top_limit()).await.unwrap();
         assert_eq!(top.len(), 1);
         assert_eq!(top[0].name, "Ann");
         assert_eq!(top[0].score, 42);
@@ -1532,7 +1534,7 @@ mod tests {
         // The leaderboard JOINs scores onto accounts. If accounts are lost but score rows survive
         // (a half-restored db), the row silently vanishes from the board.
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.submit_score(&ann, 99).await.unwrap();
         db.conn
             .execute("DELETE FROM accounts WHERE account_id = ?1", params![ann])
@@ -1540,7 +1542,7 @@ mod tests {
             .unwrap();
 
         assert!(db
-            .top_scores("teo", default_top_limit())
+            .top_scores("acme", default_top_limit())
             .await
             .unwrap()
             .is_empty());
@@ -1549,11 +1551,11 @@ mod tests {
     #[tokio::test]
     async fn leaderboard_keeps_best_score_per_account() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.submit_score(&ann, 100).await.unwrap();
         db.submit_score(&ann, 10).await.unwrap();
 
-        let top = db.top_scores("teo", default_top_limit()).await.unwrap();
+        let top = db.top_scores("acme", default_top_limit()).await.unwrap();
         let ann_rows: Vec<&ScoreEntry> = top.iter().filter(|e| e.name == "Ann").collect();
         assert_eq!(ann_rows.len(), 1);
         assert_eq!(ann_rows[0].score, 100);
@@ -1562,16 +1564,16 @@ mod tests {
     #[tokio::test]
     async fn leaderboard_orders_desc_and_isolates_tenants() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
-        let bob = account(&db, "teo", "bob@x.com", "Bob").await;
-        let cid = account(&db, "teo", "cid@x.com", "Cid").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        let bob = account(&db, "acme", "bob@x.com", "Bob").await;
+        let cid = account(&db, "acme", "cid@x.com", "Cid").await;
         let zoe = account(&db, "demo", "zoe@x.com", "Zoe").await;
         db.submit_score(&ann, 30).await.unwrap();
         db.submit_score(&bob, 50).await.unwrap();
         db.submit_score(&cid, 40).await.unwrap();
         db.submit_score(&zoe, 5).await.unwrap();
 
-        let top = db.top_scores("teo", default_top_limit()).await.unwrap();
+        let top = db.top_scores("acme", default_top_limit()).await.unwrap();
         let names: Vec<&str> = top.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["Bob", "Cid", "Ann"]);
     }
@@ -1579,11 +1581,11 @@ mod tests {
     #[tokio::test]
     async fn submit_score_rejects_negative_and_unknown_account() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.submit_score(&ann, -1).await.unwrap();
         db.submit_score("no-such-account", 5).await.unwrap();
         assert!(db
-            .top_scores("teo", default_top_limit())
+            .top_scores("acme", default_top_limit())
             .await
             .unwrap()
             .is_empty());
@@ -1592,13 +1594,13 @@ mod tests {
     #[tokio::test]
     async fn rename_keeps_the_leaderboard_under_the_new_name() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.submit_score(&ann, 77).await.unwrap();
 
         let old = db.rename_account(&ann, "Annie").await.unwrap().unwrap();
         assert_eq!(old, "Ann");
 
-        let top = db.top_scores("teo", default_top_limit()).await.unwrap();
+        let top = db.top_scores("acme", default_top_limit()).await.unwrap();
         assert_eq!(top.len(), 1);
         assert_eq!(top[0].name, "Annie");
         assert_eq!(top[0].score, 77);
@@ -1607,8 +1609,8 @@ mod tests {
     #[tokio::test]
     async fn rename_refuses_a_taken_name() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
-        account(&db, "teo", "bob@x.com", "Bob").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        account(&db, "acme", "bob@x.com", "Bob").await;
         assert!(db.rename_account(&ann, "Bob").await.unwrap().is_none());
         assert_eq!(
             db.get_account_by_id(&ann).await.unwrap().unwrap().name,
@@ -1619,17 +1621,20 @@ mod tests {
     #[tokio::test]
     async fn claim_account_finds_or_creates_and_renames_when_free() {
         let db = memory_db().await;
-        let first = db.claim_account("teo", "ann@x.com", "Ann").await.unwrap();
+        let first = db.claim_account("acme", "ann@x.com", "Ann").await.unwrap();
         assert!(!first.renamed);
         // Same email, new free name -> renames the same account.
-        let second = db.claim_account("teo", "ann@x.com", "Annie").await.unwrap();
+        let second = db
+            .claim_account("acme", "ann@x.com", "Annie")
+            .await
+            .unwrap();
         assert_eq!(second.account_id, first.account_id);
         assert!(second.renamed);
         assert_eq!(second.old_name, "Ann");
         assert_eq!(second.name, "Annie");
         // Same email, a name taken by someone else -> keeps current name, not renamed.
-        account(&db, "teo", "bob@x.com", "Bob").await;
-        let third = db.claim_account("teo", "ann@x.com", "Bob").await.unwrap();
+        account(&db, "acme", "bob@x.com", "Bob").await;
+        let third = db.claim_account("acme", "ann@x.com", "Bob").await.unwrap();
         assert_eq!(third.account_id, first.account_id);
         assert!(!third.renamed);
         assert_eq!(third.name, "Annie");
@@ -1638,8 +1643,8 @@ mod tests {
     #[tokio::test]
     async fn set_role_moves_an_account_between_tiers() {
         let db = memory_db().await;
-        account(&db, "teo", "first@x.com", "First").await;
-        let kid = account(&db, "teo", "kid@x.com", "Kid").await;
+        account(&db, "acme", "first@x.com", "First").await;
+        let kid = account(&db, "acme", "kid@x.com", "Kid").await;
         assert_eq!(db.role(&kid).await.unwrap(), Role::Player);
 
         assert!(db.set_role(&kid, Role::Moderator).await.unwrap());
@@ -1658,10 +1663,10 @@ mod tests {
     #[tokio::test]
     async fn first_registered_account_of_a_tenant_is_admin() {
         let db = memory_db().await;
-        let first = db.claim_account("teo", "ann@x.com", "Ann").await.unwrap();
+        let first = db.claim_account("acme", "ann@x.com", "Ann").await.unwrap();
         assert!(first.is_admin);
         assert!(db.is_admin(&first.account_id).await.unwrap());
-        let second = db.claim_account("teo", "bob@x.com", "Bob").await.unwrap();
+        let second = db.claim_account("acme", "bob@x.com", "Bob").await.unwrap();
         assert!(!second.is_admin);
         assert!(!db.is_admin(&second.account_id).await.unwrap());
         // The count is per tenant: another tenant's first account is admin too.
@@ -1673,10 +1678,13 @@ mod tests {
     #[tokio::test]
     async fn claim_account_reports_admin_for_an_already_admin_account() {
         let db = memory_db().await;
-        let ann = db.claim_account("teo", "ann@x.com", "Ann").await.unwrap();
+        let ann = db.claim_account("acme", "ann@x.com", "Ann").await.unwrap();
         assert!(ann.is_admin);
         // Re-claiming the same account (same email) keeps reporting its admin flag.
-        let again = db.claim_account("teo", "ann@x.com", "Annie").await.unwrap();
+        let again = db
+            .claim_account("acme", "ann@x.com", "Annie")
+            .await
+            .unwrap();
         assert!(again.is_admin);
     }
 
@@ -1684,25 +1692,25 @@ mod tests {
     async fn set_admin_by_email_grants_then_revokes_and_reports_unknown() {
         let db = memory_db().await;
         // Seed the auto-admin first account so the account under test starts non-admin.
-        account(&db, "teo", "first@x.com", "First").await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        account(&db, "acme", "first@x.com", "First").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         assert!(!db.is_admin(&ann).await.unwrap());
 
         assert!(db
-            .set_admin_by_email("teo", "ann@x.com", true)
+            .set_admin_by_email("acme", "ann@x.com", true)
             .await
             .unwrap());
         assert!(db.is_admin(&ann).await.unwrap());
 
         assert!(db
-            .set_admin_by_email("teo", "ann@x.com", false)
+            .set_admin_by_email("acme", "ann@x.com", false)
             .await
             .unwrap());
         assert!(!db.is_admin(&ann).await.unwrap());
 
         // An unknown email reports no change, and tenants are isolated.
         assert!(!db
-            .set_admin_by_email("teo", "nobody@x.com", true)
+            .set_admin_by_email("acme", "nobody@x.com", true)
             .await
             .unwrap());
         assert!(!db
@@ -1715,18 +1723,22 @@ mod tests {
     async fn admin_flag_defaults_off_and_grants_then_revokes() {
         let db = memory_db().await;
         // The first account is auto-admin, so seed one before the account under test.
-        account(&db, "teo", "first@x.com", "First").await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        account(&db, "acme", "first@x.com", "First").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         assert!(!db.is_admin(&ann).await.unwrap());
         let before = db.get_account_by_id(&ann).await.unwrap().unwrap();
         assert!(!before.is_admin);
 
-        assert!(db.set_admin_by_name("teo", "Ann", true).await.unwrap());
+        assert!(db.set_admin_by_name("acme", "Ann", true).await.unwrap());
         assert!(db.is_admin(&ann).await.unwrap());
-        let granted = db.get_account_by_name("teo", "Ann").await.unwrap().unwrap();
+        let granted = db
+            .get_account_by_name("acme", "Ann")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(granted.is_admin);
 
-        assert!(db.set_admin_by_name("teo", "Ann", false).await.unwrap());
+        assert!(db.set_admin_by_name("acme", "Ann", false).await.unwrap());
         assert!(!db.is_admin(&ann).await.unwrap());
     }
 
@@ -1734,12 +1746,16 @@ mod tests {
     async fn set_admin_reports_unknown_name_and_isolates_tenants() {
         let db = memory_db().await;
         // Seed the auto-admin first account so "Ann" is a plain (non-admin) account.
-        account(&db, "teo", "first@x.com", "First").await;
-        account(&db, "teo", "ann@x.com", "Ann").await;
-        assert!(!db.set_admin_by_name("teo", "Nobody", true).await.unwrap());
+        account(&db, "acme", "first@x.com", "First").await;
+        account(&db, "acme", "ann@x.com", "Ann").await;
+        assert!(!db.set_admin_by_name("acme", "Nobody", true).await.unwrap());
         // A same-named account in another tenant is not affected.
         assert!(!db.set_admin_by_name("demo", "Ann", true).await.unwrap());
-        let ann = db.get_account_by_name("teo", "Ann").await.unwrap().unwrap();
+        let ann = db
+            .get_account_by_name("acme", "Ann")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!ann.is_admin);
     }
 
@@ -1752,14 +1768,14 @@ mod tests {
     #[tokio::test]
     async fn list_accounts_returns_tenant_accounts_with_admin_flag() {
         let db = memory_db().await;
-        account(&db, "teo", "ann@x.com", "Ann").await;
-        account(&db, "teo", "bob@x.com", "Bob").await;
+        account(&db, "acme", "ann@x.com", "Ann").await;
+        account(&db, "acme", "bob@x.com", "Bob").await;
         account(&db, "demo", "zoe@x.com", "Zoe").await;
         // Ann is the tenant's first account (auto-admin); clear it so only Bob is admin here.
-        db.set_admin_by_name("teo", "Ann", false).await.unwrap();
-        db.set_admin_by_name("teo", "Bob", true).await.unwrap();
+        db.set_admin_by_name("acme", "Ann", false).await.unwrap();
+        db.set_admin_by_name("acme", "Bob", true).await.unwrap();
 
-        let accounts = db.list_accounts("teo").await.unwrap();
+        let accounts = db.list_accounts("acme").await.unwrap();
         let names: Vec<&str> = accounts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, vec!["Ann", "Bob"]);
         let bob = accounts.iter().find(|a| a.name == "Bob").unwrap();
@@ -1773,25 +1789,25 @@ mod tests {
     async fn magic_link_unlocks_once_by_code_or_token() {
         let db = memory_db().await;
         assert!(db
-            .get_account_by_name("teo", "Ann")
+            .get_account_by_name("acme", "Ann")
             .await
             .unwrap()
             .is_none());
-        db.create_magic_link("tok1", "123456", "teo", "Ann", "a@b.com", 60_000)
+        db.create_magic_link("tok1", "123456", "acme", "Ann", "a@b.com", 60_000)
             .await
             .unwrap();
         assert!(db
-            .consume_magic_link(None, Some(("teo", "Ann", "000000")))
+            .consume_magic_link(None, Some(("acme", "Ann", "000000")))
             .await
             .unwrap()
             .is_none());
         let link = db
-            .consume_magic_link(None, Some(("teo", "Ann", "123456")))
+            .consume_magic_link(None, Some(("acme", "Ann", "123456")))
             .await
             .unwrap()
             .unwrap();
         assert_eq!(link.email, "a@b.com");
-        assert_eq!(link.tenant, "teo");
+        assert_eq!(link.tenant, "acme");
         assert!(db
             .consume_magic_link(Some("tok1"), None)
             .await
@@ -1802,7 +1818,7 @@ mod tests {
     #[tokio::test]
     async fn claims_replace_resolve_and_clear_by_token() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.set_claim(&ann, "tokA").await.unwrap();
         db.set_claim(&ann, "tokB").await.unwrap();
         assert_eq!(
@@ -1811,10 +1827,10 @@ mod tests {
         );
         // The live token resolves to the account's current name (server-authoritative).
         assert_eq!(
-            db.claim_to_account("teo", "tokB").await.unwrap(),
+            db.claim_to_account("acme", "tokB").await.unwrap(),
             Some((ann.clone(), "Ann".to_string()))
         );
-        assert!(db.claim_to_account("teo", "tokA").await.unwrap().is_none());
+        assert!(db.claim_to_account("acme", "tokA").await.unwrap().is_none());
         // A stale token must not clear a re-claimed session.
         db.clear_claim(&ann, "tokA").await.unwrap();
         assert_eq!(db.all_claims().await.unwrap().len(), 1);
@@ -1825,11 +1841,11 @@ mod tests {
     #[tokio::test]
     async fn events_log_records_and_replays_recent_first() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
-        db.record_event("teo", &ann, "rename", "Annie", "Ann")
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        db.record_event("acme", &ann, "rename", "Annie", "Ann")
             .await
             .unwrap();
-        db.record_event("teo", &ann, "rename", "AnnieB", "Annie")
+        db.record_event("acme", &ann, "rename", "AnnieB", "Annie")
             .await
             .unwrap();
         // Another tenant's events never leak in.
@@ -1839,7 +1855,7 @@ mod tests {
             .unwrap();
 
         let events = db
-            .recent_events("teo", default_event_backlog())
+            .recent_events("acme", default_event_backlog())
             .await
             .unwrap();
         let pairs: Vec<(&str, &str)> = events
@@ -1852,20 +1868,20 @@ mod tests {
     #[tokio::test]
     async fn approval_request_then_approve_clears_pending_and_marks_approved() {
         let db = memory_db().await;
-        let ann = account(&db, "teo", "ann@x.com", "Ann").await;
-        assert!(!db.is_approved("teo", &ann).await.unwrap());
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        assert!(!db.is_approved("acme", &ann).await.unwrap());
 
-        db.record_approval_request("teo", &ann, "Ann", "ann@x.com")
+        db.record_approval_request("acme", &ann, "Ann", "ann@x.com")
             .await
             .unwrap();
-        let pending = db.pending_approvals("teo").await.unwrap();
+        let pending = db.pending_approvals("acme").await.unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].account_id, ann);
 
-        db.approve_account("teo", &ann).await.unwrap();
-        assert!(db.is_approved("teo", &ann).await.unwrap());
+        db.approve_account("acme", &ann).await.unwrap();
+        assert!(db.is_approved("acme", &ann).await.unwrap());
         assert!(
-            db.pending_approvals("teo").await.unwrap().is_empty(),
+            db.pending_approvals("acme").await.unwrap().is_empty(),
             "approving clears the pending request"
         );
     }
@@ -1873,34 +1889,34 @@ mod tests {
     #[tokio::test]
     async fn rejecting_a_request_drops_it_from_pending_and_marks_it_rejected() {
         let db = memory_db().await;
-        let kid = account(&db, "teo", "kid@x.com", "Kid").await;
-        db.record_approval_request("teo", &kid, "Kid", "kid@x.com")
+        let kid = account(&db, "acme", "kid@x.com", "Kid").await;
+        db.record_approval_request("acme", &kid, "Kid", "kid@x.com")
             .await
             .unwrap();
-        assert!(!db.is_rejected("teo", &kid).await.unwrap());
+        assert!(!db.is_rejected("acme", &kid).await.unwrap());
 
-        db.reject_approval_request("teo", &kid).await.unwrap();
-        assert!(db.is_rejected("teo", &kid).await.unwrap());
-        assert!(!db.is_approved("teo", &kid).await.unwrap());
+        db.reject_approval_request("acme", &kid).await.unwrap();
+        assert!(db.is_rejected("acme", &kid).await.unwrap());
+        assert!(!db.is_approved("acme", &kid).await.unwrap());
         assert!(
-            db.pending_approvals("teo").await.unwrap().is_empty(),
+            db.pending_approvals("acme").await.unwrap().is_empty(),
             "a rejected request is no longer pending"
         );
 
         // A later approval overrides the rejection and clears the row.
-        db.approve_account("teo", &kid).await.unwrap();
-        assert!(db.is_approved("teo", &kid).await.unwrap());
-        assert!(!db.is_rejected("teo", &kid).await.unwrap());
+        db.approve_account("acme", &kid).await.unwrap();
+        assert!(db.is_approved("acme", &kid).await.unwrap());
+        assert!(!db.is_rejected("acme", &kid).await.unwrap());
     }
 
     #[tokio::test]
     async fn tenant_admin_emails_lists_only_that_tenant_admins() {
         let db = memory_db().await;
         // The first account of a tenant is its admin.
-        let _admin = account(&db, "teo", "parent@x.com", "Parent").await;
-        let _kid = account(&db, "teo", "kid@x.com", "Kid").await;
+        let _admin = account(&db, "acme", "parent@x.com", "Parent").await;
+        let _kid = account(&db, "acme", "kid@x.com", "Kid").await;
         let _other = account(&db, "demo", "zoe@x.com", "Zoe").await;
-        let emails = db.tenant_admin_emails("teo").await.unwrap();
+        let emails = db.tenant_admin_emails("acme").await.unwrap();
         assert_eq!(emails, vec!["parent@x.com".to_string()]);
     }
 

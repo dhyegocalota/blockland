@@ -15,11 +15,11 @@ describe('rootHomeUrl', () => {
 
   it('strips the tenant subdomain back to the root on production', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(rootHomeUrl(`teo.${PROD_ROOT}`)).toBe(`https://${PROD_ROOT}/`);
+    expect(rootHomeUrl(`acme.${PROD_ROOT}`)).toBe(`https://${PROD_ROOT}/`);
   });
 
   it('strips a localhost tenant to bare localhost over http', () => {
-    expect(rootHomeUrl('teo.localhost')).toBe('http://localhost/');
+    expect(rootHomeUrl('acme.localhost')).toBe('http://localhost/');
   });
 
   it('keeps bare localhost over http', () => {
@@ -30,11 +30,11 @@ describe('rootHomeUrl', () => {
 describe('welcomeRedirectTarget', () => {
   it('redirects a tenant subdomain hitting /welcome to the root home', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(welcomeRedirectTarget({ host: `teo.${PROD_ROOT}`, path: '/welcome' })).toBe(`https://${PROD_ROOT}/`);
+    expect(welcomeRedirectTarget({ host: `acme.${PROD_ROOT}`, path: '/welcome' })).toBe(`https://${PROD_ROOT}/`);
   });
 
   it('redirects a localhost tenant hitting /welcome to bare localhost', () => {
-    expect(welcomeRedirectTarget({ host: 'teo.localhost', path: '/welcome' })).toBe('http://localhost/');
+    expect(welcomeRedirectTarget({ host: 'acme.localhost', path: '/welcome' })).toBe('http://localhost/');
   });
 
   it('does not redirect the root host on /welcome', () => {
@@ -44,14 +44,14 @@ describe('welcomeRedirectTarget', () => {
 
   it('does not redirect a tenant subdomain on other paths', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(welcomeRedirectTarget({ host: `teo.${PROD_ROOT}`, path: '/' })).toBeNull();
+    expect(welcomeRedirectTarget({ host: `acme.${PROD_ROOT}`, path: '/' })).toBeNull();
   });
 });
 
 describe('robotsCanonicalFor', () => {
   it('marks a tenant subdomain noindex with a canonical to the root', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(robotsCanonicalFor(`teo.${PROD_ROOT}`)).toEqual({
+    expect(robotsCanonicalFor(`acme.${PROD_ROOT}`)).toEqual({
       noindex: true,
       canonical: `https://${PROD_ROOT}/`,
     });
@@ -66,7 +66,7 @@ describe('robotsCanonicalFor', () => {
   });
 
   it('marks a localhost tenant noindex with a canonical to bare localhost', () => {
-    expect(robotsCanonicalFor('teo.localhost')).toEqual({
+    expect(robotsCanonicalFor('acme.localhost')).toEqual({
       noindex: true,
       canonical: 'http://localhost/',
     });

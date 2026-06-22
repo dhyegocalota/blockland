@@ -22,7 +22,7 @@ const STATS = {
   rooms: 2,
   tenants: [],
   room_list: [
-    { tenant: 'teo', players: [{ id: 1 }, { id: 2 }] },
+    { tenant: 'acme', players: [{ id: 1 }, { id: 2 }] },
     { tenant: 'mia', players: [{ id: 3 }] },
   ],
 };
@@ -49,11 +49,11 @@ describe('GET /api/admin/online', () => {
 
   it('scopes the room list to the requested tenant', async () => {
     fetchOnlineMock.mockResolvedValue(STATS);
-    const res = await GET(adminRequest('?tenant=teo'));
+    const res = await GET(adminRequest('?tenant=acme'));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       ...STATS,
-      room_list: [{ tenant: 'teo', players: [{ id: 1 }, { id: 2 }] }],
+      room_list: [{ tenant: 'acme', players: [{ id: 1 }, { id: 2 }] }],
     });
   });
 

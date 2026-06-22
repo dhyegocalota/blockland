@@ -2,8 +2,8 @@
 
 A **white-label** platform of 3D block worlds for kids: build, hunt creatures, fight
 monsters, collect stars and fly. Each customer is a **tenant** with its own branding
-(name, colors, avatar, photo-on-a-block). The first tenant is **Teocraft**, made for
-Teodoro.
+(name, colors, avatar, photo-on-a-block). The sample tenant shipped with the repo is
+**Acme**.
 
 The interface defaults to **pt-BR** (en-US is also available) through an i18n layer,
 while each tenant's content (name, tagline, titles, hero) is stored as data.
@@ -20,7 +20,7 @@ apps/
       tenant-store.js   tenant persistence backed by libSQL
       builtins.js       built-in tenants (seed + offline fallback)
       i18n/             message catalog and runtime (pt-BR default, en-US available)
-    public/             per-tenant assets (e.g. /tenants/teo/face.png)
+    public/             per-tenant assets (e.g. /tenants/acme/face.png)
     test/               test stubs/helpers
   server/               authoritative multiplayer server (Rust workspace)
     crates/
@@ -41,7 +41,7 @@ npm install
 npm run dev     # http://localhost:3000
 ```
 
-- Default tenant: **Teocraft** (`/`). Another tenant: `/?tenant=demo`.
+- Pick a tenant with `/?tenant=acme` (or a subdomain). Another tenant: `/?tenant=demo`.
 - To add a new customer, create a tenant from the `/admin` panel (or add it to
   `apps/web/lib/builtins.js` to ship it as a built-in) — nothing tenant-specific is baked
   into the engine.
@@ -51,9 +51,9 @@ npm run dev     # http://localhost:3000
 The active tenant is resolved client-side (`apps/web/lib/tenants.js`):
 
 1. `?tenant=<id>` query parameter wins (e.g. `/?tenant=demo`).
-2. Otherwise the first subdomain label is used (e.g. `teo.localhost` → `teo`).
+2. Otherwise the first subdomain label is used (e.g. `acme.localhost` → `acme`).
    `www` and bare `localhost`/`*.vercel.app` hosts are not treated as tenant subdomains.
-3. Otherwise it falls back to `NEXT_PUBLIC_DEFAULT_TENANT` (default `teo`).
+3. Otherwise no tenant resolves and the client surfaces the failure (no silent default).
 
 The resolved id is fetched from the tenant store via `/api/tenants/<id>`; if the store is
 unreachable it falls back to the built-in tenants.
@@ -61,7 +61,7 @@ unreachable it falls back to the built-in tenants.
 ### Local subdomain tenant access
 
 ```
-http://teo.localhost:3000      # Teocraft
+http://acme.localhost:3000     # Acme
 http://demo.localhost:3000     # Demo World
 ```
 
@@ -89,7 +89,7 @@ The table is created and seeded from the built-in tenants on first run.
 
 ```bash
 docker compose up --build game-server
-node apps/server/tools/test-client.mjs 4 teo lobby                              # connect 4 bots and print the verdict
+node apps/server/tools/test-client.mjs 4 acme lobby                             # connect 4 bots and print the verdict
 curl -H "x-admin-token: dev-admin-secret" http://localhost:8080/admin/stats    # who is online, where, ping
 ```
 
@@ -118,7 +118,6 @@ See `.env.sample` for the full list with comments.
 | `ADMIN_KEY` | Secret for the `/admin` panel and `/api/admin/*` routes. |
 | `DATABASE_URL` | libSQL/Turso URL for the tenant store. Unset → local SQLite file. |
 | `DATABASE_AUTH_TOKEN` | Auth token for a remote libSQL/Turso database. |
-| `NEXT_PUBLIC_DEFAULT_TENANT` | Fallback tenant id when none is resolved (default `teo`). |
 
 **Server (`apps/server`):**
 
@@ -149,4 +148,4 @@ server workspace and `npm run build` for the web client on every push.
 
 ---
 
-Made with 💛 — it started as a Minecraft for Teodoro and became a platform.
+Made with 💛 — it started as a Minecraft for one kid and became a platform.

@@ -16,9 +16,9 @@ afterEach(() => vi.clearAllMocks());
 describe('auth client', () => {
   it('authRequest posts to the request route and returns the token + code', async () => {
     signedFetchMock.mockResolvedValue(ok({ ok: true, token: 'abc', code: '123456', name: 'Ann', email: 'a@x.io' }));
-    const result = await authRequest({ tenant: 'teo', name: 'Ann', email: 'a@x.io' });
+    const result = await authRequest({ tenant: 'acme', name: 'Ann', email: 'a@x.io' });
     expect(signedFetchMock).toHaveBeenCalledWith('POST', '/internal/auth/request', {
-      tenant: 'teo',
+      tenant: 'acme',
       name: 'Ann',
       email: 'a@x.io',
     });
@@ -27,24 +27,24 @@ describe('auth client', () => {
 
   it('authRequest surfaces a not_owner failure', async () => {
     signedFetchMock.mockResolvedValue(ok({ ok: false, error: 'not_owner' }));
-    expect(await authRequest({ tenant: 'teo', name: 'Ann', email: 'b@x.io' })).toEqual({
+    expect(await authRequest({ tenant: 'acme', name: 'Ann', email: 'b@x.io' })).toEqual({
       ok: false,
       error: 'not_owner',
     });
   });
 
   it('authVerifyToken posts only the token', async () => {
-    signedFetchMock.mockResolvedValue(ok({ ok: true, tenant: 'teo', name: 'Ann', claim: 'cl' }));
+    signedFetchMock.mockResolvedValue(ok({ ok: true, tenant: 'acme', name: 'Ann', claim: 'cl' }));
     const result = await authVerifyToken('tok');
     expect(signedFetchMock).toHaveBeenCalledWith('POST', '/internal/auth/verify', { token: 'tok' });
-    expect(result).toEqual({ ok: true, tenant: 'teo', name: 'Ann', claim: 'cl' });
+    expect(result).toEqual({ ok: true, tenant: 'acme', name: 'Ann', claim: 'cl' });
   });
 
   it('authVerifyCode posts tenant, name and code', async () => {
     signedFetchMock.mockResolvedValue(ok({ ok: false }));
-    await authVerifyCode({ tenant: 'teo', name: 'Ann', code: '000000' });
+    await authVerifyCode({ tenant: 'acme', name: 'Ann', code: '000000' });
     expect(signedFetchMock).toHaveBeenCalledWith('POST', '/internal/auth/verify', {
-      tenant: 'teo',
+      tenant: 'acme',
       name: 'Ann',
       code: '000000',
     });
@@ -52,9 +52,9 @@ describe('auth client', () => {
 
   it('authLogout posts the claim triple', async () => {
     signedFetchMock.mockResolvedValue(ok({ ok: true }));
-    const result = await authLogout({ tenant: 'teo', name: 'Ann', claim: 'cl' });
+    const result = await authLogout({ tenant: 'acme', name: 'Ann', claim: 'cl' });
     expect(signedFetchMock).toHaveBeenCalledWith('POST', '/internal/auth/logout', {
-      tenant: 'teo',
+      tenant: 'acme',
       name: 'Ann',
       claim: 'cl',
     });
@@ -63,9 +63,9 @@ describe('auth client', () => {
 
   it('authRename posts the tenant, claim and new name and returns the new name', async () => {
     signedFetchMock.mockResolvedValue(ok({ ok: true, name: 'Bea' }));
-    const result = await authRename({ tenant: 'teo', claim: 'cl', newName: 'Bea' });
+    const result = await authRename({ tenant: 'acme', claim: 'cl', newName: 'Bea' });
     expect(signedFetchMock).toHaveBeenCalledWith('POST', '/internal/auth/rename', {
-      tenant: 'teo',
+      tenant: 'acme',
       claim: 'cl',
       newName: 'Bea',
     });
@@ -74,7 +74,7 @@ describe('auth client', () => {
 
   it('authRename surfaces a name_taken failure', async () => {
     signedFetchMock.mockResolvedValue(ok({ ok: false, error: 'name_taken' }));
-    expect(await authRename({ tenant: 'teo', claim: 'cl', newName: 'Bea' })).toEqual({
+    expect(await authRename({ tenant: 'acme', claim: 'cl', newName: 'Bea' })).toEqual({
       ok: false,
       error: 'name_taken',
     });

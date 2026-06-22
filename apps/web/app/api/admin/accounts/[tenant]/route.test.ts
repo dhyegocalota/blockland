@@ -14,7 +14,7 @@ const fetchAccountsMock = vi.mocked(fetchAccounts);
 const ADMIN_KEY = 'dev-admin-secret';
 
 function adminRequest(): Request {
-  return new Request('http://x/api/admin/accounts/teo', { headers: { 'x-admin-key': ADMIN_KEY } });
+  return new Request('http://x/api/admin/accounts/acme', { headers: { 'x-admin-key': ADMIN_KEY } });
 }
 
 beforeEach(() => {
@@ -25,7 +25,7 @@ afterEach(() => vi.clearAllMocks());
 
 describe('GET /api/admin/accounts/[tenant]', () => {
   it('returns 401 without a valid admin key', async () => {
-    const res = await GET(new Request('http://x/api/admin/accounts/teo'), { params: { tenant: 'teo' } });
+    const res = await GET(new Request('http://x/api/admin/accounts/acme'), { params: { tenant: 'acme' } });
     expect(res.status).toBe(401);
     expect(fetchAccountsMock).not.toHaveBeenCalled();
   });
@@ -39,15 +39,15 @@ describe('GET /api/admin/accounts/[tenant]', () => {
 
   it('proxies the accounts list when authorized', async () => {
     fetchAccountsMock.mockResolvedValue([{ name: 'Ana', admin: true }]);
-    const res = await GET(adminRequest(), { params: { tenant: 'teo' } });
-    expect(fetchAccountsMock).toHaveBeenCalledWith('teo');
+    const res = await GET(adminRequest(), { params: { tenant: 'acme' } });
+    expect(fetchAccountsMock).toHaveBeenCalledWith('acme');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ name: 'Ana', admin: true }]);
   });
 
   it('maps an upstream failure to a generic 502', async () => {
     fetchAccountsMock.mockRejectedValue(new AdminUpstreamError(503));
-    const res = await GET(adminRequest(), { params: { tenant: 'teo' } });
+    const res = await GET(adminRequest(), { params: { tenant: 'acme' } });
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'upstream_error' });
   });
