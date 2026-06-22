@@ -169,8 +169,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       onRole: (role) => bridge.hud.onRole(role),
     };
     runtime.coop = createCoop({
-      three: runtime.gfx,
-      scene: runtime.scene,
+      view: runtime.coopView,
       url: serverUrl,
       tenant: brand.id,
       world: MAIN_WORLD,

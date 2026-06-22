@@ -5,6 +5,8 @@
 
 import { CREATURE_DEFS, type CreatureDef } from '../offline/creatures';
 
+export type { CreatureDef };
+
 export function creatureDefFor(kind: string): CreatureDef {
   const def = CREATURE_DEFS[kind];
   if (!def) throw new Error(`unknown creature kind ${kind}`);
