@@ -52,7 +52,7 @@ const HURT_LEVEL_SLACK: f32 = 0.5;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
 const PLAYER_BODY_HEIGHT: f32 = 1.7;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
-const DIG_HITS: u8 = 4;
+const DIG_HITS: u8 = 2;
 // Minimum gap between two accepted primary actions (dig / creature hit / pvp attack) from one player.
 // The client holds-to-attack at ATTACK_REPEAT_MS (250ms); this is kept a touch more lenient to tolerate
 // network jitter, so a modified client can't spam faster than a legit hold.
@@ -3266,8 +3266,8 @@ mod tests {
         ));
 
         room.on_input(1, ClientMsg::Hit { id: 52 });
-        assert_eq!(room.creatures.len(), 1, "a 3-hp cow survives the first hit");
-        assert_eq!(room.creatures[0].hp, 2);
+        assert_eq!(room.creatures.len(), 1, "a 2-hp cow survives the first hit");
+        assert_eq!(room.creatures[0].hp, 1);
         assert_eq!(
             room.players.get(&1).unwrap().score,
             0,

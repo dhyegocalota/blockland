@@ -62,7 +62,7 @@ impl CreatureKind {
                 speed: 2.6,
             },
             Self::Cow => CreatureConfig {
-                hp: 3,
+                hp: 2,
                 reward: 3,
                 hostile: false,
                 speed: 1.8,
@@ -74,7 +74,7 @@ impl CreatureKind {
                 speed: 2.4,
             },
             Self::Spider => CreatureConfig {
-                hp: 3,
+                hp: 2,
                 reward: 5,
                 hostile: true,
                 speed: 3.0,
@@ -225,11 +225,11 @@ mod tests {
         assert!(!CreatureKind::Pig.config().hostile);
         assert_eq!(CreatureKind::Chicken.config().hp, 1);
         assert_eq!(CreatureKind::Chicken.config().reward, 1);
-        assert_eq!(CreatureKind::Cow.config().hp, 3);
+        assert_eq!(CreatureKind::Cow.config().hp, 2);
         assert_eq!(CreatureKind::Cow.config().reward, 3);
         assert_eq!(CreatureKind::Slime.config().reward, 3);
         assert!(CreatureKind::Slime.config().hostile);
-        assert_eq!(CreatureKind::Spider.config().hp, 3);
+        assert_eq!(CreatureKind::Spider.config().hp, 2);
         assert_eq!(CreatureKind::Spider.config().reward, 5);
         assert!(CreatureKind::Spider.config().hostile);
     }

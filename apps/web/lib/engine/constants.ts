@@ -25,7 +25,7 @@ export const EYE_HEIGHT = 1.55;
 export const REACH = 7;
 // Taps on the same block before it breaks — digging takes a little effort. Mirrors the Rust server's
 // DIG_HITS so an offline dig takes exactly as many taps as a co-op dig.
-export const DIG_HITS = 4;
+export const DIG_HITS = 2;
 // Cadence of hold-to-attack: while the attack button is held, primaryAction() fires this often (4/sec).
 // The Rust server enforces the same cadence (ATTACK_MIN_INTERVAL, slightly more lenient for jitter) so a
 // modified client can't spam faster than a legit hold.
