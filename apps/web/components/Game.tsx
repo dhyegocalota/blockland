@@ -49,6 +49,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
   reset_scores: '🏆',
   server_down: '⚠️',
   admin: '🛡️',
+  approval: '🙋',
 };
 
 function feedText(entry: FeedEntry): string {
@@ -58,6 +59,7 @@ function feedText(entry: FeedEntry): string {
   if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });
   if (entry.kind === 'reset_scores') return t('feed.reset_scores', { name: entry.name });
   if (entry.kind === 'server_down') return t('feed.server_down');
+  if (entry.kind === 'approval') return t('feed.approval', { name: entry.name });
   if (entry.kind === 'admin') {
     const parts = entry.detail ? entry.detail.split('|') : [];
     const action = parts[0];
@@ -391,6 +393,12 @@ export default function Game() {
           <div className={entry.kind === 'rename' || entry.kind === 'kill' ? 'feedLine system' : 'feedLine'} key={entry.id}>
             <span className="feedIcon">{FEED_ICONS[entry.kind]}</span>
             {feedText(entry)}
+            {isAdmin && entry.kind === 'approval' && entry.detail && pendingApprovals.some((pending) => pending.accountId === entry.detail) && (
+              <span className="adminPlayerActions">
+                <button className="role" onClick={() => approvePlayer(entry.detail!)}>{t('game_admin.approve')}</button>
+                <button className="ban" onClick={() => rejectPlayer(entry.detail!)}>{t('game_admin.reject')}</button>
+              </span>
+            )}
           </div>
         ))}
       </div>

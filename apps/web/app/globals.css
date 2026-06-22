@@ -527,16 +527,16 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 #adminPlayers .playerName .roleBadge, #adminPending .playerName .roleBadge { font-size: 14px; line-height: 1; }
 #adminPlayers .adminPlayerActions, #adminPending .adminPlayerActions, #adminBanned .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; }
-#adminStructures button, #adminPlayers button, #adminPending button, #adminBanned button {
+#adminStructures button, #adminPlayers button, #adminPending button, #adminBanned button, #feed .adminPlayerActions button {
   font-family: inherit; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff;
   background: rgba(123,79,194,.45); border: 2px solid rgba(255,255,255,.35); border-radius: 9px;
   padding: 4px 9px; white-space: nowrap; transition: transform .08s;
 }
-#adminStructures button:active, #adminPlayers button:active, #adminPending button:active, #adminBanned button:active { transform: translateY(2px); }
+#adminStructures button:active, #adminPlayers button:active, #adminPending button:active, #adminBanned button:active, #feed .adminPlayerActions button:active { transform: translateY(2px); }
 #adminStructures button.allowed { background: rgba(91,216,106,.3); }
 #adminStructures button.blocked { background: rgba(255,93,46,.4); }
 #adminPlayers button.kick { background: rgba(255,184,77,.45); border-color: var(--gold); }
-#adminPlayers button.ban, #adminPending button.ban { background: rgba(255,46,46,.5); border-color: rgba(255,93,46,.7); }
+#adminPlayers button.ban, #adminPending button.ban, #feed .adminPlayerActions button.ban { background: rgba(255,46,46,.5); border-color: rgba(255,93,46,.7); }
 #adminReset, #adminResetScores {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,46,46,.45); border: 2px solid rgba(255,93,46,.7); border-radius: 10px;
@@ -601,6 +601,7 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 .feedIcon { font-style: normal; opacity: .85; }
 .feedLine.system { color: var(--gold); font-style: normal; }
+#feed .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
 
 /* ---------- Start-screen leaderboard (compact, collapsible) ---------- */
 #sessionActions { z-index: 2; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }

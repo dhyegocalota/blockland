@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FEED_DEDUPE_MS, FEED_VISIBLE, diffRoster, pushFeed, type FeedEntry } from './feed';
+import { FEED_DEDUPE_MS, FEED_VISIBLE, diffPendingApprovals, diffRoster, pushFeed, type FeedEntry } from './feed';
 
 describe('diffRoster', () => {
   it('reports joiners present only in the next roster', () => {
@@ -20,6 +20,30 @@ describe('diffRoster', () => {
   it('reports a join and a leave in the same diff', () => {
     const events = diffRoster([{ id: 1, name: 'Ana' }], [{ id: 2, name: 'Beto' }]);
     expect(events).toEqual([{ kind: 'join', name: 'Beto' }, { kind: 'leave', name: 'Ana' }]);
+  });
+});
+
+describe('diffPendingApprovals', () => {
+  it('emits an approval event for a freshly held player carrying the accountId in detail', () => {
+    const events = diffPendingApprovals(new Set(), [{ accountId: 'a1', name: 'Ana' }]);
+    expect(events).toEqual([{ kind: 'approval', name: 'Ana', detail: 'a1' }]);
+  });
+
+  it('emits nothing for an account already seen', () => {
+    const events = diffPendingApprovals(new Set(['a1']), [{ accountId: 'a1', name: 'Ana' }]);
+    expect(events).toEqual([]);
+  });
+
+  it('emits only the newly held player when the set already has others', () => {
+    const events = diffPendingApprovals(new Set(['a1']), [
+      { accountId: 'a1', name: 'Ana' },
+      { accountId: 'a2', name: 'Beto' },
+    ]);
+    expect(events).toEqual([{ kind: 'approval', name: 'Beto', detail: 'a2' }]);
+  });
+
+  it('emits nothing when the pending list is empty', () => {
+    expect(diffPendingApprovals(new Set(['a1']), [])).toEqual([]);
   });
 });
 
@@ -67,6 +91,11 @@ describe('pushFeed', () => {
   it('appends a reset system event carrying the admin name', () => {
     const entries = pushFeed({ entries: [], event: { kind: 'reset', name: 'Maria' }, id: 0, now: 100 });
     expect(entries).toEqual([{ kind: 'reset', name: 'Maria', id: 0, at: 100 }]);
+  });
+
+  it('appends an approval event carrying the accountId in detail', () => {
+    const entries = pushFeed({ entries: [], event: { kind: 'approval', name: 'Ana', detail: 'a1' }, id: 0, now: 100 });
+    expect(entries).toEqual([{ kind: 'approval', name: 'Ana', detail: 'a1', id: 0, at: 100 }]);
   });
 
   it('caps the visible list to the last FEED_VISIBLE entries', () => {

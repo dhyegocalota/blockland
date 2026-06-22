@@ -13,6 +13,7 @@ import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-e
 import type { Appearance, RosterEntry } from '../lib/coop';
 import { randomLook } from '../lib/look';
 import { CHAT_FADE_MS } from '../lib/chat';
+import { diffPendingApprovals } from '../lib/feed';
 import { useChat } from './use-chat';
 import { useFeed } from './use-feed';
 import { useRoomAdmin } from './use-room-admin';
@@ -94,6 +95,7 @@ export function useGame() {
   const soloRef = useRef(false);
   const loginClearedRef = useRef(false);
   const suspendedRef = useRef(false);
+  const seenApprovalsRef = useRef<Set<string>>(new Set());
 
   const { entries: feed, pushFeedEntry } = useFeed();
   const {
@@ -209,7 +211,11 @@ export function useGame() {
           suspendedRef.current = state.suspended;
           setRoom(state);
         },
-        onPendingApprovals: (pending) => setPendingApprovals(pending),
+        onPendingApprovals: (pending) => {
+          diffPendingApprovals(seenApprovalsRef.current, pending).forEach((event) => pushFeedEntry(event));
+          seenApprovalsRef.current = new Set(pending.map((entry) => entry.accountId));
+          setPendingApprovals(pending);
+        },
         onBans: (bans) => setBans(bans),
         onError: (code) => {
           const key = AUTH_ERROR_KEYS[code];

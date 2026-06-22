@@ -2,7 +2,7 @@
 // keep the visible feed small and spam-free. coop.ts derives the raw transitions; Game.tsx folds
 // them into the visible list. No three.js / DOM here — just data, so it is fully unit-tested.
 
-export type FeedEventKind = 'join' | 'leave' | 'chat' | 'rename' | 'kill' | 'reset' | 'reset_scores' | 'server_down' | 'admin';
+export type FeedEventKind = 'join' | 'leave' | 'chat' | 'rename' | 'kill' | 'reset' | 'reset_scores' | 'server_down' | 'admin' | 'approval';
 
 export interface FeedEvent {
   kind: FeedEventKind;
@@ -36,6 +36,20 @@ export function diffRoster(prev: RosterMember[], next: RosterMember[]): FeedEven
     .filter((member) => !nextIds.has(member.id))
     .map((member) => ({ kind: 'leave', name: member.name }));
   return [...joins, ...leaves];
+}
+
+export interface PendingMember {
+  accountId: string;
+  name: string;
+}
+
+// Account ids present now but not in the already-seen set are freshly held players awaiting approval;
+// each becomes one `approval` event carrying the name and the accountId (in `detail`) so the feed can
+// approve/reject it. Resolved approvals simply drop out of `next` and never re-fire.
+export function diffPendingApprovals(seenIds: Set<string>, next: PendingMember[]): FeedEvent[] {
+  return next
+    .filter((member) => !seenIds.has(member.accountId))
+    .map((member) => ({ kind: 'approval', name: member.name, detail: member.accountId }));
 }
 
 function isDuplicate(previous: FeedEntry, event: FeedEvent, now: number): boolean {
