@@ -56,7 +56,7 @@ export default function Admin() {
       return;
     }
     const saved = localStorage.getItem('bl-admin-key');
-    if (saved) setKey(saved);
+    if (saved) { setKey(saved); load(saved); }
     const prev = { overflow: document.body.style.overflow, height: document.body.style.height };
     document.body.style.overflow = 'auto';
     document.body.style.height = 'auto';
@@ -70,6 +70,15 @@ export default function Admin() {
     setAuthed(true);
     setMsg('');
     localStorage.setItem('bl-admin-key', k);
+  }
+
+  function logout() {
+    localStorage.removeItem('bl-admin-key');
+    setKey('');
+    setAuthed(false);
+    setTenants([]);
+    setView('list');
+    setMsg('');
   }
 
   async function loadOnline(tenant: string) {
@@ -389,6 +398,7 @@ export default function Admin() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <h1 style={{ ...S.h1, flex: 1, marginBottom: 0 }}>{t('admin.tenants_title')}</h1>
         <button style={S.btn} onClick={startNew}>{t('admin.new_tenant')}</button>
+        <button style={S.small} onClick={logout}>{t('admin.logout')}</button>
       </div>
       <p style={{ color: '#9aa' }}>{t('admin.pick_tenant_hint')}</p>
       {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
