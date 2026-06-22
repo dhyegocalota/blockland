@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BEDROCK_ID, BLACK_ID, BLUE_ID, CELESTE_ID, CYAN_ID, FACE_ID,
-  GOLD_ID, GRASS_ID, HAIR_ID, RED_ID, SKIN_ID, WHITE_ID,
+  BEDROCK_ID, BLACK_ID, BLUE_ID, CELESTE_ID, FACE_ID,
+  GOLD_ID, GRASS_ID, RED_ID, SKIN_ID, WHITE_ID,
 } from './constants';
 import {
-  STRUCTURE_DEFS, STRUCTURE_KINDS, type SetVoxel, stampBall, stampCola, stampFigure, stampSteve, stampTrophy, structureDef,
+  STRUCTURE_DEFS, STRUCTURE_KINDS, type SetVoxel, stampBall, stampBottle, stampFigure, stampHero, stampTrophy, structureDef,
 } from './structures';
 import { messages } from '../i18n/catalog';
 
@@ -161,91 +161,91 @@ describe('stampFigure', () => {
   });
 });
 
-describe('stampCola', () => {
+describe('stampBottle', () => {
   const origin = { cx: -20, gy: 6, cz: 30 };
   const HEIGHT = 17;
 
-  it('uses a red body in the mid section', () => {
+  it('uses a blue body in the mid section', () => {
     const { set, cells } = recorder();
-    stampCola({ set, ...origin });
-    expect(cells.get(voxelKey(origin.cx, origin.gy + 4, origin.cz))).toBe(RED_ID);
+    stampBottle({ set, ...origin });
+    expect(cells.get(voxelKey(origin.cx, origin.gy + 4, origin.cz))).toBe(BLUE_ID);
   });
 
-  it('wraps a white band at dy 7..9', () => {
+  it('keeps the body a single blue tone with no contrasting band', () => {
     const { set, cells } = recorder();
-    stampCola({ set, ...origin });
-    for (let dy = 7; dy <= 9; dy++)
-      expect(cells.get(voxelKey(origin.cx, origin.gy + dy, origin.cz))).toBe(WHITE_ID);
+    stampBottle({ set, ...origin });
+    for (let dy = 1; dy <= HEIGHT - 3; dy++)
+      expect(cells.get(voxelKey(origin.cx, origin.gy + dy, origin.cz))).toBe(BLUE_ID);
   });
 
   it('caps silver rims at the bottom and top', () => {
     const { set, cells } = recorder();
-    stampCola({ set, ...origin });
+    stampBottle({ set, ...origin });
     expect(cells.get(voxelKey(origin.cx, origin.gy, origin.cz))).toBe(SILVER_ID);
     expect(cells.get(voxelKey(origin.cx, origin.gy + HEIGHT - 1, origin.cz))).toBe(SILVER_ID);
   });
 
-  it('caps the can with a silver pull-tab knob', () => {
+  it('caps the bottle with a silver cap knob', () => {
     const { set, cells } = recorder();
-    stampCola({ set, ...origin });
+    stampBottle({ set, ...origin });
     expect(cells.get(voxelKey(origin.cx, origin.gy + HEIGHT, origin.cz))).toBe(SILVER_ID);
   });
 
-  it('writes only red, white, and silver ids', () => {
+  it('writes only blue and silver ids', () => {
     const { set, cells } = recorder();
-    stampCola({ set, ...origin });
+    stampBottle({ set, ...origin });
     const ids = [...new Set(cells.values())].sort((a, b) => a - b);
-    expect(ids).toEqual([SILVER_ID, RED_ID, WHITE_ID].sort((a, b) => a - b));
+    expect(ids).toEqual([SILVER_ID, BLUE_ID].sort((a, b) => a - b));
   });
 
   it('clips the body to a circular cross-section', () => {
     const { set, cells } = recorder();
-    stampCola({ set, ...origin });
+    stampBottle({ set, ...origin });
     expect(cells.has(voxelKey(origin.cx + 4, origin.gy + 4, origin.cz + 4))).toBe(false);
   });
 });
 
-describe('stampSteve', () => {
+describe('stampHero', () => {
   const origin = { cx: 50, gy: 6, cz: 50 };
 
   it('puts skin-tone head voxels at dy 8..9 (except where back hair overlays)', () => {
     const { set, cells } = recorder();
-    stampSteve({ set, ...origin });
+    stampHero({ set, ...origin });
     const isBackHairCell = (dx: number, dy: number, dz: number): boolean =>
       dy === 9 && dz === 1 && (dx === -1 || dx === 1);
     for (let dz = 0; dz <= 1; dz++)
       for (let dy = 8; dy <= 9; dy++)
         for (let dx = -1; dx <= 1; dx++) {
-          const expected = isBackHairCell(dx, dy, dz) ? HAIR_ID : SKIN_ID;
+          const expected = isBackHairCell(dx, dy, dz) ? GOLD_ID : SKIN_ID;
           expect(cells.get(voxelKey(origin.cx + dx, origin.gy + dy, origin.cz + dz))).toBe(expected);
         }
   });
 
-  it('stands on bedrock shoes under blue jeans legs', () => {
+  it('stands on bedrock boots under green trouser legs', () => {
     const { set, cells } = recorder();
-    stampSteve({ set, ...origin });
+    stampHero({ set, ...origin });
     for (let dz = 0; dz <= 1; dz++) {
       expect(cells.get(voxelKey(origin.cx - 1, origin.gy, origin.cz + dz))).toBe(BEDROCK_ID);
       expect(cells.get(voxelKey(origin.cx + 1, origin.gy, origin.cz + dz))).toBe(BEDROCK_ID);
       for (let dy = 1; dy <= 3; dy++) {
-        expect(cells.get(voxelKey(origin.cx - 1, origin.gy + dy, origin.cz + dz))).toBe(BLUE_ID);
-        expect(cells.get(voxelKey(origin.cx + 1, origin.gy + dy, origin.cz + dz))).toBe(BLUE_ID);
+        expect(cells.get(voxelKey(origin.cx - 1, origin.gy + dy, origin.cz + dz))).toBe(GRASS_ID);
+        expect(cells.get(voxelKey(origin.cx + 1, origin.gy + dy, origin.cz + dz))).toBe(GRASS_ID);
       }
     }
   });
 
-  it('puts a cyan shirt across the torso at dy 4..7', () => {
+  it('puts a red shirt across the torso at dy 4..7', () => {
     const { set, cells } = recorder();
-    stampSteve({ set, ...origin });
+    stampHero({ set, ...origin });
     for (let dz = 0; dz <= 1; dz++)
       for (let dy = 4; dy <= 7; dy++)
         for (let dx = -1; dx <= 1; dx++)
-          expect(cells.get(voxelKey(origin.cx + dx, origin.gy + dy, origin.cz + dz))).toBe(CYAN_ID);
+          expect(cells.get(voxelKey(origin.cx + dx, origin.gy + dy, origin.cz + dz))).toBe(RED_ID);
   });
 
   it('puts bare skin arms at the sides for dy 4..6', () => {
     const { set, cells } = recorder();
-    stampSteve({ set, ...origin });
+    stampHero({ set, ...origin });
     for (let dz = 0; dz <= 1; dz++)
       for (let dy = 4; dy <= 6; dy++) {
         expect(cells.get(voxelKey(origin.cx - 2, origin.gy + dy, origin.cz + dz))).toBe(SKIN_ID);
@@ -253,34 +253,34 @@ describe('stampSteve', () => {
       }
   });
 
-  it('crowns the head with brown hair at dy 10', () => {
+  it('crowns the head with blond hair at dy 10', () => {
     const { set, cells } = recorder();
-    stampSteve({ set, ...origin });
+    stampHero({ set, ...origin });
     for (let dx = -1; dx <= 1; dx++)
       for (let dz = 0; dz <= 1; dz++)
-        expect(cells.get(voxelKey(origin.cx + dx, origin.gy + 10, origin.cz + dz))).toBe(HAIR_ID);
+        expect(cells.get(voxelKey(origin.cx + dx, origin.gy + 10, origin.cz + dz))).toBe(GOLD_ID);
   });
 
   it('adds hair on the back sides at dy 9', () => {
     const { set, cells } = recorder();
-    stampSteve({ set, ...origin });
-    expect(cells.get(voxelKey(origin.cx - 1, origin.gy + 9, origin.cz + 1))).toBe(HAIR_ID);
-    expect(cells.get(voxelKey(origin.cx + 1, origin.gy + 9, origin.cz + 1))).toBe(HAIR_ID);
+    stampHero({ set, ...origin });
+    expect(cells.get(voxelKey(origin.cx - 1, origin.gy + 9, origin.cz + 1))).toBe(GOLD_ID);
+    expect(cells.get(voxelKey(origin.cx + 1, origin.gy + 9, origin.cz + 1))).toBe(GOLD_ID);
   });
 });
 
 describe('STRUCTURE_DEFS registry', () => {
   it('drives STRUCTURE_KINDS from its keys', () => {
     expect(STRUCTURE_KINDS).toEqual(Object.keys(STRUCTURE_DEFS));
-    expect(STRUCTURE_KINDS).toEqual(['trophy', 'ball', 'figure', 'cola', 'steve']);
+    expect(STRUCTURE_KINDS).toEqual(['trophy', 'ball', 'figure', 'bottle', 'hero']);
   });
 
   it('keeps the per-kind remesh reach', () => {
     expect(structureDef('ball').reach).toBe(9);
-    expect(structureDef('cola').reach).toBe(6);
+    expect(structureDef('bottle').reach).toBe(6);
     expect(structureDef('trophy').reach).toBe(4);
     expect(structureDef('figure').reach).toBe(4);
-    expect(structureDef('steve').reach).toBe(4);
+    expect(structureDef('hero').reach).toBe(4);
   });
 
   it('exposes label, toast and emoji for every kind', () => {

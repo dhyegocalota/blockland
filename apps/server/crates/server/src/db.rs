@@ -485,6 +485,28 @@ impl Db {
         Ok(())
     }
 
+    /// Drop bans older than the retention window so a banned IP is never kept indefinitely. Returns the
+    /// number of rows removed.
+    pub async fn purge_stale_bans(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
+        let cutoff = now_ms() - max_age_ms;
+        self.conn
+            .execute("DELETE FROM bans WHERE created_at < ?1", params![cutoff])
+            .await
+    }
+
+    /// Insert a ban with an explicit timestamp, to exercise the retention purge.
+    #[cfg(test)]
+    pub(crate) async fn add_ban_at(&self, ip: &str, created_at: i64) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO bans (ip, created_at) VALUES (?1, ?2)
+                 ON CONFLICT(ip) DO UPDATE SET created_at = excluded.created_at",
+                params![ip, created_at],
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Milliseconds the account has played inside the current window (0 if the window has rolled over).
     pub async fn playtime_used(
         &self,
@@ -1355,6 +1377,19 @@ mod tests {
 
     async fn memory_db() -> Db {
         Db::memory().await
+    }
+
+    #[tokio::test]
+    async fn purge_stale_bans_drops_only_old_entries() {
+        let db = memory_db().await;
+        let day_ms = 24 * 60 * 60 * 1000;
+        db.add_ban_at("203.0.113.1", now_ms() - 100 * day_ms)
+            .await
+            .unwrap();
+        db.add_ban("203.0.113.2").await.unwrap();
+        let removed = db.purge_stale_bans(90 * day_ms).await.unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(db.all_bans().await.unwrap(), vec!["203.0.113.2"]);
     }
 
     #[tokio::test]

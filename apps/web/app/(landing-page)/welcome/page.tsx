@@ -61,10 +61,11 @@ export default function Welcome() {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
+  const [consent, setConsent] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
 
   const needsToken = Boolean(TURNSTILE_SITE_KEY) && turnstileToken.length === 0;
-  const canSubmit = status !== 'submitting' && !needsToken && isEmailValid(email);
+  const canSubmit = status !== 'submitting' && !needsToken && consent && isEmailValid(email);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -73,7 +74,7 @@ export default function Welcome() {
     const res = await fetch('/api/waitlist', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, name, phone, turnstileToken }),
+      body: JSON.stringify({ email, name, phone, turnstileToken, consent }),
     }).catch(() => null);
     if (!res || !res.ok) {
       setStatus('error');
@@ -193,6 +194,16 @@ export default function Welcome() {
                   />
                 </label>
                 {TURNSTILE_SITE_KEY && <Turnstile siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} />}
+                <label style={S.consent}>
+                  <input
+                    style={S.consentBox}
+                    type="checkbox"
+                    required
+                    checked={consent}
+                    onChange={(e) => setConsent(e.target.checked)}
+                  />
+                  <span>{copy.consentLabel}</span>
+                </label>
                 <button style={canSubmit ? S.submit : S.submitDisabled} type="submit" disabled={!canSubmit}>
                   {status === 'submitting' ? copy.submitting : copy.submit}
                 </button>
@@ -225,6 +236,7 @@ export default function Welcome() {
           </a>
           <p style={S.company}>{copy.companyLine}</p>
           <p style={S.company}>{copy.addressLine}</p>
+          <p style={S.disclaimer}>{copy.disclaimer}</p>
         </footer>
       </div>
     </main>
@@ -254,7 +266,7 @@ const S: Record<string, CSSProperties> = {
     background:
       'radial-gradient(120% 90% at 50% 6%, #ffffff55, transparent 42%),' +
       'radial-gradient(circle at 50% 22%, #bfeaff, #7ec8ff 58%, #3f9bdf 100%)',
-    fontFamily: "'Baloo 2', 'Comic Sans MS', system-ui, sans-serif", color: '#2a1a4a',
+    fontFamily: "'Comic Sans MS', system-ui, sans-serif", color: '#2a1a4a',
   },
   sky: { position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', overflow: 'hidden' },
   cloud: { position: 'absolute', filter: 'drop-shadow(0 8px 14px #0a4a7a22)', animation: 'bl-drift linear infinite' },
@@ -336,6 +348,8 @@ const S: Record<string, CSSProperties> = {
     borderRadius: 14, border: '3px solid #cfe0f5', background: '#fff', outline: 'none',
   },
   turnstile: { display: 'flex', justifyContent: 'center', minHeight: 65 },
+  consent: { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', fontWeight: 700, fontSize: 13, lineHeight: 1.45, color: '#42365a' },
+  consentBox: { marginTop: 3, width: 20, height: 20, flexShrink: 0, accentColor: '#ff5d2e' },
   submit: {
     marginTop: 4, background: 'linear-gradient(#ff8a3d, #ff5d2e)', color: '#fff', fontFamily: 'inherit',
     fontWeight: 900, fontSize: 20, padding: '15px 24px', borderRadius: 18, border: '5px solid #fff',
@@ -369,4 +383,5 @@ const S: Record<string, CSSProperties> = {
   legalDot: { color: '#15315c88' },
   credit: { color: '#15315ccc', fontWeight: 800, fontSize: 13, textDecoration: 'none' },
   company: { color: '#15315caa', fontWeight: 700, fontSize: 12, textAlign: 'center', margin: 0, lineHeight: 1.4 },
+  disclaimer: { color: '#15315c88', fontWeight: 600, fontSize: 11, textAlign: 'center', margin: 0, lineHeight: 1.4, maxWidth: 520 },
 };

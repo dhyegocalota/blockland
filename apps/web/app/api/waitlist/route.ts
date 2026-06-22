@@ -2,7 +2,7 @@
 // validates the email, normalizes the optional name/WhatsApp to null when blank, persists through the
 // signed internal API, then notifies the parent (confirmation) and the admin (new-lead notice). The
 // HMAC token, nonce and signature never reach the browser — the response only says ok/error.
-import { isValidEmail, joinWaitlist } from '../../../lib/waitlist';
+import { isConsentGiven, isValidEmail, joinWaitlist } from '../../../lib/waitlist';
 import { verifyTurnstile } from '../../../lib/turnstile';
 import { sendMail } from '../../../lib/mailer';
 import { WaitlistConfirmationEmail } from '../../../emails/WaitlistConfirmationEmail';
@@ -23,6 +23,10 @@ export async function POST(req: Request) {
   const human = await verifyTurnstile({ token, remoteIp: clientIp(req) });
   if (!human) {
     return Response.json({ ok: false, error: 'turnstile' }, { status: 400 });
+  }
+
+  if (!isConsentGiven(body.consent)) {
+    return Response.json({ ok: false, error: 'consent' }, { status: 400 });
   }
 
   const email = String(body.email ?? '').trim();

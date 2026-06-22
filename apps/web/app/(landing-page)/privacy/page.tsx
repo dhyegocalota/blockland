@@ -74,6 +74,8 @@ const COPY = {
           'Os dados de crianças são fornecidos e geridos sob a responsabilidade do adulto responsável ' +
             'que contrata e administra o mundo. Esse responsável decide quem participa e supervisiona ' +
             'o uso, conforme os Termos de Uso.',
+          'O adulto responsável dá consentimento afirmativo (marcando uma caixa específica) antes de ' +
+            'fornecer qualquer dado, e pode revogá-lo a qualquer momento solicitando a exclusão.',
         ],
       },
       {
@@ -91,6 +93,8 @@ const COPY = {
           'Mantemos os dados pelo tempo necessário às finalidades acima e às obrigações legais. ' +
             'Quando deixam de ser necessários ou quando você solicita a exclusão, os dados são ' +
             'eliminados.',
+          'Quando um jogador é banido, guardamos seu endereço IP para impedir que ele volte a entrar. ' +
+            'Esse IP é eliminado ao desbanir e, de qualquer forma, expira automaticamente após 90 dias.',
         ],
       },
       {
@@ -154,6 +158,8 @@ const COPY = {
           'Children’s data is provided and managed under the responsibility of the responsible adult ' +
             'who contracts and administers the world. That adult decides who takes part and ' +
             'supervises use, as set out in the Terms of Use.',
+          'The responsible adult gives affirmative consent (by checking a dedicated box) before ' +
+            'providing any data, and may withdraw it at any time by requesting deletion.',
         ],
       },
       {
@@ -170,6 +176,8 @@ const COPY = {
         body: [
           'We keep data for as long as needed for the purposes above and for legal obligations. When ' +
             'no longer needed, or when you request deletion, the data is erased.',
+          'When a player is banned, we keep their IP address to stop them from rejoining. That IP is ' +
+            'erased when they are unbanned and, in any case, expires automatically after 90 days.',
         ],
       },
       {
@@ -220,7 +228,7 @@ const S: Record<string, CSSProperties> = {
     minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22,
     padding: '32px 20px 48px',
     background: 'radial-gradient(circle at 50% 12%, #bfeaff, #7ec8ff 55%, #4aa3e0)',
-    fontFamily: "'Baloo 2', 'Comic Sans MS', system-ui, sans-serif", color: '#2a1a4a',
+    fontFamily: "'Comic Sans MS', system-ui, sans-serif", color: '#2a1a4a',
   },
   back: {
     alignSelf: 'flex-start', maxWidth: 680, width: '100%', color: '#1f3a63', fontWeight: 800,

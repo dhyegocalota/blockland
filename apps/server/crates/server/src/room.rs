@@ -863,6 +863,10 @@ impl Room {
                 if text.trim().is_empty() {
                     return;
                 }
+                if !crate::chat::is_allowed(&text) {
+                    tracing::debug!(%id, "chat message blocked by moderation filter");
+                    return;
+                }
                 chat_out = Some(ServerMsg::Chat {
                     from: id,
                     name: p.name.clone(),
@@ -2008,7 +2012,7 @@ impl Room {
     }
 }
 
-// Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "steve").
+// Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "hero").
 const MAX_STRUCTURE_KIND_LEN: usize = 24;
 
 /// Bank one of a broken block into a player's inventory.
@@ -2695,6 +2699,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_with_a_blocked_word_is_dropped() {
+        let mut room = test_room().await;
+        let mut listener_rx = add_player(&mut room, 2, false);
+        let _sender_rx = add_player(&mut room, 1, false);
+
+        room.on_input(
+            1,
+            ClientMsg::Chat {
+                text: "you are a bitch".into(),
+            },
+        );
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+            .filter(|m| matches!(m, ServerMsg::Chat { .. }))
+            .collect();
+        assert!(
+            chats.is_empty(),
+            "a message with a blocked word must be dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_chat_is_broadcast() {
+        let mut room = test_room().await;
+        let mut listener_rx = add_player(&mut room, 2, false);
+        let _sender_rx = add_player(&mut room, 1, false);
+
+        room.on_input(
+            1,
+            ClientMsg::Chat {
+                text: "lets build together".into(),
+            },
+        );
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+            .filter(|m| matches!(m, ServerMsg::Chat { .. }))
+            .collect();
+        assert_eq!(chats.len(), 1, "a clean message must be broadcast");
+    }
+
+    #[tokio::test]
     async fn admin_kick_removes_target_and_broadcasts_left() {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
@@ -3228,7 +3271,7 @@ mod tests {
     #[test]
     fn valid_structure_kind_accepts_slugs_and_rejects_junk() {
         assert_eq!(valid_structure_kind(" trophy "), Some("trophy".to_string()));
-        assert_eq!(valid_structure_kind("steve2"), Some("steve2".to_string()));
+        assert_eq!(valid_structure_kind("hero2"), Some("hero2".to_string()));
         assert!(valid_structure_kind("").is_none());
         assert!(valid_structure_kind("Trophy").is_none());
         assert!(valid_structure_kind("a b").is_none());

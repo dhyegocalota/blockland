@@ -67,8 +67,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'build.trophy': 'Taça da Copa do Mundo',
     'build.ball': 'Bola gigante da Copa 2026',
     'build.figure': 'Figurinha craque ⚽',
-    'build.cola': 'Refri gigante da Copa',
-    'build.steve': 'Estátua do Steve',
+    'build.bottle': 'Garrafa gigante',
+    'build.hero': 'Estátua do Herói',
     'build.close': 'Fechar',
     'build.blocked': '🚫 O admin bloqueou esta construção',
 
@@ -267,8 +267,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'toast.built_trophy': '🏆 Taça da Copa construída!',
     'toast.built_ball': '⚽ Bola gigante 2026 construída!',
     'toast.built_figure': '🃏 Figurinha craque!',
-    'toast.built_cola': '🥤 Refri gigante da Copa!',
-    'toast.built_steve': '🧍 Estátua do Steve!',
+    'toast.built_bottle': '🍾 Garrafa gigante!',
+    'toast.built_hero': '🦸 Estátua do Herói!',
 
     // Block names
     'block.grass': 'Grama',
@@ -441,8 +441,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'build.trophy': 'World Cup Trophy',
     'build.ball': 'Giant 2026 World Cup Ball',
     'build.figure': 'Star Player Card ⚽',
-    'build.cola': 'Giant World Cup Soda',
-    'build.steve': 'Steve Statue',
+    'build.bottle': 'Giant Bottle',
+    'build.hero': 'Hero Statue',
     'build.close': 'Close',
     'build.blocked': '🚫 The admin blocked this structure',
 
@@ -641,8 +641,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'toast.built_trophy': '🏆 World Cup Trophy built!',
     'toast.built_ball': '⚽ Giant 2026 ball built!',
     'toast.built_figure': '🃏 Star player card!',
-    'toast.built_cola': '🥤 Giant World Cup soda!',
-    'toast.built_steve': '🧍 Steve statue!',
+    'toast.built_bottle': '🍾 Giant bottle!',
+    'toast.built_hero': '🦸 Hero statue!',
 
     // Block names
     'block.grass': 'Grass',

@@ -228,7 +228,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     canvas.height = 64;
     const g = canvas.getContext('2d');
     if (!g) throw new Error('2d canvas context unavailable');
-    g.font = 'bold 34px "Baloo 2", system-ui, sans-serif';
+    g.font = 'bold 34px "Comic Sans MS", system-ui, sans-serif';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.lineWidth = 6;
@@ -271,7 +271,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     return mesh;
   }
 
-  // A blocky Minecraft-style character: skinned head (face on the front), colored torso, arms, legs.
+  // A blocky voxel character: skinned head (face on the front), colored torso, arms, legs.
   function spawnAvatar(id: number, name: string, look: Appearance): Avatar {
     const group = new three.Group();
     const model = new three.Group();
@@ -310,7 +310,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     g.beginPath();
     g.roundRect(8, 8, 240, 56, 14);
     g.fill();
-    g.font = 'bold 26px "Baloo 2", system-ui, sans-serif';
+    g.font = 'bold 26px "Comic Sans MS", system-ui, sans-serif';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.fillStyle = '#ffffff';
@@ -331,7 +331,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     avatar.bubble = null;
   }
 
-  // A chat message floats above the speaker's head for a few seconds (Minecraft-style).
+  // A chat message floats above the speaker's head for a few seconds.
   function showBubble(id: number, text: string): void {
     const avatar = avatars.get(id);
     if (!avatar) return;

@@ -259,7 +259,7 @@ describe('net client', () => {
     socket.open();
     socket.receive(welcome);
 
-    const incoming = { t: 'room_state', peace: true, blocked_structures: ['cola', 'steve'], pvp: false, chat_enabled: true };
+    const incoming = { t: 'room_state', peace: true, blocked_structures: ['bottle', 'hero'], pvp: false, chat_enabled: true };
     socket.receive(incoming);
     expect(states).toEqual([incoming]);
   });

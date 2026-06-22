@@ -24,6 +24,7 @@
 
 mod auth;
 mod bans;
+mod chat;
 mod conn;
 mod creatures;
 mod db;
@@ -60,7 +61,7 @@ async fn main() {
         std::env::var("SENTRY_DSN").ok(),
         sentry::ClientOptions {
             release: sentry::release_name!(),
-            send_default_pii: true,
+            send_default_pii: false,
             ..Default::default()
         },
     ));
