@@ -11,8 +11,8 @@ pub const SIZE_Y: i32 = 48;
 pub const GROUND: i32 = 10;
 pub const WATER_LEVEL: i32 = GROUND - 1;
 pub const WORLD_SIZE: i32 = 163840;
-/// Blocks the spawn sits north of the exact world center so a player never lands inside the client's
-/// welcome monument (which the web builds at the center). Mirrors the web `spawnPoint` z offset.
+/// Blocks the spawn sits north of the exact world center so a player never lands inside the welcome
+/// monument (which the shared worldgen builds at the center). Mirrors the web `spawnPoint` z offset.
 const SPAWN_MONUMENT_CLEARANCE: i32 = 4;
 /// Horizontal chunk edge for procedural decoration (trees + plants). Mirrors the TS `CHUNK`: the
 /// decoration RNG is seeded per chunk so every player and a post-reset regen see the same world.
@@ -37,6 +37,8 @@ pub const STONE: u8 = 3;
 pub const WOOD: u8 = 4;
 pub const LEAF: u8 = 5;
 pub const SAND: u8 = 6;
+pub const GOLD: u8 = 8;
+pub const FACE: u8 = 10;
 pub const WATER: u8 = 11;
 pub const WHITE: u8 = 12;
 pub const BEDROCK: u8 = 16;
@@ -125,10 +127,37 @@ fn surface_block(biome: Biome) -> u8 {
     }
 }
 
+/// The welcome monument, folded into the shared worldgen so this authoritative world contains it
+/// (diggable via the normal edit path, visible to creatures) and the client renders the same
+/// generation. A two-cell-tall tenant face on a four-cell gold cross, centred on the world.
+/// Mirrors `welcomeMonumentBlock` in `worldgen.ts` bit-for-bit (coords, ids, order).
+const MONUMENT_X: i32 = WORLD_SIZE / 2;
+const MONUMENT_Z: i32 = WORLD_SIZE / 2;
+
+pub fn welcome_monument_block(x: i32, y: i32, z: i32) -> u8 {
+    let dx = x - MONUMENT_X;
+    let dz = z - MONUMENT_Z;
+    if !(-1..=1).contains(&dx) || !(-1..=1).contains(&dz) {
+        return AIR;
+    }
+    let top = height_at(MONUMENT_X, MONUMENT_Z);
+    if dx == 0 && dz == 0 && (y == top + 1 || y == top + 2) {
+        return FACE;
+    }
+    if y == top + 1 && dx.abs() + dz.abs() == 1 {
+        return GOLD;
+    }
+    AIR
+}
+
 /// The procedurally-generated block at a coordinate, ignoring player edits.
 pub fn base_voxel(x: i32, y: i32, z: i32) -> u8 {
     if !(0..SIZE_Y).contains(&y) {
         return AIR;
+    }
+    let monument = welcome_monument_block(x, y, z);
+    if monument != AIR {
+        return monument;
     }
     let top = height_at(x, z);
     if y > top {
@@ -353,7 +382,7 @@ impl World {
     }
 
     /// A reasonable spawn near the center of the world, offset a few blocks off the exact centre so the
-    /// player never lands inside the client's welcome monument (built at the center) and gets wedged.
+    /// player never lands inside the welcome monument (built at the center) and gets wedged.
     pub fn spawn() -> [f32; 3] {
         let cx = WORLD_SIZE / 2;
         let cz = WORLD_SIZE / 2 + SPAWN_MONUMENT_CLEARANCE;
@@ -511,6 +540,41 @@ mod tests {
     }
 
     #[test]
+    fn welcome_monument_is_generated_at_the_centre() {
+        let cx = WORLD_SIZE / 2;
+        let cz = WORLD_SIZE / 2;
+        let top = height_at(cx, cz);
+        assert_eq!(welcome_monument_block(cx, top + 1, cz), FACE);
+        assert_eq!(welcome_monument_block(cx, top + 2, cz), FACE);
+        assert_eq!(welcome_monument_block(cx - 1, top + 1, cz), GOLD);
+        assert_eq!(welcome_monument_block(cx + 1, top + 1, cz), GOLD);
+        assert_eq!(welcome_monument_block(cx, top + 1, cz - 1), GOLD);
+        assert_eq!(welcome_monument_block(cx, top + 1, cz + 1), GOLD);
+        assert_eq!(welcome_monument_block(cx, top, cz), AIR);
+        assert_eq!(welcome_monument_block(cx, top + 3, cz), AIR);
+        assert_eq!(welcome_monument_block(cx + 2, top + 1, cz), AIR);
+        assert_eq!(welcome_monument_block(10, top + 1, 10), AIR);
+        assert_eq!(base_voxel(cx, top + 1, cz), FACE);
+        assert_eq!(base_voxel(cx, top + 2, cz), FACE);
+        assert_eq!(base_voxel(cx - 1, top + 1, cz), GOLD);
+        assert_eq!(base_voxel(cx, top + 3, cz), AIR);
+    }
+
+    #[test]
+    fn welcome_monument_block_is_solid_and_diggable() {
+        let mut w = World::new();
+        let cx = WORLD_SIZE / 2;
+        let cz = WORLD_SIZE / 2;
+        let top = height_at(cx, cz);
+        assert!(w.is_solid(cx, top + 1, cz), "monument block must be solid");
+        w.set(cx, top + 1, cz, AIR);
+        assert!(
+            !w.is_solid(cx, top + 1, cz),
+            "digging the monument must break it"
+        );
+    }
+
+    #[test]
     fn edits_override_base() {
         let mut w = World::new();
         let (x, y, z) = (10, 5, 10);
@@ -657,8 +721,8 @@ mod tests {
 
     #[test]
     fn spawn_clears_the_centre_monument() {
-        // The web builds a welcome monument at the exact world center; the spawn must sit clear of it
-        // (and its 1-block neighbours) so a co-op player who adopts this spawn is never wedged inside it.
+        // The shared worldgen builds a welcome monument at the exact world center; the spawn must sit clear
+        // of it (and its 1-block neighbours) so a co-op player who adopts this spawn is never wedged inside it.
         let s = World::spawn();
         let centre = (WORLD_SIZE / 2) as f32 + 0.5;
         assert_eq!(s[0], centre, "spawn stays on the centre x");

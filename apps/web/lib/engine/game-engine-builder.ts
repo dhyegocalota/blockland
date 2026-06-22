@@ -169,7 +169,6 @@ export class GameEngineBuilder {
       faceTex.magFilter = THREE.NearestFilter;
       faceTex.colorSpace = THREE.SRGBColorSpace;
       buildMaterials({ materials, faceTexture: faceTex });
-      runtime.buildWelcomeMonument();
       runtime.updateChunks(true);
       runtime.processMeshQueue(isTouch ? 24 : 60);
       if (plan.populateAtBoot) runtime.populateCreatures();

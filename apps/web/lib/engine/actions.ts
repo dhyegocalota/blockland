@@ -1,16 +1,14 @@
 // Player world actions: the thin wirer that assembles the single-purpose action modules onto the
 // shared GameRuntime — block break/place/dig (block-actions), the magic-structure stamp
-// (structure-placement), the welcome monument (welcome-monument), the stars/record persistence
-// (scoreboard-runtime) — and owns the one concern left over: the in-place world reset.
+// (structure-placement), the stars/record persistence (scoreboard-runtime) — and owns the one
+// concern left over: the in-place world reset.
 import { createBlockActions } from './block-actions';
 import { createStructurePlacement } from './structure-placement';
-import { createWelcomeMonument } from './welcome-monument';
 import { createScoreboard } from './scoreboard-runtime';
 import type { GameRuntime } from './runtime';
 
 export function createActions(runtime: GameRuntime): void {
   createScoreboard(runtime);
-  createWelcomeMonument(runtime);
   createBlockActions(runtime);
   createStructurePlacement(runtime);
 
@@ -21,7 +19,6 @@ export function createActions(runtime: GameRuntime): void {
     const { player } = runtime.state;
     runtime.chime();
     runtime.world.reset();
-    runtime.buildWelcomeMonument();
     runtime.updateChunks(true);
     runtime.processMeshQueue(runtime.isTouch ? 24 : 60);
     runtime.poofRuntime.clear();

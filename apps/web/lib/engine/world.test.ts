@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AIR, CHUNK, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID, WATER_LEVEL } from './constants';
+import {
+  AIR, CHUNK, FACE_ID, GOLD_ID, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID, WATER_LEVEL,
+} from './constants';
 import { baseVoxel, heightAt } from './worldgen';
 import { VoxelWorld } from './world';
 
@@ -206,5 +208,17 @@ describe('VoxelWorld terrain generation', () => {
     const top = heightAt(column.x, column.z);
     expect(world.get(column.x, top + 1, column.z)).toBe(WATER_ID);
     expect(world.get(column.x, WATER_LEVEL, column.z)).toBe(WATER_ID);
+  });
+
+  it('materializes the welcome monument at the world centre and lets it be dug', () => {
+    const world = new VoxelWorld();
+    const cx = SIZE_X >> 1, cz = SIZE_Z >> 1;
+    const top = heightAt(cx, cz);
+    expect(world.get(cx, top + 1, cz)).toBe(FACE_ID);
+    expect(world.get(cx, top + 2, cz)).toBe(FACE_ID);
+    expect(world.get(cx - 1, top + 1, cz)).toBe(GOLD_ID);
+    expect(world.isSolid(cx, top + 1, cz)).toBe(true);
+    world.set(cx, top + 1, cz, AIR);
+    expect(world.isSolid(cx, top + 1, cz)).toBe(false);
   });
 });

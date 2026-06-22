@@ -5,8 +5,8 @@
 // same f64 operations, same literal constants, same order. The shared golden vectors pin them
 // together. Change one side and you MUST change the other identically.
 import {
-  AIR, BEDROCK_ID, DIRT_ID, GRASS_ID, GROUND, SAND_ID, SIZE_Y, STONE_ID, WATER_ID,
-  WATER_LEVEL, WHITE_ID,
+  AIR, BEDROCK_ID, DIRT_ID, FACE_ID, GOLD_ID, GRASS_ID, GROUND, SAND_ID, SIZE_X, SIZE_Y, SIZE_Z,
+  STONE_ID, WATER_ID, WATER_LEVEL, WHITE_ID,
 } from './constants';
 
 export type Biome =
@@ -68,7 +68,26 @@ export function surfaceBlock(biome: Biome): number {
   return GRASS_ID;
 }
 
+// The welcome monument, folded into the shared worldgen so the server's authoritative world
+// contains it (diggable via the normal edit path, visible to creatures) and the client renders the
+// same generation — no client-side stamp. A two-cell-tall tenant face on a four-cell gold cross,
+// centred on the world. Mirrored bit-for-bit by `welcome_monument_block` in the Rust sim.
+const MONUMENT_X = SIZE_X >> 1;
+const MONUMENT_Z = SIZE_Z >> 1;
+
+export function welcomeMonumentBlock(x: number, y: number, z: number): number {
+  const dx = x - MONUMENT_X;
+  const dz = z - MONUMENT_Z;
+  if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return AIR;
+  const top = heightAt(MONUMENT_X, MONUMENT_Z);
+  if (dx === 0 && dz === 0 && (y === top + 1 || y === top + 2)) return FACE_ID;
+  if (y === top + 1 && Math.abs(dx) + Math.abs(dz) === 1) return GOLD_ID;
+  return AIR;
+}
+
 export function baseVoxel(x: number, y: number, z: number): number {
+  const monument = welcomeMonumentBlock(x, y, z);
+  if (monument !== AIR) return monument;
   const top = heightAt(x, z);
   if (y > top) return y <= WATER_LEVEL ? WATER_ID : AIR;
   if (y === 0) return BEDROCK_ID;

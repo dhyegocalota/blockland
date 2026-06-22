@@ -1,7 +1,7 @@
 // Sparse voxel store: only visited chunks allocate memory, so the world is effectively endless.
 // Pure data + procedural generation (via worldgen). No three.js, no DOM.
 import { AIR, CHUNK, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID, WATER_LEVEL, WOOD_ID } from './constants';
-import { type Biome, baseVoxel, biomeAt, heightAt } from './worldgen';
+import { type Biome, baseVoxel, biomeAt, heightAt, welcomeMonumentBlock } from './worldgen';
 
 export class VoxelWorld {
   private readonly chunksX = Math.ceil(SIZE_X / CHUNK);
@@ -96,6 +96,10 @@ export class VoxelWorld {
         const top = heightAt(x, z);
         for (let y = 0; y <= top; y++) this.rawSet(x, y, z, baseVoxel(x, y, z));
         for (let y = top + 1; y <= WATER_LEVEL; y++) this.rawSet(x, y, z, WATER_ID);
+        for (let y = top + 1; y < SIZE_Y; y++) {
+          const monument = welcomeMonumentBlock(x, y, z);
+          if (monument !== AIR) this.rawSet(x, y, z, monument);
+        }
       }
     // Seed decoration RNG by chunk coords so trees + plants are deterministic: every player (and a
     // re-gen after reset) sees the EXACT same world — the base terrain is already deterministic.

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AIR, BEDROCK_ID, DIRT_ID, GRASS_ID, GROUND, SAND_ID, SIZE_Y, STONE_ID, WATER_ID,
-  WATER_LEVEL, WHITE_ID,
+  AIR, BEDROCK_ID, DIRT_ID, FACE_ID, GOLD_ID, GRASS_ID, GROUND, SAND_ID, SIZE_X, SIZE_Y, SIZE_Z,
+  STONE_ID, WATER_ID, WATER_LEVEL, WHITE_ID,
 } from './constants';
 import {
-  Biome, baseVoxel, biomeAt, heightAt, surfaceBlock,
+  Biome, baseVoxel, biomeAt, heightAt, surfaceBlock, welcomeMonumentBlock,
 } from './worldgen';
 
 const ALL_BIOMES: Biome[] = [
@@ -130,6 +130,46 @@ describe('baseVoxel', () => {
       const z = i * 83 - 1000;
       expect(baseVoxel(x, 0, z)).toBe(BEDROCK_ID);
     }
+  });
+});
+
+describe('welcome monument folded into worldgen', () => {
+  const cx = SIZE_X >> 1;
+  const cz = SIZE_Z >> 1;
+  const top = heightAt(cx, cz);
+
+  it('stacks a two-cell face column above the centre top', () => {
+    expect(welcomeMonumentBlock(cx, top + 1, cz)).toBe(FACE_ID);
+    expect(welcomeMonumentBlock(cx, top + 2, cz)).toBe(FACE_ID);
+  });
+
+  it('rings the face with a four-cell gold cross at the base', () => {
+    expect(welcomeMonumentBlock(cx - 1, top + 1, cz)).toBe(GOLD_ID);
+    expect(welcomeMonumentBlock(cx + 1, top + 1, cz)).toBe(GOLD_ID);
+    expect(welcomeMonumentBlock(cx, top + 1, cz - 1)).toBe(GOLD_ID);
+    expect(welcomeMonumentBlock(cx, top + 1, cz + 1)).toBe(GOLD_ID);
+  });
+
+  it('is air just outside the monument cells', () => {
+    expect(welcomeMonumentBlock(cx, top, cz)).toBe(AIR);
+    expect(welcomeMonumentBlock(cx, top + 3, cz)).toBe(AIR);
+    expect(welcomeMonumentBlock(cx - 1, top + 2, cz)).toBe(AIR);
+    expect(welcomeMonumentBlock(cx + 2, top + 1, cz)).toBe(AIR);
+  });
+
+  it('leaves columns far from the centre untouched', () => {
+    expect(welcomeMonumentBlock(10, top + 1, 10)).toBe(AIR);
+    expect(welcomeMonumentBlock(cx, top + 1, cz + 5)).toBe(AIR);
+  });
+
+  it('surfaces the monument through baseVoxel above the centre terrain', () => {
+    expect(baseVoxel(cx, top + 1, cz)).toBe(FACE_ID);
+    expect(baseVoxel(cx, top + 2, cz)).toBe(FACE_ID);
+    expect(baseVoxel(cx - 1, top + 1, cz)).toBe(GOLD_ID);
+    expect(baseVoxel(cx, top + 3, cz)).toBe(AIR);
+    const farTop = heightAt(10, 10);
+    expect(baseVoxel(10, farTop + 1, 10)).not.toBe(FACE_ID);
+    expect(baseVoxel(10, farTop + 1, 10)).not.toBe(GOLD_ID);
   });
 });
 

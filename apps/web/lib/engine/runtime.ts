@@ -138,7 +138,6 @@ export interface GameRuntime {
   canPlaceSelected(): boolean;
   overlapsPlayer(x: number, y: number, z: number): boolean;
   buildStructure(kind: StructureKind): void;
-  buildWelcomeMonument(): void;
   resetLocalWorld(): void;
 
   // ---- Scoreboard ----
