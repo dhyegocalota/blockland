@@ -14,6 +14,7 @@ import { CREATURE_DEFS, stepCreatureDirection } from './creatures';
 import { sphereCastClosest } from '../sphere-cast';
 import { STARTING_ROSTER, spawnPosition } from './creature-spawn';
 import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './creature-combat';
+import { offlineKillFeed } from './feed-events';
 import type { Creature, GameRuntime } from '../runtime';
 
 export function createCreatureSimulation(runtime: GameRuntime): void {
@@ -107,6 +108,8 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
 
   runtime.defeatCreature = function defeatCreature(cr: Creature): void {
     const { player } = runtime.state;
+    const bridge = runtime.bridge;
+    if (bridge) bridge.hud.onEvent(offlineKillFeed({ name: bridge.resolveName(), creatureName: t(cr.def.nameKey) }));
     runtime.spawnPoof(cr.pos, cr.def.color);
     player.stars += cr.def.reward;
     player.bag += 1;

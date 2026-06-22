@@ -4,20 +4,20 @@
 // It owns the lobby/login lifecycle, boots the Three.js engine via a CoopBridge, and composes the
 // smaller hooks (chat, feed, room-admin). The returned object is spread into the component.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { resolveTenant, type Brand } from '../tenants';
-import { t } from '../i18n';
-import { debug, warn } from '../log';
-import { clearSession, loadSession, resolveClaim, saveSession } from '../session';
-import { type CoopBridge, type DebugSnapshot, type GameApi } from '../game-engine';
-import type { Appearance, RosterEntry } from '../coop';
-import { randomLook } from '../look';
-import { CHAT_FADE_MS } from '../chat';
+import { resolveTenant, type Brand } from '../lib/tenants';
+import { t } from '../lib/i18n';
+import { debug, warn } from '../lib/log';
+import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
+import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
+import type { Appearance, RosterEntry } from '../lib/coop';
+import { randomLook } from '../lib/look';
+import { CHAT_FADE_MS } from '../lib/chat';
 import { useChat } from './use-chat';
 import { useFeed } from './use-feed';
 import { useRoomAdmin } from './use-room-admin';
 import { useLobbyAdmin } from './use-lobby-admin';
 import { useUpdateCheck } from './use-update-check';
-import type { NetState } from '../net';
+import type { NetState } from '../lib/net';
 
 const NAME_KEY = 'bl-name';
 const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
@@ -177,7 +177,7 @@ export function useGame() {
       },
       bind: (api) => { gameApiRef.current = api; },
     };
-    import('../game-engine').then((mod) => {
+    import('../lib/game-engine').then((mod) => {
       if (!alive) return;
       debug('engine', 'engine module loaded', { id: brand.id, name: brand.name });
       cleanup = mod.initGame(brand, bridge);

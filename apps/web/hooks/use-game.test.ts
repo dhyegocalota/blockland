@@ -2,11 +2,11 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../tenants', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../tenants')>();
+vi.mock('../lib/tenants', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/tenants')>();
   return { ...actual, resolveTenant: vi.fn().mockRejectedValue(new Error('no tenant')) };
 });
-vi.mock('../game-engine', () => ({ initGame: vi.fn() }));
+vi.mock('../lib/game-engine', () => ({ initGame: vi.fn() }));
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }));
 window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as typeof window.matchMedia;
 

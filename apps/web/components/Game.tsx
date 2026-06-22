@@ -8,7 +8,7 @@ import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
 import LocaleSwitcher from './LocaleSwitcher';
-import { useGame } from '../lib/hooks/use-game';
+import { useGame } from '../hooks/use-game';
 import { roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
 

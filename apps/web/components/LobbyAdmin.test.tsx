@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { useLobbyAdmin } from '../lib/hooks/use-lobby-admin';
+import type { useLobbyAdmin } from '../hooks/use-lobby-admin';
 
 vi.mock('../lib/game-engine', () => ({
   STRUCTURE_DEFS: { hut: { labelKey: 'build.hut', builtToastKey: 'toast.built_hut', emoji: '🏠', reach: 1, stamp: () => undefined } },

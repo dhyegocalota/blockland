@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { RoomAdminApi } from '../game-engine';
+import type { RoomAdminApi } from '../lib/game-engine';
 import { useRoomAdmin } from './use-room-admin';
 
 function adminRef(api: Partial<RoomAdminApi>) {

@@ -7,7 +7,7 @@
 import { t } from '../lib/i18n';
 import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { roleBadge } from '../lib/roster-roles';
-import type { useLobbyAdmin } from '../lib/hooks/use-lobby-admin';
+import type { useLobbyAdmin } from '../hooks/use-lobby-admin';
 
 export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobbyAdmin> }) {
   const {

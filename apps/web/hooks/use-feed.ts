@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { pushFeed, type FeedEntry, type FeedEvent } from '../feed';
+import { pushFeed, type FeedEntry, type FeedEvent } from '../lib/feed';
 
 // Owns the multiplayer event feed as a persistent rolling log of the last few events (pushFeed caps
 // + dedups). It does NOT fade: the server replays a recent backlog on join, so a player who just

@@ -4,7 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const useGame = vi.fn();
-vi.mock('../lib/hooks/use-game', () => ({ useGame: () => useGame() }));
+vi.mock('../hooks/use-game', () => ({ useGame: () => useGame() }));
 
 import Game from './Game';
 

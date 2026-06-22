@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { flushSync } from 'react-dom';
-import { appendChatLine, dropChatLine, CHAT_BACKLOG, CHAT_FADE_MS, type ChatLine } from '../chat';
-import type { GameApi } from '../game-engine';
+import { appendChatLine, dropChatLine, CHAT_BACKLOG, CHAT_FADE_MS, type ChatLine } from '../lib/chat';
+import type { GameApi } from '../lib/game-engine';
 
 // Owns the transient chat overlay: the visible lines (capped + auto-fading), the open/draft state,
 // and the input focus dance that pops the mobile keyboard. `pushChatLine` is handed to the engine

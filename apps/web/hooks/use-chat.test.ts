@@ -2,7 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { GameApi } from '../game-engine';
+import type { GameApi } from '../lib/game-engine';
 import { useChat } from './use-chat';
 
 function gameApiRef(sendChat = vi.fn()) {

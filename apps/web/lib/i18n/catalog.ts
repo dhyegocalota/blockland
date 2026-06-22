@@ -208,6 +208,7 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // Presence + event feed
     'presence.you': '{name} (você)',
+    'feed.you': 'Você',
     'feed.joined': '{name} entrou',
     'feed.left': '{name} saiu',
     'feed.renamed': '{old} agora é {name}',
@@ -586,6 +587,7 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // Presence + event feed
     'presence.you': '{name} (you)',
+    'feed.you': 'You',
     'feed.joined': '{name} joined',
     'feed.left': '{name} left',
     'feed.renamed': '{old} is now {name}',

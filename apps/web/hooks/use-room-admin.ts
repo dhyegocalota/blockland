@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type MutableRefObject } from 'react';
-import type { Banned, PendingApproval, Report, RoomState } from '../coop';
-import type { RoomAdminApi } from '../game-engine';
-import type { Role } from '../protocol';
+import type { Banned, PendingApproval, Report, RoomState } from '../lib/coop';
+import type { RoomAdminApi } from '../lib/game-engine';
+import type { Role } from '../lib/protocol';
 
 // World reset is destructive, so the first click only arms it; the admin must confirm within this
 // window or it disarms itself — a misclick can never wipe the world.

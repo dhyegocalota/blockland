@@ -5,13 +5,13 @@
 // room/roster updates the in-game panel uses, without joining the 3D world. Reuses useRoomAdmin for
 // the dispatch + two-step reset; the NetClient is adapted into its RoomAdminApi via lobbyAdminApi.
 import { useEffect, useRef, useState } from 'react';
-import { loadSession } from '../session';
-import { createNet, type NetClient, type NetState } from '../net';
-import { MAIN_WORLD, type Appearance, type RoomState, type RosterEntry } from '../coop';
-import type { RoomAdminApi } from '../game-engine';
-import { lobbyAdminApi } from '../lobby-admin-api';
+import { loadSession } from '../lib/session';
+import { createNet, type NetClient, type NetState } from '../lib/net';
+import { MAIN_WORLD, type Appearance, type RoomState, type RosterEntry } from '../lib/coop';
+import type { RoomAdminApi } from '../lib/game-engine';
+import { lobbyAdminApi } from '../lib/lobby-admin-api';
 import { useRoomAdmin } from './use-room-admin';
-import { debug } from '../log';
+import { debug } from '../lib/log';
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL;
 
