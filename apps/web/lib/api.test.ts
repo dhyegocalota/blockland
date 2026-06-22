@@ -185,3 +185,40 @@ describe('uploadAsset', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('fetchAsset', () => {
+  it('signs a GET to the uploads path and returns the bytes with their content-type', async () => {
+    const body = new Uint8Array([5, 6, 7]);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(body, { status: 200, headers: { 'content-type': 'image/webp' } }),
+    );
+    vi.spyOn(Date, 'now').mockReturnValue(Number(GOLDEN.ts) * 1000);
+
+    const asset = await api.fetchAsset('tenants/acme/image.webp');
+
+    expect(asset?.contentType).toBe('image/webp');
+    expect(new Uint8Array(asset!.bytes)).toEqual(body);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://rust.test:9090/internal/uploads?key=tenants%2Facme%2Fimage.webp');
+    expect(init?.method).toBe('GET');
+    const headers = init?.headers as Record<string, string>;
+    const expected = api.sign({
+      method: 'GET',
+      path: '/internal/uploads?key=tenants%2Facme%2Fimage.webp',
+      ts: GOLDEN.ts,
+      nonce: headers['x-bl-nonce'],
+      body: '',
+    });
+    expect(headers['x-bl-sig']).toBe(expected);
+  });
+
+  it('returns null when the asset is missing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not_found', { status: 404 }));
+    expect(await api.fetchAsset('tenants/acme/image.png')).toBeNull();
+  });
+
+  it('throws when the server omits the content-type', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
+    await expect(api.fetchAsset('tenants/acme/image.png')).rejects.toThrow();
+  });
+});

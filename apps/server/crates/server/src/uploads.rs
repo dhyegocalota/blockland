@@ -5,6 +5,7 @@
 
 use axum::body::Bytes;
 use axum::extract::{Query, State};
+use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -93,6 +94,36 @@ pub async fn internal_upload(
             .into_response(),
         Err(error) => {
             tracing::error!(error = %error, "upload storage error");
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage_error").into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AssetParams {
+    pub key: String,
+}
+
+/// Signed read-back of a stored asset, so the web app can proxy a tenant image to the browser when
+/// the storage backend has no public CDN (the local-fs dev/CI backend). Same HMAC contract and key
+/// shape as the upload; an unknown key is a 404.
+pub async fn internal_get_upload(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    Query(params): Query<AssetParams>,
+) -> Response {
+    if let Some(resp) = verify_internal(&state.auth, "GET", &original_uri.0, &headers, b"") {
+        return resp;
+    }
+    if !is_valid_key(&params.key) {
+        return (StatusCode::BAD_REQUEST, "invalid_key").into_response();
+    }
+    match state.storage.get(&params.key).await {
+        Ok(Some(object)) => ([(CONTENT_TYPE, object.content_type)], object.bytes).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "not_found").into_response(),
+        Err(error) => {
+            tracing::error!(error = %error, "asset storage error");
             (StatusCode::INTERNAL_SERVER_ERROR, "storage_error").into_response()
         }
     }

@@ -22,7 +22,7 @@ interface UploadResponse { url: string; error?: string }
 interface OnlinePlayer { id: number; name: string; x: number; y: number; z: number; ping_ms: number }
 interface RoomSnapshot { tenant: string; players: OnlinePlayer[] }
 interface AdminStats { room_list: RoomSnapshot[] }
-interface Account { name: string; email: string; is_admin: boolean }
+interface Account { name: string; email: string; is_admin: boolean; is_moderator: boolean }
 
 const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'image'>> = {
   image: 'image',
@@ -136,6 +136,17 @@ export default function Admin() {
       method: 'POST',
       headers: { 'x-admin-key': key, 'content-type': 'application/json' },
       body: JSON.stringify({ tenant: selected.id, admin, ...target }),
+    });
+    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    setAccounts((await res.json()) as Account[]);
+  }
+
+  async function setModerator(target: { name: string } | { email: string }, moderator: boolean) {
+    if (!selected) return;
+    const res = await fetch('/api/admin/set-moderator', {
+      method: 'POST',
+      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify({ tenant: selected.id, moderator, ...target }),
     });
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setAccounts((await res.json()) as Account[]);
@@ -315,6 +326,7 @@ export default function Admin() {
                 <th style={S.th}>{t('accounts.col_name')}</th>
                 <th style={S.th}>{t('accounts.col_email')}</th>
                 <th style={S.th}>{t('accounts.col_admin')}</th>
+                <th style={S.th}>{t('accounts.col_moderator')}</th>
                 <th style={S.th}></th>
               </tr></thead>
               <tbody>
@@ -323,10 +335,16 @@ export default function Admin() {
                     <td style={S.td}>{account.name}</td>
                     <td style={S.td}>{account.email}</td>
                     <td style={S.td}>{account.is_admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
+                    <td style={S.td}>{account.is_moderator ? t('accounts.is_moderator') : t('accounts.not_admin')}</td>
                     <td style={S.td}>
-                      <button style={S.small} onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
-                        {account.is_admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
-                      </button>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button style={S.small} onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
+                          {account.is_admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
+                        </button>
+                        <button style={S.small} onClick={() => setModerator({ name: account.name }, !account.is_moderator)}>
+                          {account.is_moderator ? t('accounts.remove_moderator') : t('accounts.make_moderator')}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

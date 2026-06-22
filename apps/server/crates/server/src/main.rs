@@ -8,6 +8,7 @@
 //!   POST /admin/unban     unban an IP: { "ip": "1.2.3.4" } (needs x-admin-token)
 //!   GET  /admin/accounts/:tenant  list a tenant's accounts (needs x-admin-token)
 //!   POST /admin/set-admin grant/revoke admin: { tenant, name|email, admin } -> account list (needs x-admin-token)
+//!   POST /admin/set-moderator grant/revoke moderator: { tenant, name|email, moderator } -> account list (needs x-admin-token)
 //!
 //! Internal data API (Next -> Rust, HMAC-signed; see `internal_auth`):
 //!   GET    /internal/tenants/:id          tenant JSON or 404
@@ -16,6 +17,7 @@
 //!   DELETE /internal/tenants/:id          delete tenant
 //!   GET    /internal/leaderboard/:tenant  top scores JSON
 //!   POST   /internal/uploads?key&content_type  upload a tenant asset, returns { "url" }
+//!   GET    /internal/uploads?key                read a tenant asset back (bytes); used by the web proxy
 //!   POST   /internal/auth/request        start a login: { tenant, name, email } -> { ok, token, code, name, email }
 //!   POST   /internal/auth/verify         finish a login: { token } or { tenant, name, code } -> { ok, tenant, name, claim, is_admin }
 //!   POST   /internal/auth/logout         end a session: { tenant, claim } -> { ok }
@@ -96,6 +98,7 @@ async fn main() {
         .route("/admin/unban", post(admin_unban))
         .route("/admin/accounts/{tenant}", get(admin_accounts))
         .route("/admin/set-admin", post(admin_set_admin))
+        .route("/admin/set-moderator", post(admin_set_moderator))
         .route("/ws", get(ws_handler))
         .route(
             "/internal/tenants",
@@ -113,7 +116,9 @@ async fn main() {
         .route("/internal/waitlist", post(internal_waitlist))
         .route(
             "/internal/uploads",
-            post(uploads::internal_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+            get(uploads::internal_get_upload)
+                .post(uploads::internal_upload)
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
         )
         .with_state(state);
 
@@ -316,6 +321,50 @@ async fn admin_set_admin(
                 .await
         }
         (None, Some(name)) => hub.db.set_admin_by_name(&req.tenant, name, req.admin).await,
+        (None, None) => return (StatusCode::BAD_REQUEST, "missing_identifier").into_response(),
+    };
+    match updated {
+        Ok(true) => match hub.db.list_accounts(&req.tenant).await {
+            Ok(accounts) => Json(accounts).into_response(),
+            Err(e) => internal_error(e),
+        },
+        Ok(false) => (StatusCode::NOT_FOUND, "unknown_account").into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetModeratorReq {
+    tenant: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+    moderator: bool,
+}
+
+/// Grant or revoke a tenant account's moderator flag by name or email, returning the updated account
+/// list. Mirrors `admin_set_admin`; needs `x-admin-token`. An identifier that matches no account is a
+/// 404 (the panel reports it instead of a silent success).
+async fn admin_set_moderator(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Json(req): Json<SetModeratorReq>,
+) -> impl IntoResponse {
+    if let Some(resp) = check_admin(&hub, &headers) {
+        return resp;
+    }
+    let updated = match (&req.email, &req.name) {
+        (Some(email), _) => {
+            hub.db
+                .set_moderator_by_email(&req.tenant, email, req.moderator)
+                .await
+        }
+        (None, Some(name)) => {
+            hub.db
+                .set_moderator_by_name(&req.tenant, name, req.moderator)
+                .await
+        }
         (None, None) => return (StatusCode::BAD_REQUEST, "missing_identifier").into_response(),
     };
     match updated {
