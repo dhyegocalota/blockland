@@ -16,9 +16,9 @@ import type { CreatureDef } from './creatures';
 import type { StructureKind } from './structures';
 import type { BlockInventory } from './inventory';
 import type { EngineState } from './engine-state';
-import type { ChunkMesher } from './chunk-mesher';
-import type { PoofRuntime } from './poofs-runtime';
-import type { ViewRenderer } from './renderers';
+import type { ChunkMesher } from './rendering/chunk-mesher';
+import type { PoofRuntime } from './rendering/poofs-runtime';
+import type { ViewRenderer } from './rendering/renderers';
 import type { DebugSnapshot } from './debug-snapshot';
 import type { CoopController, CoopCreature, CoopPlayer, RoomState } from '../coop';
 import type { CoopBridge } from './api';
@@ -156,6 +156,7 @@ export interface GameRuntime {
   sendCoopEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   debugSnapshot(): DebugSnapshot;
   grantOfflineAdmin(): void;
+  enterOfflineMode(): void;
   startCoop(): void;
   bindApi(): void;
 

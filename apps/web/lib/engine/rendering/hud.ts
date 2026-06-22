@@ -3,19 +3,19 @@
 // resize and the touch controls. Creating it attaches the DOM listeners (gated by the engine's abort
 // signal) exactly as the closure did — so it must be created after el()/canvas are wired and before the
 // game starts. Pure pieces (hotbarCountLabel, readJoystick, clampPitch) are unit-tested elsewhere.
-import { t } from '../i18n';
-import { debug } from '../log';
-import { BLOCKS, blockById } from './blocks';
+import { t } from '../../i18n';
+import { debug } from '../../log';
+import { BLOCKS, blockById } from '../blocks';
 import {
   CHIME_GAP_MS, CHIME_HIGH_FREQ, CHIME_LOW_FREQ, CHIME_NOTE_DURATION, FACE_ID,
   TOAST_DURATION_MS, TOUCH_LOOK_SENSITIVITY,
-} from './constants';
-import { renderBlockCanvas } from './textures';
-import { hotbarCountLabel } from './inventory';
-import { readJoystick } from './joystick';
-import { clampPitch } from './binds';
-import type { StructureKind } from './structures';
-import type { GameRuntime } from './runtime';
+} from '../constants';
+import { renderBlockCanvas } from '../textures';
+import { hotbarCountLabel } from '../inventory';
+import { readJoystick } from '../joystick';
+import { clampPitch } from '../binds';
+import type { StructureKind } from '../structures';
+import type { GameRuntime } from '../runtime';
 
 interface AudioWindow extends Window {
   webkitAudioContext?: typeof AudioContext;

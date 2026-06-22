@@ -2,9 +2,9 @@
 // read/write of the best score and the HUD stat repaint. The pure formatting + record math it leans on
 // (heartsLabel, bestScore, persistedRecord) lives in ./scoreboard and is unit-tested; this is the glue
 // that drives them against localStorage + the live DOM.
-import { MAX_HEARTS } from './constants';
-import { bestScore, heartsLabel, persistedRecord } from './scoreboard';
-import type { GameRuntime } from './runtime';
+import { MAX_HEARTS } from '../constants';
+import { bestScore, heartsLabel, persistedRecord } from '../scoreboard';
+import type { GameRuntime } from '../runtime';
 
 export function createScoreboard(runtime: GameRuntime): void {
   runtime.storedBest = function storedBest(): number {

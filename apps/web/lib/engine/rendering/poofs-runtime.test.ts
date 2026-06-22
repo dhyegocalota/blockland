@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { POOF_COUNT } from './poofs';
+import { POOF_COUNT } from '../poofs';
 import { createPoofRuntime } from './poofs-runtime';
 
 describe('createPoofRuntime', () => {

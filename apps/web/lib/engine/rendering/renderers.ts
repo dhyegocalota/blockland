@@ -4,8 +4,8 @@
 // deps object — it never reaches into game-engine. The look math itself is the unit-tested lookDirection
 // (aim.ts); this is the glue that pushes it onto the camera.
 import * as THREE from 'three';
-import { lookDirection } from './aim';
-import type { VoxelHit } from './raycast';
+import { lookDirection } from '../aim';
+import type { VoxelHit } from '../raycast';
 
 export interface ViewRenderer {
   // Aim the camera at the player's eye + look direction and paint the highlight at the aimed cell.

@@ -1,7 +1,7 @@
 // The composition root: a small fluent builder that wires the running game out of the cohesive runtime
 // modules (actions, creature-runtime, hud, game-loop, coop-wiring). It owns the boot-level glue the
 // modules share — the scene, the voxel-world accessors, spawn/save, the chunk mesher / poof / view
-// runtimes — assembles them onto one GameRuntime, picks the offline-vs-multiplayer plan (see
+// runtimes — assembles them onto one GameRuntime, picks the offline-vs-online plan (see
 // builder-plan.ts) and returns the running engine's cleanup. game-engine.ts's initGame is a thin call
 // into `GameEngine.builder()`. Modules never import game-engine.ts; the builder is the only wirer.
 import * as THREE from 'three';
@@ -20,17 +20,18 @@ import { groundHeight as groundHeightAt } from './terrain-column';
 import { aimPitch, aimYaw } from './aim';
 import { type EngineContext } from './context';
 import { createEngineState } from './engine-state';
-import { createViewRenderer } from './renderers';
-import { createScene } from './scene-setup';
-import { buildMaterials } from './materials';
-import { createChunkMesher } from './chunk-mesher';
-import { createPoofRuntime } from './poofs-runtime';
+import { createViewRenderer } from './rendering/renderers';
+import { createScene } from './rendering/scene-setup';
+import { buildMaterials } from './rendering/materials';
+import { createChunkMesher } from './rendering/chunk-mesher';
+import { createPoofRuntime } from './rendering/poofs-runtime';
 import { resolveCoopPlan, type EngineMode } from './builder-plan';
 import { createActions } from './actions';
-import { createCreatureRuntime } from './creature-runtime';
-import { createHud } from './hud';
+import { createCreatureRuntime } from './rendering/creature-runtime';
+import { createHud } from './rendering/hud';
 import { createGameLoop } from './game-loop';
-import { createCoopWiring } from './coop-wiring';
+import { createCoopWiring } from './online/coop-wiring';
+import { createOfflineMode } from './offline/offline-mode';
 import type { CoopBridge } from './api';
 import type { GameRuntime } from './runtime';
 
@@ -45,7 +46,7 @@ interface GameWindow extends Window {
 export class GameEngineBuilder {
   private brand: Brand | null = null;
   private bridge: CoopBridge | undefined = undefined;
-  private mode: EngineMode = 'multiplayer';
+  private mode: EngineMode = 'online';
 
   forTenant(brand: Brand): this {
     this.brand = brand;
@@ -62,8 +63,8 @@ export class GameEngineBuilder {
     return this;
   }
 
-  multiplayer(): this {
-    this.mode = 'multiplayer';
+  online(): this {
+    this.mode = 'online';
     return this;
   }
 
@@ -156,6 +157,7 @@ export class GameEngineBuilder {
     createHud(runtime);
     createActions(runtime);
     createCreatureRuntime(runtime);
+    createOfflineMode(runtime);
     createCoopWiring(runtime);
     createGameLoop(runtime);
 

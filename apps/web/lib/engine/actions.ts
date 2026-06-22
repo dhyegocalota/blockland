@@ -4,7 +4,7 @@
 // concern left over: the in-place world reset.
 import { createBlockActions } from './block-actions';
 import { createStructurePlacement } from './structure-placement';
-import { createScoreboard } from './scoreboard-runtime';
+import { createScoreboard } from './rendering/scoreboard-runtime';
 import type { GameRuntime } from './runtime';
 
 export function createActions(runtime: GameRuntime): void {

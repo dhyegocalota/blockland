@@ -4,14 +4,14 @@
 // a server URL is configured AND the player did not choose single-player, so the offline path never
 // opens a socket. All bodies move verbatim from the engine closure.
 import * as THREE from 'three';
-import { t } from '../i18n';
-import { debug } from '../log';
-import { AIR, EYE_HEIGHT } from './constants';
-import { clearFeetAbove } from './actors';
-import { buildDebugSnapshot, type DebugSnapshot } from './debug-snapshot';
-import { createCoop, MAIN_WORLD, type CoopHud, type RoomState } from '../coop';
-import type { EditCell, EditOp } from '../protocol';
-import type { GameRuntime } from './runtime';
+import { t } from '../../i18n';
+import { debug } from '../../log';
+import { AIR, EYE_HEIGHT } from '../constants';
+import { clearFeetAbove } from '../actors';
+import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
+import { createCoop, MAIN_WORLD, type CoopHud, type RoomState } from '../../coop';
+import type { EditCell, EditOp } from '../../protocol';
+import type { GameRuntime } from '../runtime';
 
 export function createCoopWiring(runtime: GameRuntime): void {
   const { state, brand } = runtime;
@@ -142,13 +142,6 @@ export function createCoopWiring(runtime: GameRuntime): void {
     });
   };
 
-  // Offline / single-player: there is no server to grant admin, so every offline player IS admin and
-  // controls the room locally. Online never calls this (coop is set), so the modes can't collide.
-  runtime.grantOfflineAdmin = function grantOfflineAdmin(): void {
-    runtime.bridge?.hud.onRole({ admin: true, moderator: false });
-    runtime.bridge?.hud.onRoomState(runtime.currentRoom());
-  };
-
   runtime.startCoop = function startCoop(): void {
     const serverUrl = runtime.serverUrl;
     if (runtime.coop) return;
@@ -156,8 +149,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
     if (!runtime.bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
     if (runtime.bridge.resolveOffline()) {
       debug('coop', 'single-player (chosen)');
-      if (!runtime.creatures.length) runtime.populateCreatures();
-      runtime.grantOfflineAdmin();
+      runtime.enterOfflineMode();
       return;
     }
     const bridge = runtime.bridge;

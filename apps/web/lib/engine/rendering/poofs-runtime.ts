@@ -2,7 +2,7 @@
 // The motion is pure (see poofs.ts); this owns the particle list and the THREE meshes. The factory
 // returns spawn/update plus a clear() the world-reset uses to wipe particles in place.
 import * as THREE from 'three';
-import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from './poofs';
+import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from '../poofs';
 
 interface Poof {
   mesh: THREE.Mesh;

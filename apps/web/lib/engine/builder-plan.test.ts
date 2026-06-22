@@ -7,18 +7,18 @@ describe('resolveCoopPlan', () => {
       .toEqual({ coopEnabled: false, populateAtBoot: true });
   });
 
-  it('multiplayer enables coop and skips local creatures when server + bridge are present', () => {
-    expect(resolveCoopPlan({ serverUrl: 'wss://srv', hasBridge: true, mode: 'multiplayer' }))
+  it('online enables coop and skips local creatures when server + bridge are present', () => {
+    expect(resolveCoopPlan({ serverUrl: 'wss://srv', hasBridge: true, mode: 'online' }))
       .toEqual({ coopEnabled: true, populateAtBoot: false });
   });
 
-  it('multiplayer without a server url stays single-player', () => {
-    expect(resolveCoopPlan({ serverUrl: undefined, hasBridge: true, mode: 'multiplayer' }))
+  it('online without a server url stays offline', () => {
+    expect(resolveCoopPlan({ serverUrl: undefined, hasBridge: true, mode: 'online' }))
       .toEqual({ coopEnabled: false, populateAtBoot: true });
   });
 
-  it('multiplayer without a bridge stays single-player', () => {
-    expect(resolveCoopPlan({ serverUrl: 'wss://srv', hasBridge: false, mode: 'multiplayer' }))
+  it('online without a bridge stays offline', () => {
+    expect(resolveCoopPlan({ serverUrl: 'wss://srv', hasBridge: false, mode: 'online' }))
       .toEqual({ coopEnabled: false, populateAtBoot: true });
   });
 });

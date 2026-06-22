@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FACE_ID } from './constants';
-import { BLOCKS, blockById } from './blocks';
+import { FACE_ID } from '../constants';
+import { BLOCKS, blockById } from '../blocks';
 import { buildMaterials, makeFaceMaterial } from './materials';
 
 // A canvas whose 2d context swallows every drawing call, so the block/face builders can paint without

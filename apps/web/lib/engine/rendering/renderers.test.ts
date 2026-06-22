@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createViewRenderer } from './renderers';
-import type { VoxelHit } from './raycast';
+import type { VoxelHit } from '../raycast';
 
 function makeRenderer() {
   const camera = new THREE.PerspectiveCamera();

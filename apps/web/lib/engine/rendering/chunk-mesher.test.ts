@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CHUNK, SIZE_X, SIZE_Z } from './constants';
-import { BLOCKS } from './blocks';
-import { VoxelWorld } from './world';
+import { CHUNK, SIZE_X, SIZE_Z } from '../constants';
+import { BLOCKS } from '../blocks';
+import { VoxelWorld } from '../world';
 import { createChunkMesher } from './chunk-mesher';
-import type { EngineContext } from './context';
+import type { EngineContext } from '../context';
 
 function makeContext(isTouch: boolean): EngineContext {
   const materials: Record<number, THREE.MeshLambertMaterial> = {};

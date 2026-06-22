@@ -2,9 +2,9 @@
 // face block swapped for its image texture) and the little face material drawn on creatures. Glue —
 // the canvas/texture generation itself is pure (see textures.ts); here we wrap it in THREE materials.
 import * as THREE from 'three';
-import { FACE_ID } from './constants';
-import { BLOCKS } from './blocks';
-import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './textures';
+import { FACE_ID } from '../constants';
+import { BLOCKS } from '../blocks';
+import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from '../textures';
 
 // Fill the materials record (keyed by block id) used by the mesher. The tenant face block uses the
 // supplied face texture; every other block gets its generated swatch texture.

@@ -7,15 +7,15 @@
 // (radius/keep-range math) and mesh-queue (enqueue/sort/dequeue). This module is the THREE glue around
 // them and is exercised by e2e.
 import * as THREE from 'three';
-import { CHUNK, SIZE_X, SIZE_Y, SIZE_Z } from './constants';
-import { BLOCKS, blockById } from './blocks';
-import { debug } from '../log';
+import { CHUNK, SIZE_X, SIZE_Y, SIZE_Z } from '../constants';
+import { BLOCKS, blockById } from '../blocks';
+import { debug } from '../../log';
 import {
   chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
-} from './chunk-grid';
-import { type QueuedChunk, enqueueChunks, shouldMeshDequeued, sortQueueByDistance } from './mesh-queue';
-import { meshChunkBuckets } from './meshing';
-import type { EngineContext } from './context';
+} from '../chunk-grid';
+import { type QueuedChunk, enqueueChunks, shouldMeshDequeued, sortQueueByDistance } from '../mesh-queue';
+import { meshChunkBuckets } from '../meshing';
+import type { EngineContext } from '../context';
 
 export interface ChunkMesher {
   meshChunk(cxh: number, czh: number): void;

@@ -2,7 +2,7 @@
 // and the block highlight box. Pure construction — given the touch flag it returns the handles the
 // engine wires together. No DOM beyond appending the canvas, no game state.
 import * as THREE from 'three';
-import { SIZE_X, SIZE_Z } from './constants';
+import { SIZE_X, SIZE_Z } from '../constants';
 
 export interface SceneHandles {
   scene: THREE.Scene;
