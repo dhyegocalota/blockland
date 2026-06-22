@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{
-    Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerId, PlayerMeta,
-    PlayerState, ServerMsg,
+    BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerId,
+    PlayerMeta, PlayerState, ServerMsg,
 };
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
@@ -454,6 +454,20 @@ impl Room {
                 let _ = reply.send(Err("needs_login".into()));
                 return;
             }
+            if self
+                .hub
+                .db
+                .is_rejected(&self.key.0, &account_id)
+                .await
+                .unwrap_or(false)
+            {
+                let _ = conn.try_send(ServerMsg::Error {
+                    code: "rejected".into(),
+                    msg: "A grown-up didn't let you in this time.".into(),
+                });
+                let _ = reply.send(Err("rejected".into()));
+                return;
+            }
             if !self
                 .hub
                 .db
@@ -601,9 +615,10 @@ impl Room {
         }
         // Hand the joining connection the current room-wide settings, after Welcome + world + backlog.
         let _ = conn.try_send(self.room_state());
-        // An admin also gets the current pending-approval list so they can manage it right away.
+        // An admin also gets the current pending-approval list + ban list so they can manage right away.
         if role.is_admin() {
             send_pending(&self.hub.db, &self.key.0, std::slice::from_ref(&conn)).await;
+            let _ = conn.try_send(self.bans_msg());
         }
         self.players.insert(id, player);
         // The fresh player's inventory (empty + infinite by default), sent after it is registered.
@@ -690,6 +705,14 @@ impl Room {
         }
         if let ClientMsg::AdminApprove { account_id } = msg {
             self.on_admin_approve(id, account_id);
+            return;
+        }
+        if let ClientMsg::AdminReject { account_id } = msg {
+            self.on_admin_reject(id, account_id);
+            return;
+        }
+        if let ClientMsg::AdminUnban { ip } = msg {
+            self.on_admin_unban(id, ip);
             return;
         }
 
@@ -883,6 +906,8 @@ impl Room {
             | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AdminSetApproval { .. }
             | ClientMsg::AdminApprove { .. }
+            | ClientMsg::AdminReject { .. }
+            | ClientMsg::AdminUnban { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
             | ClientMsg::Respawn
@@ -1028,8 +1053,14 @@ impl Room {
             return;
         };
         admin.last_seen = Instant::now();
-        if !admin.is_admin {
-            tracing::debug!(%admin_id, "admin command ignored: not an admin");
+        // A moderator (kid) may kick, but only an admin (parent) may ban.
+        let may_act = if ban {
+            admin.is_admin
+        } else {
+            admin.is_admin || admin.is_moderator
+        };
+        if !may_act {
+            tracing::debug!(%admin_id, ban, "remove ignored: insufficient authority");
             return;
         }
         let admin_name = admin.name.clone();
@@ -1048,7 +1079,8 @@ impl Room {
             msg: message.into(),
         });
         if ban {
-            self.hub.bans.ban(target_ip);
+            self.hub.bans.ban(target_ip, target_name.clone());
+            self.broadcast_bans_to_admins();
         }
         self.players.remove(&target_id);
         self.broadcast(&ServerMsg::Left { id: target_id });
@@ -1157,9 +1189,9 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %id, on, "world suspension set by admin");
     }
 
-    /// Change an online player's role. Admins (parents) may grant any role; moderators (kids) may only
-    /// add or remove other moderators (never touch an admin, never grant admin). The change takes
-    /// effect live (the target's flags + a Role message) and is persisted to the account.
+    /// Change an online player's role. Admin-only (parents); moderators (kids) may never grant a role
+    /// (their reach is at most a kick). The change takes effect live (the target's flags + a Role
+    /// message) and is persisted to the account.
     fn on_admin_set_role(
         &mut self,
         actor_id: PlayerId,
@@ -1172,20 +1204,15 @@ impl Room {
         };
         actor.last_seen = Instant::now();
         let actor_is_admin = actor.is_admin;
-        let actor_is_moderator = actor.is_moderator;
         let actor_name = actor.name.clone();
-        let may_grant = actor_is_admin || (actor_is_moderator && role != Role::Admin);
-        if !may_grant {
-            tracing::debug!(%actor_id, "set-role ignored: insufficient authority");
+        // Only admins (parents) change roles. Moderators (kids) may at most kick — never grant a role.
+        if !actor_is_admin {
+            tracing::debug!(%actor_id, "set-role ignored: only admins change roles");
             return;
         }
         let Some(target) = self.players.get_mut(&target_id) else {
             return;
         };
-        if !actor_is_admin && target.is_admin {
-            tracing::debug!(%actor_id, "set-role ignored: a moderator cannot change an admin");
-            return;
-        }
         target.is_admin = role.is_admin();
         target.is_moderator = role.is_moderator();
         let target_account = target.account_id.clone();
@@ -1327,6 +1354,86 @@ impl Room {
             tracing::info!(%tenant, %account_id, "account approved by admin");
             send_pending(&db, &tenant, &admin_conns).await;
         });
+    }
+
+    /// Reject a pending account. Admin-only; the request is marked rejected (the held player's next join
+    /// is turned away with "rejected") and the pending list is refreshed for online admins.
+    fn on_admin_reject(&mut self, id: PlayerId, account_id: String) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "reject ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("reject|{account_id}"),
+        });
+        let tenant = self.key.0.clone();
+        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+            .players
+            .values()
+            .filter(|p| p.is_admin)
+            .map(|p| p.conn.clone())
+            .collect();
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.reject_approval_request(&tenant, &account_id).await {
+                tracing::error!(error = %e, "reject persist failed");
+                return;
+            }
+            tracing::info!(%tenant, %account_id, "account rejected by admin");
+            send_pending(&db, &tenant, &admin_conns).await;
+        });
+    }
+
+    /// Lift a global IP ban. Admin-only; updates the live + persisted ban list and refreshes the ban
+    /// list shown to online admins.
+    fn on_admin_unban(&mut self, id: PlayerId, ip: String) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "unban ignored: not an admin");
+            return;
+        }
+        let Ok(parsed) = ip.parse::<IpAddr>() else {
+            return;
+        };
+        if !self.hub.bans.unban(parsed) {
+            return;
+        }
+        let admin_name = admin.name.clone();
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("unban|{ip}"),
+        });
+        self.broadcast_bans_to_admins();
+    }
+
+    fn bans_msg(&self) -> ServerMsg {
+        ServerMsg::Bans {
+            bans: self
+                .hub
+                .bans
+                .list_named()
+                .into_iter()
+                .map(|(ip, name)| BanEntry { ip, name })
+                .collect(),
+        }
+    }
+
+    fn broadcast_bans_to_admins(&self) {
+        let msg = self.bans_msg();
+        for p in self.players.values().filter(|p| p.is_admin) {
+            let _ = p.conn.try_send(msg.clone());
+        }
     }
 
     /// Push the current pending-approval list to every online admin (no-op if none are online).
@@ -2826,7 +2933,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_moderator_cannot_grant_admin() {
+    async fn a_moderator_cannot_grant_any_role() {
         let mut room = test_room().await;
         add_player(&mut room, 1, true);
         room.on_input(
@@ -2860,9 +2967,24 @@ mod tests {
             },
         );
         assert!(
-            room.players.get(&3).unwrap().is_moderator,
-            "a moderator may add another moderator"
+            !room.players.get(&3).unwrap().is_moderator,
+            "a moderator cannot grant any role, not even moderator"
         );
+    }
+
+    #[tokio::test]
+    async fn a_moderator_can_kick_but_not_ban() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        room.players.get_mut(&1).unwrap().is_moderator = true;
+        add_player(&mut room, 2, false);
+        add_player(&mut room, 3, false);
+
+        room.on_input(1, ClientMsg::AdminBan { id: 2 });
+        assert!(room.players.contains_key(&2), "a moderator cannot ban");
+
+        room.on_input(1, ClientMsg::AdminKick { id: 3 });
+        assert!(!room.players.contains_key(&3), "a moderator can kick");
     }
 
     #[tokio::test]

@@ -108,6 +108,15 @@ pub enum ClientMsg {
     AdminApprove {
         account_id: String,
     },
+    /// Admin-only: reject a pending account. It stays out (its next join attempt is told "rejected")
+    /// until an admin later approves it. Ignored from non-admins.
+    AdminReject {
+        account_id: String,
+    },
+    /// Admin-only: lift a global IP ban so that address can join again. Ignored from non-admins.
+    AdminUnban {
+        ip: String,
+    },
     /// Ask the server to send the player back to spawn (the "back to start" button, and on death). The
     /// server moves them authoritatively and re-baselines the anti-cheat so the teleport is not rejected.
     Respawn,
@@ -220,6 +229,11 @@ pub enum ServerMsg {
     PendingApprovals {
         pending: Vec<PendingApproval>,
     },
+    /// The banned IPs (with the name they were banned under); sent to admins on join and whenever the
+    /// ban list changes, so they can unban from the in-game panel.
+    Bans {
+        bans: Vec<BanEntry>,
+    },
     /// Sent to a player who was just hit by another player in PvP; the client takes the damage.
     Hurt {
         by: String,
@@ -314,6 +328,13 @@ pub struct PendingApproval {
     pub account_id: String,
     pub name: String,
     pub email: String,
+}
+
+/// A banned IP and the name it was banned under, for the in-game admin unban list.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct BanEntry {
+    pub ip: String,
+    pub name: String,
 }
 
 /// White-label branding handed to the client on join: a display name and one image URL that
@@ -455,6 +476,7 @@ mod export {
             PlayerState::decl(),
             CreatureState::decl(),
             PendingApproval::decl(),
+            BanEntry::decl(),
             ClientMsg::decl(),
             ServerMsg::decl(),
         ] {

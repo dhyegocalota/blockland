@@ -253,7 +253,7 @@ async fn admin_ban(
     let Ok(ip) = req.ip.parse::<IpAddr>() else {
         return (StatusCode::BAD_REQUEST, "invalid ip").into_response();
     };
-    hub.bans.ban(ip);
+    hub.bans.ban(ip, ip.to_string());
     Json(hub.bans.list()).into_response()
 }
 

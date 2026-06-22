@@ -220,6 +220,9 @@ impl Db {
             // The slim branding model: one image replaces the old avatar/face_texture split. On a
             // legacy-wide db this adds the column and the backfill below seeds it from `avatar`.
             "ALTER TABLE tenants ADD COLUMN image TEXT NOT NULL DEFAULT ''",
+            // A held player an admin rejected: the row stays (so the next join is told "rejected")
+            // until an admin approves them, which clears it.
+            "ALTER TABLE approval_requests ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = self.conn.execute(column, ()).await;
         }
@@ -335,6 +338,7 @@ impl Db {
                     name TEXT NOT NULL,
                     email TEXT NOT NULL,
                     requested_at INTEGER NOT NULL,
+                    rejected INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (tenant, account_id)
                 )",
                 (),
@@ -1195,7 +1199,35 @@ impl Db {
         Ok(())
     }
 
+    /// Mark a held request rejected. The row stays (so the next join is turned away with "rejected");
+    /// a later approve clears it.
+    pub async fn reject_approval_request(
+        &self,
+        tenant: &str,
+        account_id: &str,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE approval_requests SET rejected = 1 WHERE tenant = ?1 AND account_id = ?2",
+                params![tenant, account_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn is_rejected(&self, tenant: &str, account_id: &str) -> Result<bool, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT 1 FROM approval_requests WHERE tenant = ?1 AND account_id = ?2 AND rejected = 1",
+                params![tenant, account_id],
+            )
+            .await?;
+        Ok(rows.next().await?.is_some())
+    }
+
     /// Every account still awaiting approval for a tenant, oldest-first, for the in-game admin list.
+    /// Rejected requests are excluded (they are no longer "pending").
     pub async fn pending_approvals(
         &self,
         tenant: &str,
@@ -1204,7 +1236,7 @@ impl Db {
             .conn
             .query(
                 "SELECT account_id, name, email FROM approval_requests
-                 WHERE tenant = ?1 ORDER BY requested_at ASC",
+                 WHERE tenant = ?1 AND rejected = 0 ORDER BY requested_at ASC",
                 params![tenant],
             )
             .await?;
@@ -1836,6 +1868,29 @@ mod tests {
             db.pending_approvals("teo").await.unwrap().is_empty(),
             "approving clears the pending request"
         );
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_request_drops_it_from_pending_and_marks_it_rejected() {
+        let db = memory_db().await;
+        let kid = account(&db, "teo", "kid@x.com", "Kid").await;
+        db.record_approval_request("teo", &kid, "Kid", "kid@x.com")
+            .await
+            .unwrap();
+        assert!(!db.is_rejected("teo", &kid).await.unwrap());
+
+        db.reject_approval_request("teo", &kid).await.unwrap();
+        assert!(db.is_rejected("teo", &kid).await.unwrap());
+        assert!(!db.is_approved("teo", &kid).await.unwrap());
+        assert!(
+            db.pending_approvals("teo").await.unwrap().is_empty(),
+            "a rejected request is no longer pending"
+        );
+
+        // A later approval overrides the rejection and clears the row.
+        db.approve_account("teo", &kid).await.unwrap();
+        assert!(db.is_approved("teo", &kid).await.unwrap());
+        assert!(!db.is_rejected("teo", &kid).await.unwrap());
     }
 
     #[tokio::test]
