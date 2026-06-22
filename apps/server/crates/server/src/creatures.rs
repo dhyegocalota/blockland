@@ -9,9 +9,10 @@
 
 use std::f32::consts::PI;
 
-/// Horizontal distance within which a hostile creature homes in on a player (when not at peace).
-/// Mirrors the web `stepCreatureDirection` chase threshold.
-pub const CHASE_RADIUS: f32 = 11.0;
+/// Horizontal distance within which a hostile creature homes in on a player (when not at peace). Must
+/// cover `SPAWN_RADIUS` (28) so the hostiles spawned around a player actually chase + bite them rather
+/// than wandering forever just outside chase range. Mirrors the web `stepCreatureDirection` threshold.
+pub const CHASE_RADIUS: f32 = 30.0;
 /// A creature floats this many blocks above the ground column it stands on (its body center).
 const GROUND_OFFSET: f32 = 0.5;
 

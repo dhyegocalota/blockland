@@ -2337,19 +2337,22 @@ mod tests {
             },
         );
         room.players.get_mut(&1).unwrap().hurt_at = Instant::now() - Duration::from_secs(5);
-        let spider = Creature::spawn(99, CreatureKind::Spider, 65.0, 60.0, |x, z| {
+        // Spawned 24 blocks away — a realistic SPAWN_RADIUS distance, and OUTSIDE the old 11-block chase
+        // range. The regression this guards: hostiles spawn 11-28 blocks out, so if chase doesn't cover
+        // that band they wander forever just out of reach and never bite (the "monsters do no damage" bug).
+        let spider = Creature::spawn(99, CreatureKind::Spider, 84.0, 60.0, |x, z| {
             room.world.surface_y(x, z)
         });
         room.creatures.clear();
         room.creatures.push(spider);
         let start = room.players.get(&1).unwrap().hp;
-        for _ in 0..200 {
+        for _ in 0..400 {
             room.simulate_creatures(0.1);
         }
         let hp = room.players.get(&1).unwrap().hp;
         assert!(
             hp < start,
-            "the chaser should reach and bite (hp {start} -> {hp})"
+            "a creature spawned at SPAWN_RADIUS must chase in and bite (hp {start} -> {hp})"
         );
         let hurt =
             std::iter::from_fn(|| rx.try_recv().ok()).any(|m| matches!(m, ServerMsg::Hurt { .. }));

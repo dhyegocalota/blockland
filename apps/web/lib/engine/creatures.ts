@@ -27,6 +27,12 @@ export interface CreatureMotion {
   timer: number;
 }
 
+// Hostile monsters home in on a player within this horizontal distance. Mirrors the Rust CHASE_RADIUS
+// and must cover the spawn spread, else monsters wander forever just out of reach and never bite.
+const CHASE_RADIUS = 30;
+// Animals flee a player who gets this close.
+const FLEE_RADIUS = 4;
+
 // Decides facing + wander timer for one creature tick, matching the original AI:
 // hostile monsters home in, animals flee, otherwise random wander on timer expiry.
 export function stepCreatureDirection({
@@ -42,8 +48,8 @@ export function stepCreatureDirection({
   random: () => number;
 }): CreatureMotion {
   const hostile = isMonster && !peaceful;
-  if (hostile && dist < 11) return { dir: Math.atan2(toPlayerX, toPlayerZ), timer };
-  if (!isMonster && dist < 4) return { dir: Math.atan2(-toPlayerX, -toPlayerZ), timer };
+  if (hostile && dist < CHASE_RADIUS) return { dir: Math.atan2(toPlayerX, toPlayerZ), timer };
+  if (!isMonster && dist < FLEE_RADIUS) return { dir: Math.atan2(-toPlayerX, -toPlayerZ), timer };
   if (timer <= 0) return { dir: random() * Math.PI * 2, timer: 1.5 + random() * 2 };
   return { dir, timer };
 }

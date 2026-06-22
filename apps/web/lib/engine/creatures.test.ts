@@ -59,9 +59,9 @@ describe('stepCreatureDirection', () => {
   });
 
   it('chases only inside the aggro range and wanders beyond it', () => {
-    const inside = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 10.9, isMonster: true, peaceful: false, timer: 1, dir: 0.5 });
+    const inside = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 29.9, isMonster: true, peaceful: false, timer: 1, dir: 0.5 });
     expect(inside.dir).toBeCloseTo(Math.atan2(1, 0), 5);
-    const outside = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 11, isMonster: true, peaceful: false, timer: 1, dir: 0.5 });
+    const outside = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 30, isMonster: true, peaceful: false, timer: 1, dir: 0.5 });
     expect(outside.dir).toBe(0.5);
   });
 
