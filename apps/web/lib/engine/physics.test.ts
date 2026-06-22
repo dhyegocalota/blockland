@@ -79,6 +79,21 @@ describe('moveAxis', () => {
     expect(collide({ world, pos: player.pos })).toBe(false);
   });
 
+  it('lands on the surface after a fast fall instead of tunneling deep into thick ground', () => {
+    const world = new VoxelWorld();
+    const surfaceY = AIR_FLOOR_Y, tileX = 720, tileZ = 720;
+    // a thick solid column (like terrain), top block at surfaceY
+    for (let y = surfaceY; y > surfaceY - 6; y--) world.set(tileX, y, tileZ, GRASS_ID);
+    // dropping with a big per-step amount that overshoots the surface by several blocks
+    const player = bodyAt({ x: tileX + 0.5, y: surfaceY + 1 + EYE_HEIGHT + 0.5, z: tileZ + 0.5 });
+    player.vel.y = -50;
+    moveAxis({ world, player, axis: 'y', amount: -5 });
+    const feet = player.pos.y - EYE_HEIGHT;
+    expect(feet).toBeCloseTo(surfaceY + 1, 1);
+    expect(player.onGround).toBe(true);
+    expect(collide({ world, pos: player.pos })).toBe(false);
+  });
+
   it('blocks horizontal movement into a wall and zeroes that axis velocity', () => {
     const world = new VoxelWorld();
     const wallY = AIR_FLOOR_Y, wallX = 800, startZ = 800;

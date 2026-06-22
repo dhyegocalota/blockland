@@ -29,18 +29,28 @@ export function collide({ world, pos }: { world: VoxelWorld; pos: Vec3 }): boole
   return false;
 }
 
+// Sub-step movement in increments smaller than a block so a fast move (a long fall, a lag-spike frame)
+// can never tunnel through the ground in one step and bury the player inside solid terrain.
+const MAX_STEP = 0.4;
+
 export function moveAxis({ world, player, axis, amount }: { world: VoxelWorld; player: PlayerBody; axis: Axis; amount: number }): void {
-  const before = player.pos[axis];
-  player.pos[axis] += amount;
-  if (!collide({ world, pos: player.pos })) return;
-  if (axis === 'y' && amount < 0) {
-    const feet = player.pos.y - EYE_HEIGHT;
-    player.pos.y = Math.floor(feet) + 1 + EYE_HEIGHT + 1e-3;
-    player.onGround = true;
-    player.vel.y = 0;
+  let remaining = amount;
+  while (remaining !== 0) {
+    const step = Math.abs(remaining) <= MAX_STEP ? remaining : Math.sign(remaining) * MAX_STEP;
+    remaining -= step;
+    const before = player.pos[axis];
+    player.pos[axis] += step;
+    if (!collide({ world, pos: player.pos })) continue;
+    if (axis === 'y' && step < 0) {
+      const feet = player.pos.y - EYE_HEIGHT;
+      player.pos.y = Math.floor(feet) + 1 + EYE_HEIGHT + 1e-3;
+      player.onGround = true;
+      player.vel.y = 0;
+      return;
+    }
+    player.pos[axis] = before;
+    if (axis === 'y') player.vel.y = 0;
+    else player.vel[axis] = 0;
     return;
   }
-  player.pos[axis] = before;
-  if (axis === 'y') player.vel.y = 0;
-  else player.vel[axis] = 0;
 }
