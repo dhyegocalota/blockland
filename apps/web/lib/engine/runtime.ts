@@ -182,6 +182,10 @@ export interface GameRuntime {
 
   // ---- Loop (filled by game-loop) ----
   blockIntoActors(): void;
+  // Hold-to-attack press/release, shared by the desktop mouse binds and the mobile attack button: press
+  // fires the first hit and starts the repeat, release stops it.
+  attackDown(): void;
+  attackUp(): void;
   update(dt: number): void;
   start(): void;
   loop(now: number): void;

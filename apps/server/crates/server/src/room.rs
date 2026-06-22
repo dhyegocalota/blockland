@@ -53,6 +53,10 @@ const PLAYER_EYE_HEIGHT: f32 = 1.55;
 const PLAYER_BODY_HEIGHT: f32 = 1.7;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
 const DIG_HITS: u8 = 4;
+// Minimum gap between two accepted primary actions (dig / creature hit / pvp attack) from one player.
+// The client holds-to-attack at ATTACK_REPEAT_MS (250ms); this is kept a touch more lenient to tolerate
+// network jitter, so a modified client can't spam faster than a legit hold.
+const ATTACK_MIN_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
 pub struct Appearance {
@@ -148,6 +152,9 @@ struct Player {
     // The block currently being chipped and how many taps have landed, so the server decides the break.
     dig_block: Option<[i32; 3]>,
     dig_hits: u8,
+    // When this player's last primary action (dig / creature hit / pvp attack) was accepted, used to
+    // throttle a too-fast client to the hold cadence (ATTACK_MIN_INTERVAL).
+    last_action: Instant,
     // Play-time accounting: the account's used time before this session, and how much of this session
     // has already been persisted (so the periodic flush only writes the new delta).
     playtime_baseline_ms: i64,
@@ -554,6 +561,7 @@ impl Room {
             hurt_at: now,
             dig_block: None,
             dig_hits: 0,
+            last_action: now - ATTACK_MIN_INTERVAL,
             playtime_baseline_ms: playtime_baseline,
             playtime_persisted_ms: 0,
             inventory: HashMap::new(),
@@ -733,6 +741,9 @@ impl Room {
             if let Some(p) = self.players.get_mut(&id) {
                 p.last_seen = now;
             }
+            if !self.accept_primary_action(id, now) {
+                return;
+            }
             self.on_attack_player(id, target);
             return;
         }
@@ -742,6 +753,9 @@ impl Room {
         if let ClientMsg::Hit { id: creature_id } = msg {
             if let Some(p) = self.players.get_mut(&id) {
                 p.last_seen = now;
+            }
+            if !self.accept_primary_action(id, now) {
+                return;
             }
             self.on_hit(id, creature_id);
             return;
@@ -758,6 +772,9 @@ impl Room {
         if let ClientMsg::Dig { x, y, z } = msg {
             if let Some(p) = self.players.get_mut(&id) {
                 p.last_seen = now;
+            }
+            if !self.accept_primary_action(id, now) {
+                return;
             }
             self.on_dig(id, x, y, z);
             return;
@@ -1511,6 +1528,19 @@ impl Room {
     /// A PvP melee attack on another player. Ignored unless pvp is on and the attacker is within melee
     /// range of the target; the server never damages server-side (the client owns hearts) and only
     /// tells the target it was hit so it takes one heart of damage.
+    /// Accept a primary action (dig / creature hit / pvp attack) only if enough time has passed since
+    /// this player's last accepted one, throttling a modified client to the legit hold cadence.
+    fn accept_primary_action(&mut self, id: PlayerId, now: Instant) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        if now.duration_since(p.last_action) < ATTACK_MIN_INTERVAL {
+            return false;
+        }
+        p.last_action = now;
+        true
+    }
+
     fn on_attack_player(&mut self, attacker_id: PlayerId, target_id: PlayerId) {
         if !self.pvp {
             return;
@@ -2208,6 +2238,7 @@ mod tests {
             hurt_at: now,
             dig_block: None,
             dig_hits: 0,
+            last_action: now - ATTACK_MIN_INTERVAL,
             playtime_baseline_ms: 0,
             playtime_persisted_ms: 0,
             inventory: HashMap::new(),
@@ -2517,6 +2548,19 @@ mod tests {
                 .any(|m| matches!(m, ServerMsg::Edit { id: 0, .. })),
             "the break is broadcast",
         );
+    }
+
+    #[tokio::test]
+    async fn primary_actions_closer_than_the_interval_are_dropped() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        let start = Instant::now();
+        // The first action is always accepted (last_action seeded a full interval in the past).
+        assert!(room.accept_primary_action(1, start));
+        // A second action one tick later is inside the throttle window, so it is dropped.
+        assert!(!room.accept_primary_action(1, start + Duration::from_millis(50)));
+        // Once the interval has fully elapsed, the next action is accepted again.
+        assert!(room.accept_primary_action(1, start + ATTACK_MIN_INTERVAL));
     }
 
     #[tokio::test]

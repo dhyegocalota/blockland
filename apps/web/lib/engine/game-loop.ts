@@ -4,8 +4,8 @@
 // that ticks everything on a frame budget. It also attaches the window input binds. Pure pieces
 // (moveVector, moveAxis, blockVelocityIntoActors, nextFrame, smoothFps) are unit-tested; this is the glue.
 import {
-  EYE_HEIGHT, FLY_SPEED, GRAVITY, JUMP_SPEED, MOUSE_LOOK_SENSITIVITY, PLAYER_HEIGHT, PLAYER_RADIUS,
-  POS_SAVE_MS, VOID_FALL_Y, WALK_SPEED,
+  ATTACK_REPEAT_MS, EYE_HEIGHT, FLY_SPEED, GRAVITY, JUMP_SPEED, MOUSE_LOOK_SENSITIVITY, PLAYER_HEIGHT,
+  PLAYER_RADIUS, POS_SAVE_MS, VOID_FALL_Y, WALK_SPEED,
 } from './constants';
 import { clampToWorld } from './world-bounds';
 import { debug } from '../log';
@@ -13,8 +13,11 @@ import { type Axis, moveAxis } from './physics';
 import { blockVelocityIntoActors } from './actors';
 import { moveVector } from './movement';
 import { nextFrame, smoothFps } from './frame-cap';
+import { attackTick } from './attack';
 import { bindWindowInput, clampPitch } from './binds';
 import type { GameRuntime } from './runtime';
+
+const SECONDS_TO_MS = 1000;
 
 export function createGameLoop(runtime: GameRuntime): void {
   const { state, isTouch, canvas, signal } = runtime;
@@ -48,6 +51,13 @@ export function createGameLoop(runtime: GameRuntime): void {
     player.vel.z = blocked.vz;
   };
 
+  runtime.attackDown = function attackDown(): void {
+    runtime.primaryAction();
+    state.attacking = true;
+    state.attackSince = 0;
+  };
+  runtime.attackUp = function attackUp(): void { state.attacking = false; };
+
   runtime.update = function update(dt: number): void {
     const move = moveVector({
       yaw: player.yaw, pitch: player.pitch, fly: player.fly,
@@ -77,6 +87,11 @@ export function createGameLoop(runtime: GameRuntime): void {
     if (player.pos.y < VOID_FALL_Y) { player.pos.copy(runtime.spawnPoint()); player.vel.set(0, 0, 0); }
     clampToWorld(player.pos);
 
+    // Hold-to-attack: the first hit fired on press; repeat at ATTACK_REPEAT_MS while the button is held.
+    const tick = attackTick({ attacking: state.attacking, sinceLast: state.attackSince, repeatMs: ATTACK_REPEAT_MS, dt: dt * SECONDS_TO_MS });
+    state.attackSince = tick.sinceLast;
+    if (tick.fire) runtime.primaryAction();
+
     runtime.view.renderView({
       pose: { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch },
       aim: runtime.raycastVoxel(),
@@ -94,7 +109,8 @@ export function createGameLoop(runtime: GameRuntime): void {
       player.yaw -= movementX * MOUSE_LOOK_SENSITIVITY;
       player.pitch = clampPitch(player.pitch - movementY * MOUSE_LOOK_SENSITIVITY);
     },
-    primaryAction: runtime.primaryAction,
+    attackDown: runtime.attackDown,
+    attackUp: runtime.attackUp,
     placeBlock: runtime.placeBlock,
     lockPointer: runtime.lockPointer,
     resize: runtime.resizeViewport,

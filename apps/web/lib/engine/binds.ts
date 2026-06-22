@@ -21,7 +21,10 @@ export interface InputBinds {
   keyUp(code: string): void;
   hotkey(event: KeyboardEvent): void;
   look(movementX: number, movementY: number): void;
-  primaryAction(): void;
+  // Press fires the first hit immediately and starts hold-to-attack; release stops it (the loop repeats
+  // between them at ATTACK_REPEAT_MS).
+  attackDown(): void;
+  attackUp(): void;
   placeBlock(): void;
   lockPointer(): void;
   resize(): void;
@@ -44,9 +47,13 @@ export function bindWindowInput(binds: InputBinds, signal: AbortSignal): void {
   }, { signal });
   addEventListener('mousedown', (e) => {
     if (!binds.pointerLocked()) return;
-    if (e.button === 0) binds.primaryAction();
+    if (e.button === 0) binds.attackDown();
     if (e.button === 2) binds.placeBlock();
   }, { signal });
+  addEventListener('mouseup', (e) => { if (e.button === 0) binds.attackUp(); }, { signal });
+  // Losing the pointer lock or window focus must stop a held attack so it never sticks on.
+  document.addEventListener('pointerlockchange', () => { if (!binds.pointerLocked()) binds.attackUp(); }, { signal });
+  addEventListener('blur', binds.attackUp, { signal });
   addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
   addEventListener('resize', binds.resize, { signal });
 }
