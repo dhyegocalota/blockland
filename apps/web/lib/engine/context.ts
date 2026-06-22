@@ -1,0 +1,18 @@
+// The shared mutable handles the engine creates once and threads into the extracted three.js glue
+// modules (chunk mesher, etc.). It is the engine's "world of references": the scene graph, the camera,
+// the voxel world, the block materials, the per-chunk meshes and the touch flag. Modules read/write
+// through this instead of closing over engine-local variables, which is what lets them live outside
+// game-engine.ts without changing behavior.
+import type * as THREE from 'three';
+import type { VoxelWorld } from './world';
+
+export interface EngineContext {
+  isTouch: boolean;
+  scene: THREE.Scene;
+  worldGroup: THREE.Group;
+  world: VoxelWorld;
+  materials: Record<number, THREE.MeshLambertMaterial>;
+  chunkMeshes: Map<string, THREE.Mesh[]>;
+  chunksX: number;
+  chunksZ: number;
+}

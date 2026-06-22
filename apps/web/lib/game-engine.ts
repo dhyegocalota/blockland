@@ -15,19 +15,13 @@ import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
 import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 import { creatureDefFor } from './engine/creature-snapshot';
-import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './engine/textures';
-import { meshChunkBuckets } from './engine/meshing';
+import { renderBlockCanvas } from './engine/textures';
 import { sphereCastClosest } from './engine/sphere-cast';
 import { moveVector } from './engine/movement';
 import { BlockInventory, hotbarCountLabel } from './engine/inventory';
 import { parseSavedPosition, serializeSavedPosition } from './engine/saved-position';
-import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from './engine/poofs';
 import { faceBlockNameFor } from './engine/tenant-brand';
 import { nextFrame, smoothFps } from './engine/frame-cap';
-import {
-  chunkOutsideKeepRange, chunksInRadius, decodeChunkKey, playerChunk, remeshChunkRange,
-} from './engine/chunk-grid';
-import { type QueuedChunk, enqueueChunks, shouldMeshDequeued, sortQueueByDistance } from './engine/mesh-queue';
 import { STRUCTURE_KINDS, type StructureKind, structureReach, structureTarget } from './engine/structure-build';
 import { bestScore, heartsLabel, persistedRecord } from './engine/scoreboard';
 import { aimPitch, aimYaw, lookDirection } from './engine/aim';
@@ -38,6 +32,11 @@ import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreatu
 import { chooseCoopTarget, chooseLocalTarget } from './engine/attack-target';
 import { groundHeight as groundHeightAt } from './engine/terrain-column';
 import { readJoystick } from './engine/joystick';
+import { type EngineContext } from './engine/context';
+import { createScene } from './engine/scene-setup';
+import { buildMaterials, makeFaceMaterial } from './engine/materials';
+import { createChunkMesher } from './engine/chunk-mesher';
+import { createPoofRuntime } from './engine/poofs-runtime';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopController, type CoopCreature, type CoopHud, type CoopPlayer, type RoomState } from './coop';
 import type { EditCell, EditOp, Role } from './protocol';
 
@@ -64,12 +63,6 @@ interface Player {
   stars: number;
   bag: number;
   hurtCooldown: number;
-}
-
-interface Poof {
-  mesh: THREE.Mesh;
-  vel: THREE.Vector3;
-  life: number;
 }
 
 export { STRUCTURE_KINDS, type StructureKind } from './engine/structure-build';
@@ -159,24 +152,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   // ---------- Materials ----------
   const materials: Record<number, THREE.MeshLambertMaterial> = {};
-  function buildMaterials(faceTexture: THREE.Texture): void {
-    for (const b of BLOCKS) {
-      if (!b) continue;
-      let tex: THREE.Texture;
-      if (b.id === FACE_ID) tex = faceTexture;
-      else { tex = textureFromCanvas(renderBlockCanvas(b)); }
-      materials[b.id] = new THREE.MeshLambertMaterial({
-        map: tex,
-        transparent: !!b.transparent,
-        opacity: b.transparent ? 0.78 : 1,
-        side: b.transparent ? THREE.DoubleSide : THREE.FrontSide,
-      });
-    }
-  }
 
   // ---------- Voxel storage (sparse: only visited chunks use memory -> endless world) ----------
   const world = new VoxelWorld();
-  const chunkKey = (cx: number, cz: number): number => world.chunkKey(cx, cz);
   const inBounds = (x: number, y: number, z: number): boolean => world.inBounds(x, y, z);
   const getVoxel = (x: number, y: number, z: number): number => world.get(x, y, z);
   const setVoxel = (x: number, y: number, z: number, id: number): void => world.set(x, y, z, id);
@@ -190,117 +168,15 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) setVoxel(cx + dx, top + 1, cz + dz, 8);
   }
 
-  // ---------- Meshing (face-culled, merged per block type) ----------
-  const isTransparent = (id: number): boolean => !!blockById(id)?.transparent;
-
-  const worldGroup = new THREE.Group();
+  // ---------- Scene + meshing (streamed chunk meshes around the player) ----------
+  const { scene, camera, renderer, canvas, worldGroup, highlight } = createScene({ isTouch });
   const chunkMeshes = new Map<string, THREE.Mesh[]>();
-  let firstChunkStreamed = false;
-  function meshChunk(cxh: number, czh: number): void {
-    const key = `${cxh},${czh}`;
-    const old = chunkMeshes.get(key);
-    if (old) old.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
-
-    const x0 = cxh * CHUNK, x1 = Math.min(SIZE_X, x0 + CHUNK);
-    const z0 = czh * CHUNK, z1 = Math.min(SIZE_Z, z0 + CHUNK);
-    const buckets = meshChunkBuckets({ getVoxel, isTransparent, x0, x1, z0, z1, sizeY: SIZE_Y });
-
-    const meshes: THREE.Mesh[] = [];
-    for (const b of BLOCKS) {
-      if (!b) continue;
-      const data = buckets.get(b.id);
-      if (!data) continue;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(data.pos, 3));
-      geo.setAttribute('normal', new THREE.Float32BufferAttribute(data.norm, 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(data.uv, 2));
-      geo.setIndex(data.idxs);
-      const mesh = new THREE.Mesh(geo, materials[b.id]);
-      worldGroup.add(mesh);
-      meshes.push(mesh);
-    }
-    chunkMeshes.set(key, meshes);
-    if (firstChunkStreamed) return;
-    firstChunkStreamed = true;
-    debug('engine', 'first chunk streamed', { cx: cxh, cz: czh, meshes: meshes.length });
-  }
-  const LOAD_R = isTouch ? 4 : 6;
-  let lastPlayerChunkX: number | null = null, lastPlayerChunkZ: number | null = null;
-  const meshQueue: QueuedChunk[] = [];
-  const queuedKeys = new Set<number>();
-  const isMeshed = (key: number): boolean => (chunkMeshes as Map<unknown, THREE.Mesh[]>).has(key);
-  function updateChunks(force?: boolean): void {
-    const center = playerChunk(player.pos);
-    if (!force && center.cx === lastPlayerChunkX && center.cz === lastPlayerChunkZ) return;
-    lastPlayerChunkX = center.cx; lastPlayerChunkZ = center.cz;
-    const candidates = chunksInRadius({ center, radius: LOAD_R, chunksX, chunksZ })
-      .map(({ cx, cz }) => ({ cx, cz, key: chunkKey(cx, cz) }));
-    for (const chunk of enqueueChunks({ candidates, isMeshed, isQueued: (key) => queuedKeys.has(key) })) {
-      queuedKeys.add(chunk.key);
-      meshQueue.push(chunk);
-    }
-    sortQueueByDistance({ queue: meshQueue, center });
-    for (const [key, meshes] of chunkMeshes) {
-      const chunk = decodeChunkKey({ key: Number(key), chunksZ });
-      if (!chunkOutsideKeepRange({ chunk, center, radius: LOAD_R })) continue;
-      meshes.forEach((m) => { worldGroup.remove(m); m.geometry.dispose(); });
-      chunkMeshes.delete(key);
-    }
-  }
-  function processMeshQueue(budget: number): void {
-    let done = 0;
-    const center = { cx: Number(lastPlayerChunkX), cz: Number(lastPlayerChunkZ) };
-    while (done < budget && meshQueue.length) {
-      const next = meshQueue.shift();
-      if (!next) break;
-      queuedKeys.delete(next.key);
-      if (!shouldMeshDequeued({ chunk: next, center, radius: LOAD_R, isMeshed })) continue;
-      meshChunk(next.cx, next.cz);
-      done++;
-    }
-  }
-  function remeshRegion(minX: number, maxX: number, minZ: number, maxZ: number): void {
-    const { cx0, cx1, cz0, cz1 } = remeshChunkRange({ minX, maxX, minZ, maxZ, chunksX, chunksZ });
-    for (let cz = cz0; cz <= cz1; cz++)
-      for (let cx = cx0; cx <= cx1; cx++) meshChunk(cx, cz);
-  }
-
-  // ---------- Scene ----------
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#9fd8ff');
-  scene.fog = new THREE.Fog('#bfeaff', isTouch ? 38 : 60, isTouch ? 108 : 150);
-  scene.add(worldGroup);
-
-  const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, isTouch ? 200 : 380);
-  const renderer = new THREE.WebGLRenderer({ antialias: !isTouch, powerPreference: 'high-performance' });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(isTouch ? 1 : Math.min(devicePixelRatio, 2));
-  document.body.appendChild(renderer.domElement);
-  const canvas = renderer.domElement;
-
-  scene.add(new THREE.HemisphereLight('#ffffff', '#88aa66', 0.95));
-  const sun = new THREE.DirectionalLight('#fff4d6', 0.9);
-  sun.position.set(60, 90, 30);
-  scene.add(sun);
-
-  const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(6, 16, 16), new THREE.MeshBasicMaterial({ color: '#fff3b0' }));
-  sunDisc.position.set(SIZE_X / 2 + 80, 110, SIZE_Z / 2 - 90);
-  scene.add(sunDisc);
-  for (let i = 0; i < 70; i++) {
-    const cloud = new THREE.Mesh(
-      new THREE.BoxGeometry(5 + Math.random() * 6, 2, 4 + Math.random() * 5),
-      new THREE.MeshLambertMaterial({ color: '#ffffff' })
-    );
-    cloud.position.set(Math.random() * SIZE_X, 30 + Math.random() * 10, Math.random() * SIZE_Z);
-    scene.add(cloud);
-  }
-
-  const highlight = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(1.005, 1.005, 1.005)),
-    new THREE.LineBasicMaterial({ color: '#ffffff' })
-  );
-  highlight.visible = false;
-  scene.add(highlight);
+  const ctx: EngineContext = { isTouch, scene, worldGroup, world, materials, chunkMeshes, chunksX, chunksZ };
+  const mesher = createChunkMesher(ctx);
+  const updateChunks = (force?: boolean): void => mesher.updateChunks({ playerPos: player.pos, force });
+  const processMeshQueue = (budget: number): void => mesher.processMeshQueue(budget);
+  const remeshRegion = (minX: number, maxX: number, minZ: number, maxZ: number): void => mesher.remeshRegion(minX, maxX, minZ, maxZ);
+  const poofRuntime = createPoofRuntime({ scene });
 
   // ---------- Player state ----------
   const MAX_HEARTS = 3;
@@ -469,16 +345,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     const gx = Math.floor(x), gz = Math.floor(z);
     return groundHeightAt({ isSolidAt: (y) => isSolid(gx, y, gz) });
   }
-  function makeFaceMaterial(color: string): THREE.MeshLambertMaterial {
-    const c = makeCanvas();
-    const g = ctx2d(c);
-    g.fillStyle = color; g.fillRect(0, 0, 16, 16);
-    g.fillStyle = '#1a1330';
-    g.fillRect(4, 6, 2, 3); g.fillRect(10, 6, 2, 3);
-    g.fillRect(6, 11, 4, 1);
-    g.fillRect(5, 10, 1, 1); g.fillRect(10, 10, 1, 1);
-    return new THREE.MeshLambertMaterial({ map: textureFromCanvas(c) });
-  }
   function spawnCreature(typeKey: string): void {
     const def = CREATURE_DEFS[typeKey];
     if (!def) throw new Error(`unknown creature ${typeKey}`);
@@ -625,27 +491,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
 
   // ---------- Poof particles ----------
-  const poofs: Poof[] = [];
-  function spawnPoof(pos: THREE.Vector3, color: string): void {
-    for (let i = 0; i < POOF_COUNT; i++) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), new THREE.MeshBasicMaterial({ color }));
-      m.position.copy(pos);
-      scene.add(m);
-      const v = spawnPoofVelocity(Math.random);
-      poofs.push({ mesh: m, vel: new THREE.Vector3(v.x, v.y, v.z), life: POOF_LIFE });
-    }
-  }
-  function updatePoofs(dt: number): void {
-    for (let i = poofs.length - 1; i >= 0; i--) {
-      const p = poofs[i];
-      const step = stepPoof({ life: p.life, velocityY: p.vel.y, dt });
-      p.life = step.life;
-      p.vel.y = step.velocityY;
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.mesh.scale.multiplyScalar(step.scaleFactor);
-      if (step.dead) { scene.remove(p.mesh); p.mesh.geometry.dispose(); poofs.splice(i, 1); }
-    }
-  }
+  const spawnPoof = (pos: THREE.Vector3, color: string): void => poofRuntime.spawn(pos, color);
+  const updatePoofs = (dt: number): void => poofRuntime.update(dt);
 
   // The admin wiped the world: rebuild it in place (like a fresh boot) and respawn, so every player
   // resets without being kicked back to the lobby. The server's reset already cleared its own world
@@ -655,8 +502,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     buildWelcomeMonument();
     updateChunks(true);
     processMeshQueue(isTouch ? 24 : 60);
-    for (const p of poofs) { scene.remove(p.mesh); p.mesh.geometry.dispose(); }
-    poofs.length = 0;
+    poofRuntime.clear();
     player.pos.copy(spawnPoint());
     player.vel.set(0, 0, 0);
     savePos();
@@ -1190,7 +1036,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (disposed) return;
     faceTex.magFilter = THREE.NearestFilter;
     faceTex.colorSpace = THREE.SRGBColorSpace;
-    buildMaterials(faceTex);
+    buildMaterials({ materials, faceTexture: faceTex });
     buildWelcomeMonument();
     updateChunks(true);
     processMeshQueue(isTouch ? 24 : 60);
