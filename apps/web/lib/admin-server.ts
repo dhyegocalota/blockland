@@ -75,3 +75,9 @@ export async function setAccountAdmin(
 ): Promise<unknown> {
   return adminFetch('POST', '/admin/set-admin', args);
 }
+
+export async function setAccountModerator(
+  args: { tenant: string; moderator: boolean } & ({ name: string } | { email: string }),
+): Promise<unknown> {
+  return adminFetch('POST', '/admin/set-moderator', args);
+}

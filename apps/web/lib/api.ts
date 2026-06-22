@@ -170,3 +170,20 @@ export async function uploadAsset(params: {
   if (!res.ok) throw new Error(`api: uploadAsset failed (${res.status})`);
   return (await res.json()) as { url: string };
 }
+
+export interface FetchedAsset {
+  contentType: string;
+  bytes: ArrayBuffer;
+}
+
+// Read a stored asset back from the server (signed GET). Used by the public /uploads proxy so the
+// browser can load a tenant image when the storage backend has no public CDN (local-fs dev/CI).
+// A missing key returns null; the caller maps that to a 404.
+export async function fetchAsset(key: string): Promise<FetchedAsset | null> {
+  const res = await signedFetch('GET', `/internal/uploads?key=${encodeURIComponent(key)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`api: fetchAsset failed (${res.status})`);
+  const contentType = res.headers.get('content-type');
+  if (!contentType) throw new Error('api: fetchAsset missing content-type');
+  return { contentType, bytes: await res.arrayBuffer() };
+}

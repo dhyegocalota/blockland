@@ -34,12 +34,21 @@ impl std::fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+/// A stored object read back from the backend: its bytes and the content-type it was stored with.
+pub struct StoredObject {
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Dependency-inversion boundary for object storage. The app depends on this, never on R2.
 #[async_trait]
 pub trait Storage: Send + Sync {
     async fn put(&self, key: &str, content_type: &str, bytes: Vec<u8>) -> Result<(), StorageError>;
     #[allow(dead_code)]
     async fn delete(&self, key: &str) -> Result<(), StorageError>;
+    /// Read an object back. `Ok(None)` means it does not exist. Only the local backend serves reads
+    /// through the app; R2 objects are fetched directly from the CDN (`public_url`).
+    async fn get(&self, key: &str) -> Result<Option<StoredObject>, StorageError>;
     fn public_url(&self, key: &str) -> String;
 }
 
@@ -110,6 +119,21 @@ impl Storage for R2Storage {
         Ok(())
     }
 
+    async fn get(&self, key: &str) -> Result<Option<StoredObject>, StorageError> {
+        let response = self
+            .bucket
+            .get_object(key)
+            .await
+            .map_err(|error| StorageError::Upstream(error.to_string()))?;
+        if response.status_code() != HTTP_OK {
+            return Ok(None);
+        }
+        Ok(Some(StoredObject {
+            content_type: content_type_for_key(key),
+            bytes: response.to_vec(),
+        }))
+    }
+
     fn public_url(&self, key: &str) -> String {
         join_url(&self.public_base, key)
     }
@@ -164,9 +188,35 @@ impl Storage for LocalStorage {
         }
     }
 
+    async fn get(&self, key: &str) -> Result<Option<StoredObject>, StorageError> {
+        match tokio::fs::read(self.root.join(key)).await {
+            Ok(bytes) => Ok(Some(StoredObject {
+                content_type: content_type_for_key(key),
+                bytes,
+            })),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(StorageError::Io(error)),
+        }
+    }
+
     fn public_url(&self, key: &str) -> String {
         join_url(&self.public_base, &format!("uploads/{key}"))
     }
+}
+
+/// Content-type for a stored asset, derived from its extension. The upload endpoint only accepts the
+/// three image types below, so an unknown extension means the object was never stored by us.
+fn content_type_for_key(key: &str) -> String {
+    if key.ends_with(".png") {
+        return "image/png".into();
+    }
+    if key.ends_with(".jpg") {
+        return "image/jpeg".into();
+    }
+    if key.ends_with(".webp") {
+        return "image/webp".into();
+    }
+    "application/octet-stream".into()
 }
 
 fn required_env(name: &str) -> Result<String, StorageError> {
@@ -228,6 +278,18 @@ mod tests {
             Ok(())
         }
 
+        async fn get(&self, key: &str) -> Result<Option<StoredObject>, StorageError> {
+            Ok(self
+                .objects
+                .lock()
+                .unwrap()
+                .get(key)
+                .map(|(content_type, bytes)| StoredObject {
+                    content_type: content_type.clone(),
+                    bytes: bytes.clone(),
+                }))
+        }
+
         fn public_url(&self, key: &str) -> String {
             format!("mem://{key}")
         }
@@ -272,6 +334,39 @@ mod tests {
 
         storage.delete(key).await.unwrap();
         assert!(tokio::fs::metadata(dir.path().join(key)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn local_storage_get_reads_back_bytes_and_typed_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage {
+            root: dir.path().to_path_buf(),
+            public_base: String::new(),
+        };
+        let key = "tenants/acme/image.webp";
+
+        assert!(storage.get(key).await.unwrap().is_none());
+        storage
+            .put(key, "image/webp", b"webp-bytes".to_vec())
+            .await
+            .unwrap();
+        let stored = storage.get(key).await.unwrap().unwrap();
+        assert_eq!(stored.content_type, "image/webp");
+        assert_eq!(stored.bytes, b"webp-bytes");
+    }
+
+    #[test]
+    fn content_type_for_key_maps_known_image_extensions() {
+        assert_eq!(content_type_for_key("tenants/acme/image.png"), "image/png");
+        assert_eq!(content_type_for_key("tenants/acme/image.jpg"), "image/jpeg");
+        assert_eq!(
+            content_type_for_key("tenants/acme/image.webp"),
+            "image/webp"
+        );
+        assert_eq!(
+            content_type_for_key("tenants/acme/image.bin"),
+            "application/octet-stream"
+        );
     }
 
     #[test]

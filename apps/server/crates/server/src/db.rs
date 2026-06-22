@@ -890,6 +890,38 @@ impl Db {
         Ok(changed > 0)
     }
 
+    pub async fn set_moderator_by_name(
+        &self,
+        tenant: &str,
+        name: &str,
+        moderator: bool,
+    ) -> Result<bool, libsql::Error> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE accounts SET is_moderator = ?3 WHERE tenant = ?1 AND name = ?2",
+                params![tenant, name, moderator as i64],
+            )
+            .await?;
+        Ok(changed > 0)
+    }
+
+    pub async fn set_moderator_by_email(
+        &self,
+        tenant: &str,
+        email: &str,
+        moderator: bool,
+    ) -> Result<bool, libsql::Error> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE accounts SET is_moderator = ?3 WHERE tenant = ?1 AND email = ?2",
+                params![tenant, email, moderator as i64],
+            )
+            .await?;
+        Ok(changed > 0)
+    }
+
     /// Whether the account is a room admin. Unknown accounts are not admins.
     pub async fn is_admin(&self, account_id: &str) -> Result<bool, libsql::Error> {
         match self.get_account_by_id(account_id).await? {
@@ -1903,6 +1935,85 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!ann.is_admin);
+    }
+
+    #[tokio::test]
+    async fn set_moderator_by_email_grants_then_revokes_and_reports_unknown() {
+        let db = memory_db().await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        let role = |id: String| {
+            let db = &db;
+            async move { db.role(&id).await.unwrap() }
+        };
+        assert_eq!(role(ann.clone()).await, Role::Admin);
+
+        // First account is auto-admin; clear it so moderator is the only flag under test.
+        db.set_admin_by_email("acme", "ann@x.com", false)
+            .await
+            .unwrap();
+        assert!(db
+            .set_moderator_by_email("acme", "ann@x.com", true)
+            .await
+            .unwrap());
+        assert_eq!(role(ann.clone()).await, Role::Moderator);
+
+        assert!(db
+            .set_moderator_by_email("acme", "ann@x.com", false)
+            .await
+            .unwrap());
+        assert_eq!(role(ann.clone()).await, Role::Player);
+
+        // An unknown email reports no change, and tenants are isolated.
+        assert!(!db
+            .set_moderator_by_email("acme", "nobody@x.com", true)
+            .await
+            .unwrap());
+        assert!(!db
+            .set_moderator_by_email("demo", "ann@x.com", true)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn set_moderator_by_name_grants_then_revokes_and_reports_unknown() {
+        let db = memory_db().await;
+        account(&db, "acme", "first@x.com", "First").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        assert!(
+            !db.get_account_by_id(&ann)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_moderator
+        );
+
+        assert!(db.set_moderator_by_name("acme", "Ann", true).await.unwrap());
+        assert!(
+            db.get_account_by_name("acme", "Ann")
+                .await
+                .unwrap()
+                .unwrap()
+                .is_moderator
+        );
+
+        assert!(db
+            .set_moderator_by_name("acme", "Ann", false)
+            .await
+            .unwrap());
+        assert!(
+            !db.get_account_by_id(&ann)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_moderator
+        );
+
+        // Unknown name reports no change; a same-named account in another tenant is untouched.
+        assert!(!db
+            .set_moderator_by_name("acme", "Nobody", true)
+            .await
+            .unwrap());
+        assert!(!db.set_moderator_by_name("demo", "Ann", true).await.unwrap());
     }
 
     #[tokio::test]
