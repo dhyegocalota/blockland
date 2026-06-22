@@ -7,6 +7,7 @@ import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
+import LocaleSwitcher from './LocaleSwitcher';
 import { useGame } from '../lib/hooks/use-game';
 import { roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
@@ -109,6 +110,7 @@ export default function Game() {
           <span className="stat record" id="record">🏆 0</span>
           <span className="stat" id="bag">🎒 0</span>
           {showPing && <span className="stat" id="ping">{t('coop.ping', { ping })}</span>}
+          <LocaleSwitcher />
         </div>
         <div id="crosshair"></div>
         <div id="toast"></div>
@@ -401,7 +403,7 @@ export default function Game() {
         className={debugOpen ? 'on' : undefined}
         onClick={() => setDebugOpen((open) => !open)}
         title={t('debug.title')}
-        aria-label="Debug"
+        aria-label={t('debug.aria')}
       >
         🐞
       </button>

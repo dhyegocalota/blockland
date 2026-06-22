@@ -372,6 +372,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     'leaderboard.col_rank': '#',
     'leaderboard.col_name': 'Nome',
     'leaderboard.col_score': 'Pontos',
+
+    // Document metadata (title, description, social cards, PWA manifest)
+    'meta.title': 'Blockland',
+    'meta.description': 'Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.',
+    'meta.og_title': 'Blockland — mundos de blocos 3D pra crianças',
+    'debug.aria': 'Depurar',
   },
   'en-US': {
     // HUD action buttons
@@ -740,5 +746,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'leaderboard.col_rank': '#',
     'leaderboard.col_name': 'Name',
     'leaderboard.col_score': 'Score',
+
+    // Document metadata (title, description, social cards, PWA manifest)
+    'meta.title': 'Blockland',
+    'meta.description': '3D block worlds for kids: build, hunt, fight monsters and collect stars.',
+    'meta.og_title': 'Blockland — 3D block worlds for kids',
+    'debug.aria': 'Debug',
   },
 };
