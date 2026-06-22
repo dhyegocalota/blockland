@@ -2123,6 +2123,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn suspending_the_room_sends_every_non_admin_back_to_the_lobby() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, true); // the admin who suspends stays to resume
+        let mut player_rx = add_player(&mut room, 2, false);
+        add_player(&mut room, 3, false);
+
+        room.on_admin_suspend(1, true);
+
+        assert!(room.suspended);
+        assert!(
+            room.players.contains_key(&1),
+            "the suspending admin keeps playing"
+        );
+        assert!(
+            !room.players.contains_key(&2),
+            "ordinary players are ejected"
+        );
+        assert!(!room.players.contains_key(&3));
+        // The ejected player is told why, so the client drops to the lobby instead of reconnecting.
+        let suspended = std::iter::from_fn(|| player_rx.try_recv().ok())
+            .any(|m| matches!(m, ServerMsg::Error { code, .. } if code == "suspended"));
+        assert!(suspended, "ejected player receives the suspended error");
+    }
+
+    #[tokio::test]
     async fn first_move_is_accepted_as_baseline_then_speed_checked() {
         let mut room = test_room().await;
         add_player(&mut room, 1, false);

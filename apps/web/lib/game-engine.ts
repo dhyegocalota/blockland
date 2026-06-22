@@ -78,6 +78,9 @@ export type { DebugSnapshot } from './engine/debug-snapshot';
 // Web build identifier shown in the debug panel — the deploy's short commit SHA, "dev" when running locally.
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? 'dev';
 
+// Dust puff colour for a dig tap — the hit feedback that mirrors a creature-attack poof.
+const DIG_DUST_COLOR = '#cdb892';
+
 // The admin command surface shared by the in-game engine and the headless lobby connection, so the
 // same useRoomAdmin dispatch drives both.
 export interface RoomAdminApi {
@@ -552,6 +555,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (target === 'block' && block) breakBlock(block);
   }
   function breakBlock(r: VoxelHit): void {
+    // Same hit feedback a creature attack gives: a poof at the struck cell on every tap, so digging
+    // terrain reads as a hit too (not just a sound).
+    spawnPoof(new THREE.Vector3(r.hit[0] + 0.5, r.hit[1] + 0.5, r.hit[2] + 0.5), DIG_DUST_COLOR);
     // Co-op: the server counts the taps and decides the break (authoritative dig). We just send the tap
     // and chip — the block is removed + collected when the server's break edit comes back to us.
     if (coop) {

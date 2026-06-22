@@ -21,14 +21,17 @@ describe('GET /api/tenants/[id]', () => {
     expect(getTenantMock).toHaveBeenCalledWith('teo');
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ id: 'teo' });
+    // no-store so a shared/edge cache never pins a stale branding shape (e.g. the old fields without `image`).
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
-  it('returns 404 when the tenant is missing', async () => {
+  it('returns 404 (still no-store) when the tenant is missing', async () => {
     getTenantMock.mockResolvedValue(null);
 
     const res = await GET(new Request('http://x/api/tenants/nope'), { params: { id: 'nope' } });
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'not_found' });
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 });
