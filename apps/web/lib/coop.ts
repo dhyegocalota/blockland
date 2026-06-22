@@ -70,6 +70,11 @@ export interface Banned {
   name: string;
 }
 
+export interface Report {
+  by: string;
+  target: string;
+}
+
 export interface CoopHud {
   onState(state: NetState): void;
   onPing(ping: number): void;
@@ -179,6 +184,7 @@ export interface CoopController {
   sendAdminSetChat(on: boolean): void;
   sendAdminKick(id: number): void;
   sendAdminBan(id: number): void;
+  sendAdminReport(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
@@ -653,6 +659,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminKick(id): void {
       net.sendAdminKick(id);
+    },
+    sendAdminReport(id): void {
+      net.sendAdminReport(id);
     },
     sendAdminBan(id): void {
       net.sendAdminBan(id);

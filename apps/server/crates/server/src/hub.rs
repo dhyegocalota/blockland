@@ -174,6 +174,10 @@ pub struct Hub {
     pub claims: Claims,
 }
 
+// Timeline events and play-time windows are dropped after this window so usage logs are never kept
+// indefinitely (Privacy Policy retention promise).
+const ACTIVITY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
 impl Hub {
     /// Build the hub from the authoritative database (the source of tenants) and the optional
     /// `TENANTS_FILE` (limits only). The db seeds the built-in tenants on first run, so the
@@ -203,6 +207,19 @@ impl Hub {
             claims.set(&account_id, &token);
         }
         tracing::info!(claims = claim_count, "claims warmed");
+
+        // Behavioural/usage logs (timeline events incl. moderation reports, and play-time windows) are
+        // never kept beyond the retention window. Mirrored in the public Privacy Policy.
+        match db.purge_stale_events(ACTIVITY_RETENTION_MS).await {
+            Ok(n) if n > 0 => tracing::info!(count = n, "purged stale events"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to purge stale events"),
+        }
+        match db.purge_stale_playtime(ACTIVITY_RETENTION_MS).await {
+            Ok(n) if n > 0 => tracing::info!(count = n, "purged stale playtime"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to purge stale playtime"),
+        }
 
         Self {
             tenants: map,

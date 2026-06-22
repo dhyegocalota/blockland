@@ -71,11 +71,15 @@ const COPY = {
       {
         title: '6. Dados de crianças',
         body: [
-          'Os dados de crianças são fornecidos e geridos sob a responsabilidade do adulto responsável ' +
-            'que contrata e administra o mundo. Esse responsável decide quem participa e supervisiona ' +
-            'o uso, conforme os Termos de Uso.',
-          'O adulto responsável dá consentimento afirmativo (marcando uma caixa específica) antes de ' +
-            'fornecer qualquer dado, e pode revogá-lo a qualquer momento solicitando a exclusão.',
+          'O uso por crianças exige a presença e a supervisão de um adulto responsável, que contrata e ' +
+            'administra o mundo. Esse adulto decide quem participa, supervisiona o uso em todos os ' +
+            'momentos e assume integralmente a responsabilidade pelos dados e pela atividade das ' +
+            'crianças sob sua responsabilidade — essa responsabilidade é dele, não da plataforma.',
+          'Para apoiar essa supervisão, o chat possui filtro automático (bloqueia links e palavrões) e ' +
+            'o adulto-administrador pode reportar um jogador pelo painel de moderação. Esses registros ' +
+            'de moderação são mantidos por no máximo 30 dias.',
+          'O adulto dá consentimento afirmativo (marcando uma caixa específica) antes de fornecer ' +
+            'qualquer dado, e pode revogá-lo a qualquer momento solicitando a exclusão.',
         ],
       },
       {
@@ -95,6 +99,8 @@ const COPY = {
             'eliminados.',
           'Quando um jogador é banido, guardamos seu endereço IP para impedir que ele volte a entrar. ' +
             'Esse IP é eliminado ao desbanir e, de qualquer forma, expira automaticamente após 90 dias.',
+          'Os registros de atividade (eventos da linha do tempo, tempo de jogo e registros de ' +
+            'moderação) são mantidos por no máximo 30 dias e depois eliminados automaticamente.',
         ],
       },
       {
@@ -155,11 +161,15 @@ const COPY = {
       {
         title: '6. Children’s data',
         body: [
-          'Children’s data is provided and managed under the responsibility of the responsible adult ' +
-            'who contracts and administers the world. That adult decides who takes part and ' +
-            'supervises use, as set out in the Terms of Use.',
-          'The responsible adult gives affirmative consent (by checking a dedicated box) before ' +
-            'providing any data, and may withdraw it at any time by requesting deletion.',
+          'Use by children requires the presence and supervision of a responsible adult, who contracts ' +
+            'and administers the world. That adult decides who takes part, supervises use at all times ' +
+            'and takes full responsibility for the data and activity of the children under their care — ' +
+            'that responsibility is theirs, not the platform’s.',
+          'To support that supervision, chat has an automatic filter (it blocks links and profanity) ' +
+            'and the administering adult can report a player from the moderation panel. These ' +
+            'moderation records are kept for at most 30 days.',
+          'The adult gives affirmative consent (by checking a dedicated box) before providing any ' +
+            'data, and may withdraw it at any time by requesting deletion.',
         ],
       },
       {
@@ -178,6 +188,8 @@ const COPY = {
             'no longer needed, or when you request deletion, the data is erased.',
           'When a player is banned, we keep their IP address to stop them from rejoining. That IP is ' +
             'erased when they are unbanned and, in any case, expires automatically after 90 days.',
+          'Activity logs (timeline events, play time and moderation records) are kept for at most 30 ' +
+            'days and are then deleted automatically.',
         ],
       },
       {

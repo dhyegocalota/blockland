@@ -424,6 +424,8 @@ describe('net client', () => {
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_kick', id: 3 }));
     client.sendAdminBan(4);
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_ban', id: 4 }));
+    client.sendAdminReport(5);
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_report', id: 5 }));
     client.sendAttackPlayer(5);
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'attack_player', id: 5 }));
     client.sendAdminResetWorld();

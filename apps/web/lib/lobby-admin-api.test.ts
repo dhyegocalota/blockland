@@ -23,6 +23,7 @@ function recordingNet() {
     sendAdminSetInfinite: record('sendAdminSetInfinite'),
     sendAdminKick: record('sendAdminKick'),
     sendAdminBan: record('sendAdminBan'),
+    sendAdminReport: record('sendAdminReport'),
     sendAttackPlayer: record('sendAttackPlayer'),
     sendAdminResetWorld: record('sendAdminResetWorld'),
     sendAdminResetScores: record('sendAdminResetScores'),
@@ -49,6 +50,7 @@ describe('lobbyAdminApi', () => {
     api.setAdminStructure('trophy', false);
     api.kickPlayer(7);
     api.banPlayer(9);
+    api.reportPlayer(8);
     api.setRole(3, 'moderator' as Role);
     api.resetWorld();
     api.resetScores();
@@ -65,6 +67,7 @@ describe('lobbyAdminApi', () => {
       ['sendAdminSetStructure', 'trophy', false],
       ['sendAdminKick', 7],
       ['sendAdminBan', 9],
+      ['sendAdminReport', 8],
       ['sendAdminSetRole', 3, 'moderator'],
       ['sendAdminResetWorld'],
       ['sendAdminResetScores'],

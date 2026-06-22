@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type MutableRefObject } from 'react';
-import type { Banned, PendingApproval, RoomState } from '../coop';
+import type { Banned, PendingApproval, Report, RoomState } from '../coop';
 import type { RoomAdminApi } from '../game-engine';
 import type { Role } from '../protocol';
 
@@ -22,6 +22,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const resetScoresArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [bans, setBans] = useState<Banned[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
 
   const toggleRoomPeace = useCallback(() => gameApi.current?.setAdminPeace(!room.peace), [gameApi, room.peace]);
   const toggleStructure = useCallback(
@@ -35,6 +36,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   );
   const kickPlayer = useCallback((id: number) => gameApi.current?.kickPlayer(id), [gameApi]);
   const banPlayer = useCallback((id: number) => gameApi.current?.banPlayer(id), [gameApi]);
+  const reportPlayer = useCallback((id: number) => gameApi.current?.reportPlayer(id), [gameApi]);
   const setRole = useCallback((id: number, role: Role) => gameApi.current?.setRole(id, role), [gameApi]);
   const suspendRoom = useCallback(() => gameApi.current?.suspendRoom(!room.suspended), [gameApi, room.suspended]);
   const toggleApprovalRequired = useCallback(
@@ -88,6 +90,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     toggleRoomChat,
     kickPlayer,
     banPlayer,
+    reportPlayer,
     setRole,
     suspendRoom,
     pendingApprovals,
@@ -98,5 +101,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     bans,
     setBans,
     unban,
+    reports,
+    setReports,
   };
 }

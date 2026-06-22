@@ -68,7 +68,7 @@ export const COPY = {
     emailPlaceholder: 'voce@email.com',
     phoneLabel: 'WhatsApp (opcional)',
     phonePlaceholder: '(11) 90000-0000',
-    consentLabel: 'Sou o adulto responsável e concordo com a Política de Privacidade e os Termos de Uso, incluindo o tratamento de dados de crianças sob minha responsabilidade.',
+    consentLabel: 'Sou o adulto responsável, concordo com a Política de Privacidade e os Termos de Uso, e assumo integralmente a responsabilidade de supervisionar, em todos os momentos, o uso e os dados da(s) criança(s) sob minha responsabilidade.',
     submit: 'Entrar na lista',
     submitting: 'Entrando…',
     success:
@@ -144,7 +144,7 @@ export const COPY = {
     emailPlaceholder: 'you@email.com',
     phoneLabel: 'WhatsApp (optional)',
     phonePlaceholder: '+1 555 000 0000',
-    consentLabel: 'I am the responsible adult and I agree to the Privacy Policy and Terms of Use, including the processing of data of children under my responsibility.',
+    consentLabel: 'I am the responsible adult, I agree to the Privacy Policy and Terms of Use, and I take full responsibility for supervising, at all times, the use and the data of the child(ren) under my care.',
     submit: 'Join the list',
     submitting: 'Joining…',
     success:
