@@ -21,6 +21,8 @@ import {
   adminSetPvp,
   adminSetRole,
   adminSetStructure,
+  adminSetLimits,
+  adminSetModes,
   attackPlayer,
   chat,
   edit,
@@ -53,6 +55,7 @@ export type NetState =
   | 'kicked'
   | 'room_closed'
   | 'time_up'
+  | 'online_blocked'
   | 'needs_approval'
   | 'rejected';
 
@@ -191,6 +194,8 @@ export interface NetClient {
   sendAdminApprove(accountId: string): void;
   sendAdminReject(accountId: string): void;
   sendAdminUnban(ip: string): void;
+  sendAdminSetLimits(playtimeLimitMin: number, playtimeWindowH: number): void;
+  sendAdminSetModes(onlineAllowed: boolean, offlineAllowed: boolean): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -329,6 +334,7 @@ export function createNet(opts: NetOptions): NetClient {
     room_closed: 'room_closed',
     suspended: 'room_closed',
     time_up: 'time_up',
+    online_blocked: 'online_blocked',
     reclaimed: 'kicked',
     claim_required: 'kicked',
     needs_login: 'kicked',
@@ -479,6 +485,12 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminUnban(ip): void {
       rawSend(encodeClientMsg(adminUnban(ip)));
+    },
+    sendAdminSetLimits(playtimeLimitMin, playtimeWindowH): void {
+      rawSend(encodeClientMsg(adminSetLimits(playtimeLimitMin, playtimeWindowH)));
+    },
+    sendAdminSetModes(onlineAllowed, offlineAllowed): void {
+      rawSend(encodeClientMsg(adminSetModes(onlineAllowed, offlineAllowed)));
     },
     get ping(): number {
       return ping;

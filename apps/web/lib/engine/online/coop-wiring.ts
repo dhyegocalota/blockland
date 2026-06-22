@@ -72,7 +72,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
 
   // Offline there is no server room: admin toggles mutate the local state directly and refresh the HUD
   // (online always routes through coop instead, so the two paths never mix).
-  runtime.currentRoom = (): RoomState => ({ peace: state.peaceful, blockedStructures: [...runtime.blockedStructures], pvp: state.pvp, chatEnabled: state.chatEnabled, suspended: false, approvalRequired: state.approvalRequired });
+  runtime.currentRoom = (): RoomState => ({ peace: state.peaceful, blockedStructures: [...runtime.blockedStructures], pvp: state.pvp, chatEnabled: state.chatEnabled, suspended: false, approvalRequired: state.approvalRequired, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true });
 
   runtime.applyLocalRoom = function applyLocalRoom(next: RoomState): void {
     runtime.applyRoomState(next);
@@ -133,6 +133,8 @@ export function createCoopWiring(runtime: GameRuntime): void {
       approvePlayer: (accountId) => runtime.coop?.sendAdminApprove(accountId),
       rejectPlayer: (accountId) => runtime.coop?.sendAdminReject(accountId),
       unban: (ip) => runtime.coop?.sendAdminUnban(ip),
+      setLimits: (min, hours) => runtime.coop?.sendAdminSetLimits(min, hours),
+      setModes: (online, offline) => runtime.coop?.sendAdminSetModes(online, offline),
       chime: runtime.chime,
       setInfiniteResources: (on) => {
         if (runtime.coop) { runtime.coop.sendAdminSetInfinite(on); return; }

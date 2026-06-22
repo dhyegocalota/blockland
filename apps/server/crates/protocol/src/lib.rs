@@ -122,6 +122,19 @@ pub enum ClientMsg {
     AdminUnban {
         ip: String,
     },
+    /// Admin-only: set the per-tenant play-time budget (minutes allowed within a rolling window of
+    /// hours). 0 minutes means unlimited. Persisted to the tenant row + applied live. Ignored from
+    /// non-admins.
+    AdminSetLimits {
+        playtime_limit_min: u32,
+        playtime_window_h: u32,
+    },
+    /// Admin-only: choose which game modes the tenant allows. Disabling the last enabled mode is
+    /// rejected (a tenant always keeps at least one). Persisted + broadcast. Ignored from non-admins.
+    AdminSetModes {
+        online_allowed: bool,
+        offline_allowed: bool,
+    },
     /// Ask the server to send the player back to spawn (the "back to start" button, and on death). The
     /// server moves them authoritatively and re-baselines the anti-cheat so the teleport is not rejected.
     Respawn,
@@ -228,6 +241,14 @@ pub enum ServerMsg {
         chat_enabled: bool,
         suspended: bool,
         approval_required: bool,
+        /// Per-tenant play-time budget: minutes allowed within a rolling window of hours (0 minutes =
+        /// unlimited). Surfaced so the admin panels show + edit the live values without a rejoin.
+        playtime_limit_min: u32,
+        playtime_window_h: u32,
+        /// Which game modes the tenant allows. The lobby also learns these before joining (via the
+        /// tenant HTTP fetch); online-blocking is enforced server-side, offline-blocking client-side.
+        online_allowed: bool,
+        offline_allowed: bool,
     },
     /// The accounts waiting for an admin to approve them; sent to admins on join and whenever the
     /// pending list changes (a held-out join arrives, or an admin approves someone).

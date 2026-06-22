@@ -3,8 +3,9 @@
 // All of the Game screen's state, effects and handlers live here so the component is just markup.
 // It owns the lobby/login lifecycle, boots the Three.js engine via a CoopBridge, and composes the
 // smaller hooks (chat, feed, room-admin). The returned object is spread into the component.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveTenant, type Brand } from '../lib/tenants';
+import { lobbyModeGates } from '../lib/lobby-modes';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
@@ -42,6 +43,23 @@ function loadLook(): Appearance {
 function loadName(): string {
   if (typeof window === 'undefined') return '';
   return window.localStorage.getItem(NAME_KEY) ?? '';
+}
+
+// The tenant's allowed-mode flags for the lobby gate: the live lobby-admin RoomState when connected,
+// the fetched brand otherwise, and a permissive default only while the brand is still loading (the
+// start screen that reads this renders only once the brand exists).
+function modeFlags({
+  brand,
+  lobbyConnected,
+  lobbyRoom,
+}: {
+  brand: Brand | null;
+  lobbyConnected: boolean;
+  lobbyRoom: { onlineAllowed: boolean; offlineAllowed: boolean };
+}): { online_allowed: boolean; offline_allowed: boolean } {
+  if (lobbyConnected) return { online_allowed: lobbyRoom.onlineAllowed, offline_allowed: lobbyRoom.offlineAllowed };
+  if (!brand) return { online_allowed: true, offline_allowed: true };
+  return { online_allowed: brand.online_allowed, offline_allowed: brand.offline_allowed };
 }
 
 export function useGame() {
@@ -83,7 +101,7 @@ export function useGame() {
     resetArmed, resetWorld, resetScoresArmed, resetScores, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, reportPlayer, setRole, suspendRoom,
     pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
-    bans, setBans, unban,
+    bans, setBans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
   } = useRoomAdmin(gameApiRef);
   const updateRequired = useUpdateCheck();
   const lobbyAdminActive = (lobbyAdmin || lobbyModerator) && !solo && !offline && !started;
@@ -110,6 +128,29 @@ export function useGame() {
     soloRef.current = true;
     setSolo(true);
   }, [offline]);
+
+  // Which start-mode buttons the tenant allows. The flags come from the tenant fetched before joining
+  // (brand); once the headless lobby-admin connection is live, its RoomState carries any runtime change
+  // an admin makes, so prefer it. Server-unreachable (offline) forces online off regardless.
+  const lobbyConnected = lobbyAdmin || lobbyModerator;
+  const modeGates = useMemo(() => {
+    const flags = modeFlags({ brand, lobbyConnected, lobbyRoom: lobby.room });
+    return lobbyModeGates({ tenant: flags, serverUnreachable: offline });
+  }, [brand, offline, lobbyConnected, lobby.room.onlineAllowed, lobby.room.offlineAllowed]);
+
+  // Keep the chosen mode valid: if the picked mode is blocked, fall to the allowed one. When online is
+  // blocked the player is pushed to solo; when offline is blocked (and online is fine) to multiplayer.
+  useEffect(() => {
+    if (modeGates.online.disabled && !modeGates.offline.disabled && !soloRef.current) {
+      soloRef.current = true;
+      setSolo(true);
+      return;
+    }
+    if (modeGates.offline.disabled && !modeGates.online.disabled && soloRef.current) {
+      soloRef.current = false;
+      setSolo(false);
+    }
+  }, [modeGates]);
 
   // First-time players get a random look (persisted so it stays stable); done after mount to avoid a
   // hydration mismatch on the color inputs.
@@ -381,7 +422,7 @@ export function useGame() {
 
   return {
     brand, failed, offline, offlineDismissed, setOfflineDismissed,
-    name, look, solo, setSolo, soloRef,
+    name, look, solo, setSolo, soloRef, modeGates,
     netState, ping, online,
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData,
@@ -393,7 +434,7 @@ export function useGame() {
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, reportPlayer, setRole, suspendRoom,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
-    bans, unban, updateRequired,
+    bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   };

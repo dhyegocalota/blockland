@@ -18,6 +18,10 @@ const VALID_TENANT: Tenant = {
   id: 'acme',
   name: 'Acme',
   image: '/tenants/acme/avatar.png',
+  playtime_limit_min: 0,
+  playtime_window_h: 0,
+  online_allowed: true,
+  offline_allowed: true,
 };
 
 function adminRequest(init: RequestInit = {}): Request {
@@ -75,7 +79,9 @@ describe('POST /api/admin/tenants', () => {
   it('upserts via the proxy when authorized and valid', async () => {
     upsertTenantMock.mockResolvedValue(VALID_TENANT);
     const res = await POST(adminRequest({ method: 'POST', body: JSON.stringify(VALID_TENANT) }));
-    expect(upsertTenantMock).toHaveBeenCalledWith(VALID_TENANT);
+    // The editor only forwards the text fields; the per-tenant limits are admin-set at runtime, so the
+    // server keeps the existing limit columns rather than letting this form overwrite them.
+    expect(upsertTenantMock).toHaveBeenCalledWith({ id: 'acme', name: 'Acme', image: '/tenants/acme/avatar.png' });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(VALID_TENANT);
   });
