@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { MAX_HEARTS } from './engine-config';
+import { MAX_HEARTS } from './constants';
 import { createEngineState } from './engine-state';
 
 describe('createEngineState', () => {

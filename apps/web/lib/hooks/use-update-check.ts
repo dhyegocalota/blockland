@@ -5,7 +5,7 @@
 // and, the moment the deployed version no longer matches the one we are running, flip an
 // `updateRequired` flag the UI uses to show a non-dismissable "update now" screen.
 import { useEffect, useState } from 'react';
-import { DEFAULT_APP_VERSION } from '../engine/engine-config';
+import { DEFAULT_APP_VERSION } from '../engine/constants';
 import { debug, warn } from '../log';
 
 const POLL_MS = 60_000;

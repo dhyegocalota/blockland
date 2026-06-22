@@ -6,14 +6,16 @@
 import * as THREE from 'three';
 import { t } from '../i18n';
 import { debug } from '../log';
-import { EYE_HEIGHT, REACH, SIZE_X, SIZE_Z } from './constants';
+import {
+  DAMAGE_BLIP_DURATION, DAMAGE_BLIP_FREQ, EYE_HEIGHT, HURT_COOLDOWN, HURT_FLASH_MS, MAX_HEARTS,
+  REACH, RESPAWN_DELAY_MS, SIZE_X, SIZE_Z,
+} from './constants';
 import { CREATURE_DEFS, stepCreatureDirection } from './creatures';
 import { creatureDefFor } from './creature-snapshot';
 import { sphereCastClosest } from './sphere-cast';
 import { STARTING_ROSTER, spawnPosition } from './creature-spawn';
 import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './creature-combat';
 import { makeFaceMaterial } from './materials';
-import { DAMAGE_BLIP_DURATION, DAMAGE_BLIP_FREQ, HURT_COOLDOWN, HURT_FLASH_MS, MAX_HEARTS, RESPAWN_DELAY_MS } from './engine-config';
 import type { CoopCreature, CoopPlayer } from '../coop';
 import type { Creature, GameRuntime } from './runtime';
 

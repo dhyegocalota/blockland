@@ -6,15 +6,14 @@
 import { t } from '../i18n';
 import { debug } from '../log';
 import { BLOCKS, blockById } from './blocks';
-import { FACE_ID } from './constants';
+import {
+  CHIME_GAP_MS, CHIME_HIGH_FREQ, CHIME_LOW_FREQ, CHIME_NOTE_DURATION, FACE_ID,
+  TOAST_DURATION_MS, TOUCH_LOOK_SENSITIVITY,
+} from './constants';
 import { renderBlockCanvas } from './textures';
 import { hotbarCountLabel } from './inventory';
 import { readJoystick } from './joystick';
 import { clampPitch } from './binds';
-import {
-  CHIME_GAP_MS, CHIME_HIGH_FREQ, CHIME_LOW_FREQ, CHIME_NOTE_DURATION,
-  TOAST_DURATION_MS, TOUCH_LOOK_SENSITIVITY,
-} from './engine-config';
 import type { StructureKind } from './structures';
 import type { GameRuntime } from './runtime';
 

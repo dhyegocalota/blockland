@@ -4,15 +4,16 @@
 // that ticks everything on a frame budget. It also attaches the window input binds. Pure pieces
 // (moveVector, moveAxis, blockVelocityIntoActors, nextFrame, smoothFps) are unit-tested; this is the glue.
 import {
-  EYE_HEIGHT, FLY_SPEED, GRAVITY, JUMP_SPEED, PLAYER_HEIGHT, PLAYER_RADIUS, WALK_SPEED, clampToWorld,
+  EYE_HEIGHT, FLY_SPEED, GRAVITY, JUMP_SPEED, MOUSE_LOOK_SENSITIVITY, PLAYER_HEIGHT, PLAYER_RADIUS,
+  POS_SAVE_MS, VOID_FALL_Y, WALK_SPEED,
 } from './constants';
+import { clampToWorld } from './world-bounds';
 import { debug } from '../log';
 import { type Axis, moveAxis } from './physics';
 import { blockVelocityIntoActors } from './actors';
 import { moveVector } from './movement';
 import { nextFrame, smoothFps } from './frame-cap';
 import { bindWindowInput, clampPitch } from './binds';
-import { MOUSE_LOOK_SENSITIVITY, POS_SAVE_MS, VOID_FALL_Y } from './engine-config';
 import type { GameRuntime } from './runtime';
 
 export function createGameLoop(runtime: GameRuntime): void {
