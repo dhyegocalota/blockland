@@ -462,7 +462,10 @@ async fn internal_upsert_tenant(
         return (StatusCode::BAD_REQUEST, "invalid_tenant").into_response();
     };
     match state.hub.db.upsert_tenant(&tenant).await {
-        Ok(Some(saved)) => Json(saved).into_response(),
+        Ok(Some(saved)) => {
+            state.hub.upsert_tenant(saved.clone());
+            Json(saved).into_response()
+        }
         Ok(None) => (StatusCode::INTERNAL_SERVER_ERROR, "upsert_failed").into_response(),
         Err(e) => internal_error(e),
     }
@@ -478,7 +481,10 @@ async fn internal_delete_tenant(
         return resp;
     }
     match state.hub.db.delete_tenant(&id).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            state.hub.delete_tenant(&id).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Err(e) => internal_error(e),
     }
 }

@@ -1,7 +1,6 @@
 //! Process-wide shared state: tenant config, resource limits, the room registry and
 //! the live stats snapshot that powers the admin endpoint.
 
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -162,7 +161,7 @@ pub struct AdminStats {
 }
 
 pub struct Hub {
-    pub tenants: HashMap<String, TenantCfg>,
+    pub tenants: DashMap<String, TenantCfg>,
     pub limits: Limits,
     pub rooms: DashMap<RoomKey, mpsc::Sender<RoomCmd>>,
     pub room_stats: DashMap<RoomKey, RoomSnapshot>,
@@ -194,7 +193,7 @@ impl Hub {
         let map = tenants
             .into_iter()
             .map(|t| (t.id.clone(), tenant_to_cfg(t)))
-            .collect::<HashMap<_, _>>();
+            .collect::<DashMap<_, _>>();
         tracing::info!(tenants = map.len(), "hub loaded");
 
         let claims = Claims::default();
@@ -261,6 +260,32 @@ impl Hub {
         self.room_stats.remove(key);
     }
 
+    /// Make a newly created/edited tenant resolvable immediately (no restart): mirror the db row into
+    /// the live cache.
+    pub fn upsert_tenant(&self, tenant: Tenant) {
+        let id = tenant.id.clone();
+        self.tenants.insert(id, tenant_to_cfg(tenant));
+    }
+
+    /// Make a deleted tenant stop serving immediately (no restart): drop it from the live cache so no
+    /// new connection resolves it, notify its open room that it is going down and forget the room so
+    /// live players are dropped.
+    pub async fn delete_tenant(&self, id: &str) {
+        self.tenants.remove(id);
+        let key = (id.to_string(), "main".to_string());
+        let Some(tx) = self.rooms.get(&key).map(|tx| tx.clone()) else {
+            return;
+        };
+        let _ = tx
+            .send(RoomCmd::Announce(protocol::ServerMsg::Event {
+                kind: "server_down".into(),
+                name: String::new(),
+                detail: String::new(),
+            }))
+            .await;
+        self.remove_room(&key);
+    }
+
     /// Resolve the room actor for a tenant/world, spawning it on first use.
     /// Creation is atomic (DashMap entry) so concurrent joins can't spawn duplicate
     /// rooms for the same key.
@@ -269,7 +294,7 @@ impl Hub {
         tenant: &str,
         world: &str,
     ) -> Result<mpsc::Sender<RoomCmd>, String> {
-        let Some(tcfg) = hub.tenants.get(tenant) else {
+        let Some(tcfg) = hub.tenants.get(tenant).map(|t| t.clone()) else {
             return Err("unknown_tenant".into());
         };
         // One persistent room per tenant (world is always "main").
@@ -281,7 +306,7 @@ impl Hub {
             dashmap::mapref::entry::Entry::Occupied(e) => Ok(e.get().clone()),
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 let (tx, rx) = mpsc::channel::<RoomCmd>(512);
-                let room = Room::new(hub.clone(), tcfg, world.to_string(), rx);
+                let room = Room::new(hub.clone(), &tcfg, world.to_string(), rx);
                 tokio::spawn(room.run());
                 e.insert(tx.clone());
                 tracing::info!(%tenant, %world, "room spawned");
@@ -331,8 +356,9 @@ impl Hub {
         let online: usize = room_list.iter().map(|r| r.players.len()).sum();
         let tenants = self
             .tenants
-            .values()
-            .map(|t| {
+            .iter()
+            .map(|entry| {
+                let t = entry.value();
                 let rooms = room_list.iter().filter(|r| r.tenant == t.id).count();
                 let players = room_list
                     .iter()
@@ -413,5 +439,46 @@ mod tests {
         assert_eq!(claims.get("acc-a").as_deref(), Some("tokB"));
         claims.remove("acc-a", "tokB");
         assert!(claims.get("acc-a").is_none());
+    }
+
+    fn tenant(id: &str) -> Tenant {
+        Tenant {
+            id: id.into(),
+            name: id.into(),
+            image: format!("/tenants/{id}/avatar.png"),
+            playtime_limit_min: 0,
+            playtime_window_h: 0,
+            online_allowed: true,
+            offline_allowed: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_tenant_makes_it_resolvable_without_restart() {
+        let hub = Hub::load(Arc::new(Db::memory().await)).await;
+        assert!(hub.tenants.get("fresh").is_none());
+
+        hub.upsert_tenant(tenant("fresh"));
+
+        let cfg = hub
+            .tenants
+            .get("fresh")
+            .expect("tenant resolves from live cache");
+        assert_eq!(cfg.name, "fresh");
+    }
+
+    #[tokio::test]
+    async fn delete_tenant_stops_it_resolving_and_drops_its_room() {
+        let hub = Arc::new(Hub::load(Arc::new(Db::memory().await)).await);
+        hub.upsert_tenant(tenant("doomed"));
+
+        let key = ("doomed".to_string(), "main".to_string());
+        let (tx, _rx) = mpsc::channel::<RoomCmd>(8);
+        hub.rooms.insert(key.clone(), tx);
+
+        hub.delete_tenant("doomed").await;
+
+        assert!(hub.tenants.get("doomed").is_none());
+        assert!(hub.rooms.get(&key).is_none());
     }
 }
