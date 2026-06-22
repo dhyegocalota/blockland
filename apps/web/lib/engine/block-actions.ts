@@ -7,17 +7,20 @@ import { Vec3 } from './vec3';
 import { t } from '../i18n';
 import { debug } from '../log';
 import {
-  AIR, DIG_BLIP_DURATION, DIG_BLIP_FREQ, EYE_HEIGHT, FACE_ID, PLAYER_HEIGHT, PLAYER_RADIUS, REACH,
+  AIR, DIG_BLIP_DURATION, DIG_BLIP_FREQ, DIG_HITS, EYE_HEIGHT, FACE_ID, PLAYER_HEIGHT, PLAYER_RADIUS, REACH,
 } from './constants';
 import { blockById } from './blocks';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './raycast';
 import { cellOverlapsActor } from './actors';
 import { canPlaceSelected as canPlaceOffline, shouldSpendBlock } from './place-eligibility';
 import { chooseCoopTarget, chooseLocalTarget } from './attack-target';
+import { chipTap, type Chip } from './dig-progress';
 import type { GameRuntime } from './runtime';
 
 export function createBlockActions(runtime: GameRuntime): void {
   const { camera } = runtime;
+  // Offline dig progress: taps counted against the cell being chipped (see dig-progress.ts).
+  let chip: Chip | null = null;
 
   // ---------- Voxel raycast (DDA) ----------
   runtime.raycastVoxel = function raycastVoxel(maxDist = REACH): VoxelHit | null {
@@ -60,16 +63,21 @@ export function createBlockActions(runtime: GameRuntime): void {
       runtime.blip(DIG_BLIP_FREQ, DIG_BLIP_DURATION);
       return;
     }
-    const removed = runtime.getVoxel(r.hit[0], r.hit[1], r.hit[2]);
-    runtime.setVoxel(r.hit[0], r.hit[1], r.hit[2], AIR);
-    runtime.remeshRegion(r.hit[0] - 1, r.hit[0] + 1, r.hit[2] - 1, r.hit[2] + 1);
+    // Offline the dig is authoritative locally, but it takes the same DIG_HITS taps as co-op: chip the
+    // cell and only break (bank + repaint) once enough taps have landed.
+    const [hx, hy, hz] = r.hit;
+    const tap = chipTap({ chip, x: hx, y: hy, z: hz, digHits: DIG_HITS });
+    chip = tap.chip;
+    runtime.blip(DIG_BLIP_FREQ, DIG_BLIP_DURATION);
+    if (!tap.broke) return;
+    const removed = runtime.getVoxel(hx, hy, hz);
+    runtime.setVoxel(hx, hy, hz, AIR);
+    runtime.remeshRegion(hx - 1, hx + 1, hz - 1, hz + 1);
     player.bag += 1;
-    // Co-op banks the block server-side (it credits the broken block and pushes the new counts back);
-    // offline the local inventory is authoritative, so bank + repaint here.
-    if (!runtime.coop) { runtime.inventory.bank(removed); runtime.updateHotbarCounts(); }
+    runtime.inventory.bank(removed); runtime.updateHotbarCounts();
     runtime.updateStats();
     runtime.blip(220, 0.08);
-    debug('engine', 'break block', { x: r.hit[0], y: r.hit[1], z: r.hit[2], id: removed });
+    debug('engine', 'break block', { x: hx, y: hy, z: hz, id: removed });
   };
 
   runtime.placeBlock = function placeBlock(): void {

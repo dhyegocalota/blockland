@@ -23,6 +23,9 @@ export const PLAYER_RADIUS = 0.3;
 export const PLAYER_HEIGHT = 1.7;
 export const EYE_HEIGHT = 1.55;
 export const REACH = 7;
+// Taps on the same block before it breaks — digging takes a little effort. Mirrors the Rust server's
+// DIG_HITS so an offline dig takes exactly as many taps as a co-op dig.
+export const DIG_HITS = 4;
 
 // ---------- Block ids ----------
 export const AIR = 0;

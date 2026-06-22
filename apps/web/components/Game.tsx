@@ -110,7 +110,6 @@ export default function Game() {
           <span className="stat record" id="record">🏆 0</span>
           <span className="stat" id="bag">🎒 0</span>
           {showPing && <span className="stat" id="ping">{t('coop.ping', { ping })}</span>}
-          <LocaleSwitcher />
         </div>
         <div id="crosshair"></div>
         <div id="toast"></div>
@@ -486,6 +485,9 @@ export default function Game() {
       </div>
 
       <div id="start">
+        <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 2 }}>
+          <LocaleSwitcher />
+        </div>
         <div className="startSky" aria-hidden="true">
           <span className="cloud cloud-a">☁️</span>
           <span className="cloud cloud-b">☁️</span>
