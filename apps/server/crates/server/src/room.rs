@@ -958,6 +958,7 @@ impl Room {
         }
         if let Some(m) = edit_out {
             self.broadcast(&m);
+            self.lift_stuck_players();
         }
         if let Some(ServerMsg::EditBatch { edits, .. }) = batch_out.as_ref() {
             for c in edits {
@@ -968,6 +969,7 @@ impl Room {
         }
         if let Some(m) = batch_out {
             self.broadcast(&m);
+            self.lift_stuck_players();
         }
         if let Some(m) = chat_out {
             self.broadcast(&m);
@@ -1922,6 +1924,48 @@ impl Room {
         });
     }
 
+    /// After an edit makes a column solid, free any player whose feet or head cell just turned solid:
+    /// raise their feet until the two-cell body column is clear (mirrors the client's `clearFeetAbove`),
+    /// re-baseline the anti-cheat so the snap is accepted, and tell that player to reposition (everyone
+    /// else sees the corrected position in the next Snapshot). A buggy client that never self-unsticks is
+    /// still freed because this is server-authoritative.
+    fn lift_stuck_players(&mut self) {
+        let lifts: Vec<(PlayerId, f32)> = self
+            .players
+            .values()
+            .filter_map(|p| {
+                let fx = p.x.floor() as i32;
+                let fz = p.z.floor() as i32;
+                let feet = (p.y - PLAYER_EYE_HEIGHT).floor() as i32;
+                if !self.world.is_solid(fx, feet, fz) && !self.world.is_solid(fx, feet + 1, fz) {
+                    return None;
+                }
+                let mut clear = feet;
+                while clear < sim::SIZE_Y - 2
+                    && (self.world.is_solid(fx, clear, fz)
+                        || self.world.is_solid(fx, clear + 1, fz))
+                {
+                    clear += 1;
+                }
+                Some((p.id, clear as f32 + PLAYER_EYE_HEIGHT))
+            })
+            .collect();
+        for (id, y) in lifts {
+            let Some(p) = self.players.get_mut(&id) else {
+                continue;
+            };
+            p.y = y;
+            p.move_synced = false;
+            let _ = p.conn.try_send(ServerMsg::Respawn {
+                x: p.x,
+                y,
+                z: p.z,
+                hp: p.hp,
+            });
+            tracing::debug!(id = %id, y, "lifted player out of a solid edit");
+        }
+    }
+
     /// Count a dig tap against a block (resetting when the player switches blocks). After DIG_HITS taps
     /// on the same in-reach solid block the server breaks it and broadcasts the edit to everyone, so the
     /// dig difficulty is authoritative.
@@ -2492,6 +2536,60 @@ mod tests {
         assert!((0..50)
             .filter_map(|_| rx.try_recv().ok())
             .any(|m| matches!(m, ServerMsg::Respawn { .. })),);
+    }
+
+    // A buggy client that doesn't self-unstick: an EditBatch fills the player's own body column with
+    // solid blocks. The server must lift them out of the solid and tell their client to reposition.
+    #[tokio::test]
+    async fn an_edit_batch_onto_a_player_lifts_them_out_of_the_solid() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        let (col_x, col_z) = (60, 60);
+        let feet = room.world.surface_y(col_x, col_z);
+        {
+            let p = room.players.get_mut(&1).unwrap();
+            p.x = col_x as f32 + 0.5;
+            p.z = col_z as f32 + 0.5;
+            p.y = feet as f32 + PLAYER_EYE_HEIGHT;
+            p.move_synced = true;
+        }
+        room.on_input(
+            1,
+            ClientMsg::EditBatch {
+                edits: vec![
+                    EditCell {
+                        x: col_x,
+                        y: feet,
+                        z: col_z,
+                        id: sim::STONE,
+                    },
+                    EditCell {
+                        x: col_x,
+                        y: feet + 1,
+                        z: col_z,
+                        id: sim::STONE,
+                    },
+                ],
+            },
+        );
+        let p = room.players.get(&1).unwrap();
+        let lifted_feet = (p.y - PLAYER_EYE_HEIGHT).floor() as i32;
+        assert!(
+            !room.world.is_solid(col_x, lifted_feet, col_z)
+                && !room.world.is_solid(col_x, lifted_feet + 1, col_z),
+            "the player ends up standing in clear space (feet {lifted_feet})"
+        );
+        assert!(
+            lifted_feet > feet,
+            "the player was raised above the new solid"
+        );
+        assert!(
+            !p.move_synced,
+            "the anti-cheat baseline resets so the lift snap is accepted"
+        );
+        let lifted = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|m| matches!(m, ServerMsg::Respawn { y, .. } if y == p.y));
+        assert!(lifted, "the player is told to reposition at the lifted y");
     }
 
     #[tokio::test]
