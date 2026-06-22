@@ -36,6 +36,12 @@ describe('createEngineState', () => {
     expect(state.infiniteResources).toBe(true);
   });
 
+  it('starts not attacking with a zeroed repeat timer', () => {
+    const state = createEngineState({ spawn: new Vec3() });
+    expect(state.attacking).toBe(false);
+    expect(state.attackSince).toBe(0);
+  });
+
   it('seeds the runtime/loop flags', () => {
     const state = createEngineState({ spawn: new Vec3() });
     expect(state.fps).toBe(0);

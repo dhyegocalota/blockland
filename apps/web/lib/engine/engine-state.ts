@@ -41,6 +41,10 @@ export interface EngineState {
   approvalRequired: boolean;
   // Block resources OFFLINE only: infinite by default (solo sandbox + admins build freely).
   infiniteResources: boolean;
+  // Hold-to-attack: true while the attack button is held; attackSince accumulates time since the last
+  // repeated hit so update() can fire at the fixed ATTACK_REPEAT_MS cadence (the first hit fires on press).
+  attacking: boolean;
+  attackSince: number;
   // Loop bookkeeping.
   fps: number;
   paused: boolean;
@@ -66,6 +70,8 @@ export function createEngineState({ spawn }: { spawn: Vec3 }): EngineState {
     chatEnabled: true,
     approvalRequired: false,
     infiniteResources: true,
+    attacking: false,
+    attackSince: 0,
     fps: 0,
     paused: false,
     started: false,

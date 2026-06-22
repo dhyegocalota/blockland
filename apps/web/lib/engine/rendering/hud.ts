@@ -180,7 +180,12 @@ export function createHud(runtime: GameRuntime): void {
     const tapBtn = (id: string, fn: () => void): void => {
       el(id).addEventListener('touchstart', (e) => { fn(); e.preventDefault(); }, { passive: false, signal });
     };
-    tapBtn('btnBreak', runtime.primaryAction);
+    // Holding the break button keeps attacking at ATTACK_REPEAT_MS (down fires the first hit); lifting
+    // or cancelling the touch stops it.
+    const breakBtn = el('btnBreak');
+    breakBtn.addEventListener('touchstart', (e) => { runtime.attackDown(); e.preventDefault(); }, { passive: false, signal });
+    breakBtn.addEventListener('touchend', runtime.attackUp, { signal });
+    breakBtn.addEventListener('touchcancel', runtime.attackUp, { signal });
     tapBtn('btnPlace', runtime.placeBlock);
   };
 
