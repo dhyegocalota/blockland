@@ -7,7 +7,7 @@ import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
-import { useGame } from './use-game';
+import { useGame } from '../lib/hooks/use-game';
 import { roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
 

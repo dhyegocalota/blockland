@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { headers } from 'next/headers';
 import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
-import ServiceWorker from './ServiceWorker';
+import ServiceWorker from '../components/ServiceWorker';
 import { getTenant } from '../lib/api';
 import { tenantSubdomainOf } from '../lib/tenants';
 import { ROBOTS_NOINDEX, robotsCanonicalFor } from '../lib/seo';
