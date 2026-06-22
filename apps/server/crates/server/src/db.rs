@@ -235,6 +235,21 @@ impl Db {
                 (),
             )
             .await;
+        // Drop the dead legacy-wide branding columns now that `image` is backfilled. They are NOT NULL
+        // with no default, so leaving them in place makes every new tenant upsert (which only writes
+        // id/name/image) fail with a NOT NULL violation. Ignored on a slim db that never had them.
+        for column in [
+            "ALTER TABLE tenants DROP COLUMN hero",
+            "ALTER TABLE tenants DROP COLUMN title_a",
+            "ALTER TABLE tenants DROP COLUMN title_b",
+            "ALTER TABLE tenants DROP COLUMN tagline",
+            "ALTER TABLE tenants DROP COLUMN primary_color",
+            "ALTER TABLE tenants DROP COLUMN avatar",
+            "ALTER TABLE tenants DROP COLUMN face_texture",
+            "ALTER TABLE tenants DROP COLUMN face_block_name",
+        ] {
+            let _ = self.conn.execute(column, ()).await;
+        }
         // Per-account play time used inside the current rolling window (for the play-time limit).
         self.conn
             .execute(
@@ -1618,6 +1633,17 @@ mod tests {
         let migrated = db.get_tenant("old").await.unwrap().unwrap();
         assert_eq!(migrated.name, "Old");
         assert_eq!(migrated.image, "/tenants/old/avatar.png");
+
+        // A brand-new tenant must insert cleanly into the migrated table: the dead NOT NULL branding
+        // columns (hero, title_a, ...) are gone, so the slim id/name/image upsert no longer violates them.
+        db.conn
+            .execute(
+                "INSERT INTO tenants (id, name, image, created_at) VALUES ('fresh', 'Fresh', '/x.png', 2)",
+                (),
+            )
+            .await
+            .expect("a new slim tenant inserts into a migrated legacy-wide table");
+        assert_eq!(db.get_tenant("fresh").await.unwrap().unwrap().name, "Fresh");
     }
 
     /// Create an account by `(tenant, email)` claiming `name`, returning its stable id.
