@@ -30,6 +30,9 @@ export function createStructurePlacement(runtime: GameRuntime): void {
     };
     def.stamp({ set: collect, cx, gy, cz });
     runtime.remeshRegion(cx - def.reach, cx + def.reach, cz - def.reach, cz + def.reach);
+    // Online the server echoes the batch and unsticks us; offline there is no echo, so a stamp that
+    // boxed the player in around the skipped overlap cell is freed here.
+    if (!runtime.coop) runtime.unstuckPlayer();
     runtime.coop?.sendEditBatch(cells);
     runtime.toast(t(def.builtToastKey));
     runtime.blip(680, 0.12); setTimeout(() => runtime.blip(1020, 0.14), 110);
