@@ -1464,12 +1464,12 @@ fn builtin_tenants() -> Vec<Tenant> {
         Tenant {
             id: "acme".into(),
             name: "Acme".into(),
-            image: "/tenants/acme/avatar.png".into(),
+            image: "/default-avatar.png".into(),
         },
         Tenant {
             id: "demo".into(),
             name: "Blockland".into(),
-            image: "/tenants/demo/avatar.png".into(),
+            image: "/default-avatar.png".into(),
         },
     ]
 }
@@ -1527,15 +1527,11 @@ mod tests {
     #[tokio::test]
     async fn seeds_built_in_tenants() {
         let db = memory_db().await;
-        let ids: Vec<String> = db
-            .list_tenants()
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|t| t.id)
-            .collect();
+        let tenants = db.list_tenants().await.unwrap();
+        let ids: Vec<String> = tenants.iter().map(|t| t.id.clone()).collect();
         assert!(ids.contains(&"acme".to_string()));
         assert!(ids.contains(&"demo".to_string()));
+        assert!(tenants.iter().all(|t| t.image == "/default-avatar.png"));
     }
 
     #[tokio::test]
