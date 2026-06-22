@@ -24,7 +24,7 @@ import { faceBlockNameFor } from './engine/tenant-brand';
 import { nextFrame, smoothFps } from './engine/frame-cap';
 import { STRUCTURE_KINDS, type StructureKind, structureReach, structureTarget } from './engine/structure-build';
 import { bestScore, heartsLabel, persistedRecord } from './engine/scoreboard';
-import { aimPitch, aimYaw, lookDirection } from './engine/aim';
+import { aimPitch, aimYaw } from './engine/aim';
 import { type DebugSnapshot, buildDebugSnapshot } from './engine/debug-snapshot';
 import { canPlaceSelected as canPlaceOffline, shouldSpendBlock } from './engine/place-eligibility';
 import { STARTING_ROSTER, spawnPosition } from './engine/creature-spawn';
@@ -33,6 +33,14 @@ import { chooseCoopTarget, chooseLocalTarget } from './engine/attack-target';
 import { groundHeight as groundHeightAt } from './engine/terrain-column';
 import { readJoystick } from './engine/joystick';
 import { type EngineContext } from './engine/context';
+import {
+  DAMAGE_BLIP_DURATION, DAMAGE_BLIP_FREQ, DEFAULT_APP_VERSION, DIG_BLIP_DURATION, DIG_BLIP_FREQ,
+  HURT_COOLDOWN, HURT_FLASH_MS, MAX_HEARTS, MOUSE_LOOK_SENSITIVITY, POS_SAVE_MS, RESPAWN_DELAY_MS,
+  SPAWN_OFFSET_Z, STRUCTURE_REACH_DIST, TOAST_DURATION_MS, TOUCH_LOOK_SENSITIVITY, VOID_FALL_Y,
+} from './engine/engine-config';
+import { createEngineState } from './engine/engine-state';
+import { bindWindowInput, clampPitch } from './engine/binds';
+import { createViewRenderer } from './engine/renderers';
 import { createScene } from './engine/scene-setup';
 import { buildMaterials, makeFaceMaterial } from './engine/materials';
 import { createChunkMesher } from './engine/chunk-mesher';
@@ -52,19 +60,6 @@ interface Creature {
   flash: number;
 }
 
-interface Player {
-  pos: THREE.Vector3;
-  vel: THREE.Vector3;
-  yaw: number;
-  pitch: number;
-  onGround: boolean;
-  fly: boolean;
-  hearts: number;
-  stars: number;
-  bag: number;
-  hurtCooldown: number;
-}
-
 export { STRUCTURE_KINDS, type StructureKind } from './engine/structure-build';
 
 interface GameWindow extends Window {
@@ -76,7 +71,7 @@ interface GameWindow extends Window {
 export type { DebugSnapshot } from './engine/debug-snapshot';
 
 // Web build identifier shown in the debug panel — the deploy's short commit SHA, "dev" when running locally.
-const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? 'dev';
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? DEFAULT_APP_VERSION;
 
 // The admin command surface shared by the in-game engine and the headless lobby connection, so the
 // same useRoomAdmin dispatch drives both.
@@ -129,8 +124,6 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
 
   const abort = new AbortController();
   const signal = abort.signal;
-  let disposed = false;
-  let rafId = 0;
   const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
   // ---------- World layout ----------
@@ -177,14 +170,14 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   const processMeshQueue = (budget: number): void => mesher.processMeshQueue(budget);
   const remeshRegion = (minX: number, maxX: number, minZ: number, maxZ: number): void => mesher.remeshRegion(minX, maxX, minZ, maxZ);
   const poofRuntime = createPoofRuntime({ scene });
+  const view = createViewRenderer({ camera, highlight, renderer, scene });
 
   // ---------- Player state ----------
-  const MAX_HEARTS = 3;
   // Spawn at the world center, lifted above the terrain AND anything built there (no spawning inside a structure).
   const spawnPoint = (): THREE.Vector3 => {
-    const sx = SIZE_X >> 1, sz = (SIZE_Z >> 1) + 4;
+    const sx = SIZE_X >> 1, sz = (SIZE_Z >> 1) + SPAWN_OFFSET_Z;
     const feet = clearFeetAbove({ feet: heightAt(sx, sz) + 1, isSolid: (y) => isSolid(sx, y, sz) });
-    return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + 4);
+    return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + SPAWN_OFFSET_Z);
   };
 
   // Persist where the player last stood (per tenant) so re-entering the game drops them back there
@@ -200,27 +193,17 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   };
 
   const savedPos = loadSavedPos();
-  const player: Player = {
-    pos: savedPos ? savedPos : spawnPoint(),
-    vel: new THREE.Vector3(),
-    yaw: Math.PI, pitch: -0.2,
-    onGround: false, fly: false,
-    hearts: MAX_HEARTS, stars: 0, bag: 0, hurtCooldown: 0,
-  };
-  let selected = 1;
-  let peaceful = true;
-  let pvp = false;
-  let chatEnabled = true;
-  // Approval gate (server-authoritative, off by default). Offline there is no gate, so it stays false.
-  let approvalRequired = false;
-  // Block resources OFFLINE only: mining a block banks one of its kind, placing spends one. Infinite by
-  // default (solo sandbox + admins build freely). In co-op the inventory is server-authoritative (see
-  // coop.inventoryCount / coop.infinite); these locals are unused there. Magic structures are exempt.
-  let infiniteResources = true;
+  // The engine's mutable runtime state (player, keys, joystick, room flags, loop bookkeeping). player /
+  // keys / joystick are aliased as object references so the field-mutation glue reads/writes through
+  // state without churn; the scalar flags are read/written as state.<flag>.
+  // Room flags default to the offline sandbox (peaceful, infinite resources, no gates). Offline the
+  // inventory is local; in co-op coop.inventoryCount / coop.infinite are authoritative instead. Magic
+  // structures are exempt from resources.
+  const state = createEngineState({ spawn: savedPos ? savedPos : spawnPoint() });
+  const player = state.player;
   const inventory = new BlockInventory();
   const blockedStructures = new Set<string>();
   let coop: CoopController | null = null;
-  let fps = 0;
 
   // ---------- Co-op (remote players) — only when a server URL is configured ----------
   const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
@@ -267,10 +250,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // Room-wide settings (admin-controlled, server-authoritative): peace calms the local creatures for
   // everyone, and blocked structures disable those entries in the build menu.
   function applyRoomState({ peace, blockedStructures: blocked, pvp: pvpOn, chatEnabled: chatOn, approvalRequired: approval }: RoomState): void {
-    peaceful = peace;
-    pvp = pvpOn;
-    chatEnabled = chatOn;
-    approvalRequired = approval;
+    state.peaceful = peace;
+    state.pvp = pvpOn;
+    state.chatEnabled = chatOn;
+    state.approvalRequired = approval;
     blockedStructures.clear();
     for (const kind of blocked) blockedStructures.add(kind);
     syncBuildMenu();
@@ -278,7 +261,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   // Offline there is no server room: admin toggles mutate the local state directly and refresh the HUD
   // (online always routes through coop instead, so the two paths never mix).
-  const currentRoom = (): RoomState => ({ peace: peaceful, blockedStructures: [...blockedStructures], pvp, chatEnabled, suspended: false, approvalRequired });
+  const currentRoom = (): RoomState => ({ peace: state.peaceful, blockedStructures: [...blockedStructures], pvp: state.pvp, chatEnabled: state.chatEnabled, suspended: false, approvalRequired: state.approvalRequired });
   function applyLocalRoom(next: RoomState): void {
     applyRoomState(next);
     bridge?.hud.onRoomState(next);
@@ -297,7 +280,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   function debugSnapshot(): DebugSnapshot {
     return buildDebugSnapshot({
-      fps,
+      fps: state.fps,
       x: player.pos.x, y: player.pos.y, z: player.pos.z,
       chunks: chunkMeshes.size,
       tenant: brand.id,
@@ -306,7 +289,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     });
   }
   bridge?.bind({
-    sendChat: (text) => { if (chatEnabled) coop?.sendChat(text); },
+    sendChat: (text) => { if (state.chatEnabled) coop?.sendChat(text); },
     setAdminPeace: (on) => { if (coop) { coop.sendAdminSetPeace(on); return; } applyLocalRoom({ ...currentRoom(), peace: on }); },
     setAdminStructure: (kind, allowed) => {
       if (coop) { coop.sendAdminSetStructure(kind, allowed); return; }
@@ -326,7 +309,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     approvePlayer: (accountId) => coop?.sendAdminApprove(accountId),
     setInfiniteResources: (on) => {
       if (coop) { coop.sendAdminSetInfinite(on); return; }
-      infiniteResources = on;
+      state.infiniteResources = on;
       updateHotbarCounts();
     },
     returnToSpawn: () => {
@@ -374,10 +357,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       toPlayer.y = 0;
       const dist = toPlayer.length();
       const isMonster = cr.def.kind === 'monster';
-      const hostile = isMonster && !peaceful;
+      const hostile = isMonster && !state.peaceful;
 
       const motion = stepCreatureDirection({
-        toPlayerX: toPlayer.x, toPlayerZ: toPlayer.z, dist, isMonster, peaceful,
+        toPlayerX: toPlayer.x, toPlayerZ: toPlayer.z, dist, isMonster, peaceful: state.peaceful,
         dir: cr.dir, timer: cr.timer, random: Math.random,
       });
       cr.dir = motion.dir; cr.timer = motion.timer;
@@ -398,10 +381,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // The point-of-view damage cue: a red wash over the screen, the hearts shake, and a thud. Driven by
   // taking damage — locally offline, and by the server's Hurt message in co-op.
   function flashDamage(): void {
-    blip(140, 0.18);
+    blip(DAMAGE_BLIP_FREQ, DAMAGE_BLIP_DURATION);
     const heartsEl = el('hearts');
     heartsEl.classList.add('hit');
-    setTimeout(() => heartsEl.classList.remove('hit'), 300);
+    setTimeout(() => heartsEl.classList.remove('hit'), HURT_FLASH_MS);
     const flash = el('hurtFlash');
     flash.classList.remove('show');
     void flash.offsetWidth;
@@ -409,7 +392,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   function hurtPlayer(): void {
     player.hearts -= 1;
-    player.hurtCooldown = 1.2;
+    player.hurtCooldown = HURT_COOLDOWN;
     flashDamage();
     updateStats();
     if (player.hearts <= 0) napAndRespawn();
@@ -449,7 +432,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     creatureGroup.remove(cr.mesh);
     cr.body.geometry.dispose();
     creatures.splice(creatures.indexOf(cr), 1);
-    setTimeout(() => { if (!disposed) spawnCreature(cr.typeKey); }, 4000);
+    setTimeout(() => { if (!state.disposed) spawnCreature(cr.typeKey); }, RESPAWN_DELAY_MS);
   }
 
   // Co-op: the server owns creatures, so an attack is a request. We aim the crosshair at a snapshot
@@ -476,7 +459,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // creatures) and ask the server to apply the hit; the server validates pvp + range and replies with
   // Hurt to the target. Returns null when pvp is off so players never damage each other.
   function raycastRemotePlayer(): { player: CoopPlayer; t: number } | null {
-    if (!coop || !pvp) return null;
+    if (!coop || !state.pvp) return null;
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
     const candidates = coop.getPlayers();
@@ -560,7 +543,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     // and chip — the block is removed + collected when the server's break edit comes back to us.
     if (coop) {
       coop.sendDig(r.hit[0], r.hit[1], r.hit[2]);
-      blip(180, 0.05);
+      blip(DIG_BLIP_FREQ, DIG_BLIP_DURATION);
       return;
     }
     const removed = getVoxel(r.hit[0], r.hit[1], r.hit[2]);
@@ -583,18 +566,18 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     if (!canPlaceSelected()) { toast(t('toast.out_of_blocks')); blip(160, 0.1); return; }
     // Co-op spends the block server-side (it decrements and pushes the new counts back); offline the
     // local inventory is authoritative, so spend + repaint here.
-    if (!coop && shouldSpendBlock({ infiniteResources })) { inventory.spend(selected); updateHotbarCounts(); }
-    setVoxel(px, py, pz, selected);
+    if (!coop && shouldSpendBlock({ infiniteResources: state.infiniteResources })) { inventory.spend(state.selected); updateHotbarCounts(); }
+    setVoxel(px, py, pz, state.selected);
     remeshRegion(px - 1, px + 1, pz - 1, pz + 1);
-    sendCoopEdit('place', px, py, pz, selected);
-    blip(selected === FACE_ID ? 720 : 520, 0.08);
-    debug('engine', 'place block', { x: px, y: py, z: pz, id: selected });
+    sendCoopEdit('place', px, py, pz, state.selected);
+    blip(state.selected === FACE_ID ? 720 : 520, 0.08);
+    debug('engine', 'place block', { x: px, y: py, z: pz, id: state.selected });
   }
   // Whether the selected block can be placed: co-op reads the server-authoritative inventory + infinite
   // flag; offline reads the local BlockInventory + the local infinite toggle.
   function canPlaceSelected(): boolean {
-    if (coop) return coop.infinite || coop.inventoryCount(selected) > 0;
-    return canPlaceOffline({ infiniteResources, count: inventory.count(selected) });
+    if (coop) return coop.infinite || coop.inventoryCount(state.selected) > 0;
+    return canPlaceOffline({ infiniteResources: state.infiniteResources, count: inventory.count(state.selected) });
   }
   // True if the cell would land on the local player or any remote player (no building on people).
   function overlapsPlayer(x: number, y: number, z: number): boolean {
@@ -609,7 +592,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Magic structures ----------
   function buildStructure(kind: StructureKind): void {
     if (blockedStructures.has(kind)) { toast(t('build.blocked')); return; }
-    const aim = raycastVoxel(90);
+    const aim = raycastVoxel(STRUCTURE_REACH_DIST);
     const { cx, cz } = structureTarget({
       aim: aim ? { x: aim.hit[0], z: aim.hit[2] } : null,
       playerX: player.pos.x, playerZ: player.pos.z, yaw: player.yaw,
@@ -662,12 +645,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     player.vel.z = blocked.vz;
   }
 
-  const keys: Record<string, boolean> = {};
-  interface Joystick { active: boolean; x: number; y: number; id: number | null; cx: number; cy: number; r: number; }
-  const joystick: Joystick = { active: false, x: 0, y: 0, id: null, cx: 0, cy: 0, r: 50 };
+  const keys = state.keys;
+  const joystick = state.joystick;
   const typingInField = (): boolean => document.activeElement instanceof HTMLInputElement;
-  addEventListener('keydown', (e) => { if (typingInField()) return; keys[e.code] = true; handleHotkey(e); }, { signal });
-  addEventListener('keyup', (e) => { keys[e.code] = false; }, { signal });
 
   function update(dt: number): void {
     const move = moveVector({
@@ -695,38 +675,43 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     stepAxis('z', player.vel.z * dt);
     stepAxis('y', player.vel.y * dt);
 
-    if (player.pos.y < -8) { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); }
+    if (player.pos.y < VOID_FALL_Y) { player.pos.copy(spawnPoint()); player.vel.set(0, 0, 0); }
     clampToWorld(player.pos);
 
-    camera.position.copy(player.pos);
-    const look = lookDirection({ yaw: player.yaw, pitch: player.pitch });
-    camera.lookAt(camera.position.clone().add(new THREE.Vector3(look.x, look.y, look.z)));
-
-    const r = raycastVoxel();
-    if (r) { highlight.visible = true; highlight.position.set(r.hit[0] + 0.5, r.hit[1] + 0.5, r.hit[2] + 0.5); }
-    else highlight.visible = false;
+    view.renderView({
+      pose: { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch },
+      aim: raycastVoxel(),
+    });
   }
 
   // ---------- Input ----------
   function lockPointer(): void {
-    if (!started || isTouch) return;
+    if (!state.started || isTouch) return;
     Promise.resolve(canvas.requestPointerLock()).catch((err: unknown) => {
       debug('engine', 'pointer-lock denied', { reason: String(err) });
     });
   }
-  canvas.addEventListener('click', () => { if (started && !isTouch) lockPointer(); }, { signal });
-  addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement !== canvas) return;
-    player.yaw -= e.movementX * 0.0022;
-    player.pitch -= e.movementY * 0.0022;
-    player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
-  }, { signal });
-  addEventListener('mousedown', (e) => {
-    if (document.pointerLockElement !== canvas) return;
-    if (e.button === 0) primaryAction();
-    if (e.button === 2) placeBlock();
-  }, { signal });
-  addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
+  function resizeViewport(): void {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  bindWindowInput({
+    canvas, isTouch,
+    typingInField,
+    pointerLocked: () => document.pointerLockElement === canvas,
+    keyDown: (code) => { keys[code] = true; },
+    keyUp: (code) => { keys[code] = false; },
+    hotkey: handleHotkey,
+    look: (movementX, movementY) => {
+      player.yaw -= movementX * MOUSE_LOOK_SENSITIVITY;
+      player.pitch = clampPitch(player.pitch - movementY * MOUSE_LOOK_SENSITIVITY);
+    },
+    primaryAction,
+    placeBlock,
+    lockPointer,
+    resize: resizeViewport,
+  }, signal);
 
   if (isTouch) setupTouchControls();
   function setupTouchControls(): void {
@@ -739,9 +724,8 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     canvas.addEventListener('touchmove', (e) => {
       for (const t of e.changedTouches) {
         if (t.identifier !== lookId) continue;
-        player.yaw -= (t.clientX - lx) * 0.005;
-        player.pitch -= (t.clientY - ly) * 0.005;
-        player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+        player.yaw -= (t.clientX - lx) * TOUCH_LOOK_SENSITIVITY;
+        player.pitch = clampPitch(player.pitch - (t.clientY - ly) * TOUCH_LOOK_SENSITIVITY);
         lx = t.clientX; ly = t.clientY;
       }
     }, { passive: true, signal });
@@ -803,17 +787,16 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
 
   // ---------- Controls modal ----------
-  let paused = false;
   const controlsEl = el('controls');
   function showControls(): void {
-    paused = true;
+    state.paused = true;
     controlsEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   }
   function hideControls(): void {
-    paused = false;
+    state.paused = false;
     controlsEl.hidden = true;
-    if (started && !isTouch) lockPointer();
+    if (state.started && !isTouch) lockPointer();
   }
   function toggleControls(): void { controlsEl.hidden ? showControls() : hideControls(); }
   el('helpBtn').addEventListener('click', (e) => { e.stopPropagation(); showControls(); }, { signal });
@@ -823,14 +806,14 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // ---------- Build menu ----------
   const buildMenuEl = el('buildMenu');
   function showBuildMenu(): void {
-    paused = true;
+    state.paused = true;
     buildMenuEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   }
   function hideBuildMenu(): void {
-    paused = false;
+    state.paused = false;
     buildMenuEl.hidden = true;
-    if (started && !isTouch) lockPointer();
+    if (state.started && !isTouch) lockPointer();
   }
   function toggleBuildMenu(): void { buildMenuEl.hidden ? showBuildMenu() : hideBuildMenu(); }
   el('buildBtn').addEventListener('click', (e) => { e.stopPropagation(); showBuildMenu(); }, { signal });
@@ -896,7 +879,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // they have banked (∞ would be misleading, so it is simply hidden when resources are infinite). Co-op
   // reads the server-authoritative inventory; offline reads the local BlockInventory.
   function updateHotbarCounts(): void {
-    const infinite = coop ? coop.infinite : infiniteResources;
+    const infinite = coop ? coop.infinite : state.infiniteResources;
     for (const slot of [...hotbar.children] as HTMLElement[]) {
       const id = Number(slot.dataset.id);
       const badge = slot.querySelector<HTMLElement>('.count');
@@ -906,7 +889,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     }
   }
   function selectSlot(id: number): void {
-    selected = id;
+    state.selected = id;
     [...hotbar.children].forEach((s) => s.classList.toggle('active', Number((s as HTMLElement).dataset.id) === id));
     const block = blockById(id);
     if (!block) throw new Error(`unknown block ${id}`);
@@ -917,7 +900,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   let toastTimer: ReturnType<typeof setTimeout>;
   function toast(msg: string): void {
     toastEl.textContent = msg; toastEl.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1200);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), TOAST_DURATION_MS);
   }
 
   function toggleFly(): void {
@@ -928,33 +911,25 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   }
   el('flyBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFly(); }, { signal });
 
-  addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  }, { signal });
-
   // ---------- Loop ----------
-  const POS_SAVE_MS = 2000;
-  let started = false;
   let last = performance.now();
   let lastPosSave = last;
   function loop(now: number): void {
-    if (disposed) return;
-    rafId = requestAnimationFrame(loop);
+    if (state.disposed) return;
+    state.rafId = requestAnimationFrame(loop);
     const frame = nextFrame({ now, last });
     if (frame.skip) return;
     last = frame.last;
     const dt = frame.dt;
-    fps = smoothFps({ fps, dt });
-    if (started && !paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (!coop) updateCreatures(dt); updatePoofs(dt); }
+    state.fps = smoothFps({ fps: state.fps, dt });
+    if (state.started && !state.paused) { update(dt); updateChunks(); processMeshQueue(isTouch ? 1 : 2); if (!coop) updateCreatures(dt); updatePoofs(dt); }
     if (coop) { coop.sendMove(localPose(), now); coop.update(now); }
-    if (started && now - lastPosSave > POS_SAVE_MS) { savePos(); lastPosSave = now; }
-    renderer.render(scene, camera);
+    if (state.started && now - lastPosSave > POS_SAVE_MS) { savePos(); lastPosSave = now; }
+    view.present();
   }
 
   function start(): void {
-    started = true;
+    state.started = true;
     el('start').style.display = 'none';
     ['#topbar', '#hotbar', '#actionRow', '#crosshair'].forEach((s) => {
       const node = document.querySelector<HTMLElement>(s);
@@ -1037,7 +1012,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   el('playBtn').addEventListener('click', start, { signal });
 
   new THREE.TextureLoader().load(FACE_URL, (faceTex) => {
-    if (disposed) return;
+    if (state.disposed) return;
     faceTex.magFilter = THREE.NearestFilter;
     faceTex.colorSpace = THREE.SRGBColorSpace;
     buildMaterials({ materials, faceTexture: faceTex });
@@ -1050,7 +1025,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     updateStats();
     el('startRecord').textContent = t('start.record_score', { score: storedBest() });
     last = performance.now();
-    rafId = requestAnimationFrame(loop);
+    state.rafId = requestAnimationFrame(loop);
     debug('engine', 'boot complete', {
       tenant: brand.id,
       worldX: SIZE_X, worldZ: SIZE_Z, worldY: SIZE_Y,
@@ -1061,11 +1036,11 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   });
 
   const cleanup = (): void => {
-    disposed = true;
-    if (started) savePos();
+    state.disposed = true;
+    if (state.started) savePos();
     coop?.close();
     coop = null;
-    cancelAnimationFrame(rafId);
+    cancelAnimationFrame(state.rafId);
     abort.abort();
     renderer.dispose();
     if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
