@@ -4,7 +4,7 @@
 // runtimes — assembles them onto one GameRuntime, picks the offline-vs-online plan (see
 // builder-plan.ts) and returns the running engine's cleanup. game-engine.ts's initGame is a thin call
 // into `GameEngine.builder()`. Modules never import game-engine.ts; the builder is the only wirer.
-import { gfx, type GfxMaterial, type GfxChunkMesh } from './rendering/gfx';
+import type { GfxMaterial, GfxChunkMesh } from './rendering/gfx';
 import { Vec3 } from './vec3';
 import { PLATFORM_NAME, type Brand } from '../tenants';
 import { t } from '../i18n';
@@ -29,6 +29,7 @@ import { createCreatureGroup, loadFaceTexture } from './rendering/face-texture';
 import { resolveCoopPlan, type EngineMode } from './builder-plan';
 import { createActions } from './actions';
 import { createCreatureView } from './rendering/creature-view';
+import { createCoopView } from './rendering/coop-view';
 import { createCreatureSimulation } from './offline/creature-simulation';
 import { createCreatureTargeting } from './online/creature-targeting';
 import { createHud } from './rendering/hud';
@@ -123,7 +124,7 @@ export class GameEngineBuilder {
       brand, bridge, faceUrl, faceBlockName,
       bestKey: `bl-best-${brand.id}`, posKey, appVersion: APP_VERSION,
       isTouch, signal, bootStart, coopEnabled: plan.coopEnabled, serverUrl,
-      gfx, scene, camera, renderer, canvas,
+      scene, camera, renderer, canvas,
       world, chunkMeshes, materials,
       mesher, poofRuntime, view,
       state, inventory: new BlockInventory(),
@@ -155,6 +156,8 @@ export class GameEngineBuilder {
     runtime.updateChunks = (force?: boolean): void => mesher.updateChunks({ playerPos: state.player.pos, force });
     runtime.processMeshQueue = (budget: number): void => mesher.processMeshQueue(budget);
     runtime.remeshRegion = (minX, maxX, minZ, maxZ): void => mesher.remeshRegion(minX, maxX, minZ, maxZ);
+
+    runtime.coopView = createCoopView({ scene });
 
     createHud(runtime);
     createActions(runtime);

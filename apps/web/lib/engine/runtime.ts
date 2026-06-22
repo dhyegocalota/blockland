@@ -8,7 +8,7 @@
 // function fields. Fields are late-bound by design: a module may read runtime.spawnPoof before the
 // module that assigns it has run, because every call happens at game time, never at wire time.
 import type {
-  GfxModule, GfxScene, GfxCamera, GfxRenderer, GfxGroup, GfxChunkMesh, GfxMaterial, GfxCreatureBody,
+  GfxScene, GfxCamera, GfxRenderer, GfxGroup, GfxChunkMesh, GfxMaterial, GfxCreatureBody,
 } from './rendering/gfx';
 import type { Vec3 } from './vec3';
 import type { Brand } from '../tenants';
@@ -23,7 +23,7 @@ import type { ChunkMesher } from './rendering/chunk-mesher';
 import type { PoofRuntime } from './rendering/poofs-runtime';
 import type { ViewRenderer } from './rendering/renderers';
 import type { DebugSnapshot } from './debug-snapshot';
-import type { CoopController, CoopCreature, CoopPlayer, RoomState } from '../coop';
+import type { CoopController, CoopCreature, CoopPlayer, CoopView, RoomState } from '../coop';
 import type { CoopBridge } from './api';
 import type { EditCell, EditOp } from '../protocol';
 
@@ -57,7 +57,6 @@ export interface GameRuntime {
   serverUrl: string | undefined;
 
   // ---- Three.js handles (owned/created by rendering) ----
-  gfx: GfxModule;
   scene: GfxScene;
   camera: GfxCamera;
   renderer: GfxRenderer;
@@ -80,6 +79,9 @@ export interface GameRuntime {
   creatures: Creature[];
   creatureGroup: GfxGroup;
   coop: CoopController | null;
+  // The data-only rendering hooks for co-op entities, implemented by rendering/coop-view and handed to
+  // createCoop so the network controller stays three.js-free.
+  coopView: CoopView;
 
   // ---- World helpers ----
   inBounds(x: number, y: number, z: number): boolean;

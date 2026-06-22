@@ -1,11 +1,12 @@
-// Co-op glue: owns the network client and the remote-player avatars inside the running game.
-// The pure interpolation math lives in engine/interpolation.ts; this module is the thin three.js /
-// net.ts wiring around it. It is created only when a server URL is configured — when absent the
-// game never imports a live socket and stays single-player. Local pose is throttled out as `move`;
-// remote `snapshot`/`edit`/`chat` come back in through typed handlers. HUD updates are pushed to the
-// React layer through the injected callbacks rather than touching the DOM here.
+// Co-op glue: owns the network client and the remote-player/creature state inside the running game.
+// The pure interpolation math lives in engine/interpolation.ts; this module is the thin net.ts wiring
+// around it. It is created only when a server URL is configured — when absent the game never imports a
+// live socket and stays single-player. Local pose is throttled out as `move`; remote
+// `snapshot`/`edit`/`chat` come back in through typed handlers. HUD updates are pushed to the React
+// layer through the injected callbacks rather than touching the DOM here. All three.js rendering is
+// dependency-inverted onto the injected CoopView (engine/rendering/coop-view.ts), driven with plain
+// data so this module stays three.js-free.
 
-import type * as THREE from 'three';
 import { EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS } from './engine/constants';
 import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
@@ -13,7 +14,7 @@ import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
 import type { EditCell, EditOp, Role } from './protocol';
 import type { FeedEvent, RosterMember } from './feed';
-import { creatureDefFor, creatureNameKey } from './engine/online/creature-snapshot';
+import { creatureDefFor, creatureNameKey, type CreatureDef } from './engine/online/creature-snapshot';
 import { t } from './i18n';
 
 // One persistent world per tenant (see apps/server model); the world name is fixed and global.
@@ -21,14 +22,6 @@ export const MAIN_WORLD = 'main';
 // Match the 30Hz server tick more closely so remote players get more position samples (smoother).
 const MOVE_SEND_HZ = 20;
 const MOVE_SEND_INTERVAL_MS = 1000 / MOVE_SEND_HZ;
-const AVATAR_HEIGHT = PLAYER_HEIGHT;
-const MODEL_HEIGHT = 1.8; // natural height of the humanoid before scaling to AVATAR_HEIGHT
-const LABEL_LIFT = 0.5;
-const LABEL_PIXEL_SCALE = 0.012;
-const BUBBLE_LIFT = 0.95;
-const BUBBLE_PIXEL_SCALE = 0.0125;
-const BUBBLE_TTL_MS = 6000;
-const PANTS = '#2f3a8c'; // dark trousers, common to every character
 
 export interface Appearance {
   skin: string;
@@ -75,6 +68,21 @@ export interface Report {
   target: string;
 }
 
+// The data-only rendering hooks coop drives. Every method takes plain data (ids, names, colors,
+// coords, text) — no three.js types — so coop stays three.js-free; engine/rendering/coop-view.ts owns
+// the meshes behind it. Called at the exact points coop used to build/move/dispose a mesh.
+export interface CoopView {
+  onPlayerJoin(id: number, name: string, look: Appearance): void;
+  onPlayerPose(id: number, x: number, y: number, z: number, yaw: number): void;
+  onPlayerChat(id: number, text: string): void;
+  onPlayerRename(id: number, name: string): void;
+  onPlayerLeave(id: number): void;
+  onCreatureSpawn(id: number, def: CreatureDef): void;
+  onCreaturePose(id: number, x: number, y: number, z: number, yaw: number): void;
+  onCreatureFlash(id: number): void;
+  onCreatureDespawn(id: number): void;
+}
+
 export interface CoopHud {
   onState(state: NetState): void;
   onPing(ping: number): void;
@@ -91,8 +99,7 @@ export interface CoopHud {
 }
 
 export interface CoopOptions {
-  three: typeof THREE;
-  scene: THREE.Scene;
+  view: CoopView;
   url: string;
   tenant: string;
   world: string;
@@ -124,17 +131,17 @@ export interface CoopOptions {
 
 interface Avatar {
   name: string;
-  group: THREE.Group;
-  label: THREE.Sprite;
-  bubble: THREE.Sprite | null;
-  bubbleTimer: number;
+  x: number;
+  y: number;
+  z: number;
   interp: RemoteInterpolator;
 }
 
 interface ServerCreature {
   kind: string;
-  group: THREE.Group;
-  body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  x: number;
+  y: number;
+  z: number;
   radius: number;
   lift: number;
   interp: RemoteInterpolator;
@@ -144,8 +151,6 @@ interface ServerCreature {
 // top *solid block index*). The walkable surface is one block higher (index + 1), so to sit a creature
 // on the ground like the local single-player model we lift it by (1 - offset) + half its height.
 const SERVER_GROUND_OFFSET = 0.5;
-const CREATURE_FLASH_COLOR = 0xff3333;
-const CREATURE_FLASH_MS = 120;
 const PLAYER_HIT_COLOR = '#ff5555';
 
 // What the engine raycasts against to aim an attack: world position, the wire id to send in `hit`,
@@ -210,7 +215,7 @@ export interface CoopController {
 }
 
 export function createCoop(opts: CoopOptions): CoopController {
-  const { three, scene } = opts;
+  const { view } = opts;
   const avatars = new Map<number, Avatar>();
   const creatures = new Map<number, ServerCreature>();
   // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
@@ -228,207 +233,44 @@ export function createCoop(opts: CoopOptions): CoopController {
   const inventory = new Map<number, number>();
   let infinite = true;
 
-  function makeLabel(name: string): THREE.Sprite {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
-    const g = canvas.getContext('2d');
-    if (!g) throw new Error('2d canvas context unavailable');
-    g.font = 'bold 34px "Comic Sans MS", system-ui, sans-serif';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.lineWidth = 6;
-    g.strokeStyle = '#2a1a4a';
-    g.strokeText(name, 128, 32);
-    g.fillStyle = '#ffffff';
-    g.fillText(name, 128, 32);
-    const texture = new three.CanvasTexture(canvas);
-    texture.colorSpace = three.SRGBColorSpace;
-    const sprite = new three.Sprite(new three.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
-    sprite.scale.set(canvas.width * LABEL_PIXEL_SCALE, canvas.height * LABEL_PIXEL_SCALE, 1);
-    return sprite;
-  }
-
-  function makeFaceTexture(skinColor: string): THREE.CanvasTexture {
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const g = canvas.getContext('2d');
-    if (!g) throw new Error('2d canvas context unavailable');
-    g.fillStyle = skinColor;
-    g.fillRect(0, 0, 32, 32);
-    g.fillStyle = '#2a1a1a';
-    g.fillRect(8, 12, 5, 6);
-    g.fillRect(19, 12, 5, 6);
-    g.fillStyle = '#b5532e';
-    g.fillRect(11, 23, 10, 3);
-    const texture = new three.CanvasTexture(canvas);
-    texture.magFilter = three.NearestFilter;
-    texture.colorSpace = three.SRGBColorSpace;
-    return texture;
-  }
-
-  function box(w: number, h: number, d: number, color: string, x: number, y: number): THREE.Mesh {
-    const mesh = new three.Mesh(
-      new three.BoxGeometry(w, h, d),
-      new three.MeshLambertMaterial({ color })
-    );
-    mesh.position.set(x, y, 0);
-    return mesh;
-  }
-
-  // A blocky voxel character: skinned head (face on the front), colored torso, arms, legs.
   function spawnAvatar(id: number, name: string, look: Appearance): Avatar {
-    const group = new three.Group();
-    const model = new three.Group();
-    model.add(box(0.22, 0.7, 0.24, PANTS, -0.13, 0.35));
-    model.add(box(0.22, 0.7, 0.24, PANTS, 0.13, 0.35));
-    model.add(box(0.5, 0.6, 0.26, look.shirt, 0, 1.0));
-    model.add(box(0.18, 0.6, 0.2, look.skin, -0.34, 1.0));
-    model.add(box(0.18, 0.6, 0.2, look.skin, 0.34, 1.0));
-    const skin = new three.MeshLambertMaterial({ color: look.skin });
-    const faceMat = new three.MeshLambertMaterial({ map: makeFaceTexture(look.skin) });
-    const head = new three.Mesh(new three.BoxGeometry(0.5, 0.5, 0.5), [skin, skin, skin, skin, faceMat, skin]);
-    head.position.set(0, 1.55, 0);
-    model.add(head);
-    const hair = box(0.54, 0.16, 0.54, look.hair, 0, 1.86); // a little cap of hair on top
-    model.add(hair);
-    model.scale.setScalar(AVATAR_HEIGHT / MODEL_HEIGHT);
-    group.add(model);
-    const label = makeLabel(name);
-    label.position.y = AVATAR_HEIGHT + LABEL_LIFT;
-    group.add(label);
-    scene.add(group);
-    const avatar: Avatar = { name, group, label, bubble: null, bubbleTimer: 0, interp: new RemoteInterpolator() };
+    view.onPlayerJoin(id, name, look);
+    const avatar: Avatar = { name, x: 0, y: 0, z: 0, interp: new RemoteInterpolator() };
     avatars.set(id, avatar);
     debug('coop', 'avatar spawned', { id, name });
     return avatar;
   }
 
-  function makeBubble(text: string): THREE.Sprite {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 80;
-    const g = canvas.getContext('2d');
-    if (!g) throw new Error('2d canvas context unavailable');
-    const clipped = text.length > 22 ? `${text.slice(0, 21)}…` : text;
-    g.fillStyle = 'rgba(26, 16, 48, 0.86)';
-    g.beginPath();
-    g.roundRect(8, 8, 240, 56, 14);
-    g.fill();
-    g.font = 'bold 26px "Comic Sans MS", system-ui, sans-serif';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillStyle = '#ffffff';
-    g.fillText(clipped, 128, 36);
-    const texture = new three.CanvasTexture(canvas);
-    texture.colorSpace = three.SRGBColorSpace;
-    const sprite = new three.Sprite(new three.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
-    sprite.scale.set(canvas.width * BUBBLE_PIXEL_SCALE, canvas.height * BUBBLE_PIXEL_SCALE, 1);
-    sprite.position.y = AVATAR_HEIGHT + LABEL_LIFT + BUBBLE_LIFT;
-    return sprite;
-  }
-
-  function disposeBubble(avatar: Avatar): void {
-    if (!avatar.bubble) return;
-    avatar.group.remove(avatar.bubble);
-    avatar.bubble.material.map?.dispose();
-    avatar.bubble.material.dispose();
-    avatar.bubble = null;
-  }
-
-  // A chat message floats above the speaker's head for a few seconds.
-  function showBubble(id: number, text: string): void {
-    const avatar = avatars.get(id);
-    if (!avatar) return;
-    disposeBubble(avatar);
-    window.clearTimeout(avatar.bubbleTimer);
-    const bubble = makeBubble(text);
-    avatar.group.add(bubble);
-    avatar.bubble = bubble;
-    avatar.bubbleTimer = window.setTimeout(() => disposeBubble(avatar), BUBBLE_TTL_MS);
-  }
-
   // A rename event renames the live avatar (label + roster name) for whoever currently shows the old
   // name, so the in-game name follows the persisted change even mid-session.
   function renameAvatar(oldName: string, newName: string): void {
-    for (const avatar of avatars.values()) {
+    for (const [id, avatar] of avatars) {
       if (avatar.name !== oldName) continue;
-      avatar.group.remove(avatar.label);
-      avatar.label.material.map?.dispose();
-      avatar.label.material.dispose();
-      const label = makeLabel(newName);
-      label.position.y = AVATAR_HEIGHT + LABEL_LIFT;
-      avatar.group.add(label);
-      avatar.label = label;
+      view.onPlayerRename(id, newName);
       avatar.name = newName;
     }
   }
 
   function removeAvatar(id: number): void {
-    const avatar = avatars.get(id);
-    if (!avatar) return;
-    window.clearTimeout(avatar.bubbleTimer);
-    disposeBubble(avatar);
-    scene.remove(avatar.group);
-    avatar.group.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      mesh.geometry?.dispose?.();
-      const material = mesh.material;
-      for (const m of Array.isArray(material) ? material : [material]) {
-        if (!m) continue;
-        (m as THREE.MeshLambertMaterial).map?.dispose();
-        m.dispose();
-      }
-    });
+    if (!avatars.has(id)) return;
+    view.onPlayerLeave(id);
     avatars.delete(id);
     debug('coop', 'avatar removed', { id });
   }
 
-  // A creature wears the same blocky face as the local single-player model: a flat-colored cube with
-  // two eyes and a mouth drawn on, sized by its definition. The server owns motion/hp/death; here we
-  // only render the latest snapshot, interpolated like a remote player.
-  function makeCreatureFace(color: string): THREE.CanvasTexture {
-    const canvas = document.createElement('canvas');
-    canvas.width = 16;
-    canvas.height = 16;
-    const g = canvas.getContext('2d');
-    if (!g) throw new Error('2d canvas context unavailable');
-    g.fillStyle = color;
-    g.fillRect(0, 0, 16, 16);
-    g.fillStyle = '#1a1330';
-    g.fillRect(4, 6, 2, 3);
-    g.fillRect(10, 6, 2, 3);
-    g.fillRect(6, 11, 4, 1);
-    const texture = new three.CanvasTexture(canvas);
-    texture.magFilter = three.NearestFilter;
-    texture.colorSpace = three.SRGBColorSpace;
-    return texture;
-  }
-
   function spawnCreature(id: number, kind: string): ServerCreature {
     const def = creatureDefFor(kind);
-    const group = new three.Group();
-    const body = new three.Mesh(
-      new three.BoxGeometry(...def.size),
-      new three.MeshLambertMaterial({ map: makeCreatureFace(def.color) })
-    );
-    group.add(body);
-    scene.add(group);
+    view.onCreatureSpawn(id, def);
     const lift = 1 - SERVER_GROUND_OFFSET + def.size[1] / 2;
-    const creature: ServerCreature = { kind, group, body, radius: Math.max(...def.size) * 0.7, lift, interp: new RemoteInterpolator() };
+    const creature: ServerCreature = { kind, x: 0, y: 0, z: 0, radius: Math.max(...def.size) * 0.7, lift, interp: new RemoteInterpolator() };
     creatures.set(id, creature);
     debug('coop', 'creature spawned', { id, kind });
     return creature;
   }
 
   function removeCreature(id: number): void {
-    const creature = creatures.get(id);
-    if (!creature) return;
-    scene.remove(creature.group);
-    creature.body.geometry.dispose();
-    creature.body.material.map?.dispose();
-    creature.body.material.dispose();
+    if (!creatures.has(id)) return;
+    view.onCreatureDespawn(id);
     creatures.delete(id);
     debug('coop', 'creature removed', { id });
   }
@@ -488,8 +330,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         for (const id of [...creatures.keys()]) {
           if (liveCreatures.has(id)) continue;
           const gone = creatures.get(id)!;
-          const at = gone.group.position;
-          opts.onCreaturePoof({ x: at.x, y: at.y, z: at.z, color: creatureDefFor(gone.kind).color });
+          opts.onCreaturePoof({ x: gone.x, y: gone.y, z: gone.z, color: creatureDefFor(gone.kind).color });
           removeCreature(id);
         }
         onlineCount = msg.players.length;
@@ -508,7 +349,7 @@ export function createCoop(opts: CoopOptions): CoopController {
       onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id, mine: msg.by === selfId }),
       onEditBatch: (msg) => opts.applyRemoteEditBatch(msg.edits),
       onChat: (msg) => {
-        showBubble(msg.from, msg.text);
+        if (avatars.has(msg.from)) view.onPlayerChat(msg.from, msg.text);
         opts.hud.onChat(msg.name, msg.text);
       },
       onEvent: (msg) => {
@@ -572,19 +413,13 @@ export function createCoop(opts: CoopOptions): CoopController {
         if (msg.kind === 'creature') {
           const cr = creatures.get(msg.id);
           if (!cr) return;
-          cr.body.material.emissive.setHex(CREATURE_FLASH_COLOR);
-          window.setTimeout(() => {
-            const still = creatures.get(msg.id);
-            if (still) still.body.material.emissive.setHex(0x000000);
-          }, CREATURE_FLASH_MS);
-          const at = cr.group.position;
-          opts.onCreaturePoof({ x: at.x, y: at.y, z: at.z, color: creatureDefFor(cr.kind).color });
+          view.onCreatureFlash(msg.id);
+          opts.onCreaturePoof({ x: cr.x, y: cr.y, z: cr.z, color: creatureDefFor(cr.kind).color });
           return;
         }
         const avatar = avatars.get(msg.id);
         if (!avatar) return;
-        const at = avatar.group.position;
-        opts.onCreaturePoof({ x: at.x, y: at.y + PLAYER_HEIGHT / 2, z: at.z, color: PLAYER_HIT_COLOR });
+        opts.onCreaturePoof({ x: avatar.x, y: avatar.y + PLAYER_HEIGHT / 2, z: avatar.z, color: PLAYER_HIT_COLOR });
       },
       onRespawn: (msg) => {
         opts.onRespawn(msg.x, msg.y, msg.z, msg.hp);
@@ -637,13 +472,8 @@ export function createCoop(opts: CoopOptions): CoopController {
     // Immediate local hit feedback: the server owns hp/death, but flashing the body red the instant
     // the player connects an attack makes hitting a server creature feel responsive.
     flashCreature(id): void {
-      const creature = creatures.get(id);
-      if (!creature) return;
-      creature.body.material.emissive.setHex(CREATURE_FLASH_COLOR);
-      window.setTimeout(() => {
-        const still = creatures.get(id);
-        if (still) still.body.material.emissive.setHex(0x000000);
-      }, CREATURE_FLASH_MS);
+      if (!creatures.has(id)) return;
+      view.onCreatureFlash(id);
     },
     sendAdminSetPeace(on): void {
       net.sendAdminSetPeace(on);
@@ -702,42 +532,42 @@ export function createCoop(opts: CoopOptions): CoopController {
       net.sendAdminUnban(ip);
     },
     update(now): void {
-      for (const avatar of avatars.values()) {
+      for (const [id, avatar] of avatars) {
         const pose = avatar.interp.sampleAt(now);
         if (!pose) continue;
-        avatar.group.position.set(pose.x, pose.y - EYE_HEIGHT, pose.z);
-        avatar.group.rotation.y = pose.yaw;
+        avatar.x = pose.x;
+        avatar.y = pose.y - EYE_HEIGHT;
+        avatar.z = pose.z;
+        view.onPlayerPose(id, avatar.x, avatar.y, avatar.z, pose.yaw);
       }
-      for (const creature of creatures.values()) {
+      for (const [id, creature] of creatures) {
         const pose = creature.interp.sampleAt(now);
         if (!pose) continue;
-        creature.group.position.set(pose.x, pose.y + creature.lift, pose.z);
-        creature.group.rotation.y = pose.yaw;
+        creature.x = pose.x;
+        creature.y = pose.y + creature.lift;
+        creature.z = pose.z;
+        view.onCreaturePose(id, creature.x, creature.y, creature.z, pose.yaw);
       }
     },
     getColliders(): ActorPos[] {
-      return [...avatars.values()].map((a) => ({
-        x: a.group.position.x,
-        y: a.group.position.y,
-        z: a.group.position.z,
-      }));
+      return [...avatars.values()].map((a) => ({ x: a.x, y: a.y, z: a.z }));
     },
     getCreatures(): CoopCreature[] {
       return [...creatures.entries()].map(([id, c]) => ({
         id,
         kind: c.kind,
-        x: c.group.position.x,
-        y: c.group.position.y,
-        z: c.group.position.z,
+        x: c.x,
+        y: c.y,
+        z: c.z,
         radius: c.radius,
       }));
     },
     getPlayers(): CoopPlayer[] {
       return [...avatars.entries()].map(([id, a]) => ({
         id,
-        x: a.group.position.x,
-        y: a.group.position.y + PLAYER_HEIGHT / 2,
-        z: a.group.position.z,
+        x: a.x,
+        y: a.y + PLAYER_HEIGHT / 2,
+        z: a.z,
         radius: Math.max(PLAYER_RADIUS, PLAYER_HEIGHT / 2),
       }));
     },
