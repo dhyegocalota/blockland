@@ -290,18 +290,25 @@ describe('net client', () => {
     expect(lists).toEqual([incoming]);
   });
 
-  it('a needs_approval error is terminal and does not reconnect', () => {
+  it('a needs_approval hold freezes on a waiting state and silently re-joins until approved', () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
-    socket.receive(welcome);
 
+    // Held for approval: not terminal — stays on the waiting screen and re-joins after the close.
     socket.receive({ t: 'error', code: 'needs_approval', msg: 'waiting' });
     expect(client.state).toBe('needs_approval');
     socket.serverClose();
     vi.runAllTimers();
-    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances.length).toBeGreaterThan(1);
+    expect(client.state).toBe('needs_approval');
+
+    // The admin approves: the retry's Welcome drops the player straight in.
+    const retry = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    retry.open();
+    retry.receive(welcome);
+    expect(client.state).toBe('online');
   });
 
   it('serializes admin approval toggle and approve messages', () => {

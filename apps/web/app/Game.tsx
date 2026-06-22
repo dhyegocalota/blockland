@@ -22,10 +22,10 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   kicked: 'coop.kicked',
   room_closed: 'coop.room_closed',
   time_up: 'coop.time_up',
-  needs_approval: 'coop.needs_approval',
+  needs_approval: null,
 };
 
-const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'needs_approval'];
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up'];
 
 const FEED_ICONS: Record<FeedEventKind, string> = {
   join: '➕',
@@ -260,6 +260,17 @@ export default function Game() {
         <div id="kickOverlay" role="alertdialog" aria-modal="true">
           <div className="panel">
             <h2>{t(bannerKey)}</h2>
+            <button onClick={() => window.location.reload()}>{t('coop.back_to_lobby')}</button>
+          </div>
+        </div>
+      )}
+
+      {netState === 'needs_approval' && (
+        <div id="approvalOverlay" role="alertdialog" aria-modal="true">
+          <div className="panel">
+            <div className="approvalSpinner" aria-hidden="true">⏳</div>
+            <h2>{t('coop.waiting_approval_title')}</h2>
+            <p>{t('coop.waiting_approval_hint')}</p>
             <button onClick={() => window.location.reload()}>{t('coop.back_to_lobby')}</button>
           </div>
         </div>

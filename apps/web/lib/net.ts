@@ -188,6 +188,8 @@ export interface NetClient {
 
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 10_000;
+// How often a player held for approval silently retries the join while they wait on the frozen screen.
+const APPROVAL_RETRY_MS = 3_000;
 
 const defaultSocketFactory = (url: string): WebSocketLike =>
   new WebSocket(url) as unknown as WebSocketLike;
@@ -205,6 +207,9 @@ export function createNet(opts: NetOptions): NetClient {
   let terminalReason: NetState | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let lastPingAt: number | null = null;
+  // While held for admin approval we keep the player on a frozen "waiting" screen and silently re-join
+  // every few seconds; the moment an admin approves, the next join returns a Welcome and they drop in.
+  let waitingApproval = false;
 
   function setState(next: NetState): void {
     if (state === next) return;
@@ -233,6 +238,7 @@ export function createNet(opts: NetOptions): NetClient {
     const msg = parseServerMsg(data);
     if (msg.t === 'welcome') {
       attempt = 0;
+      waitingApproval = false;
       setState('online');
       opts.handlers.onWelcome?.(msg);
       return;
@@ -313,12 +319,13 @@ export function createNet(opts: NetOptions): NetClient {
     reclaimed: 'kicked',
     claim_required: 'kicked',
     needs_login: 'kicked',
-    needs_approval: 'needs_approval',
   };
 
   function handleError(code: string, message: string): void {
     debug('net', 'error', { code, msg: message });
     opts.handlers.onError?.(code, message);
+    // Not terminal: stay on the frozen waiting screen and let the close handler re-join until approved.
+    if (code === 'needs_approval') { waitingApproval = true; setState('needs_approval'); return; }
     const terminal = TERMINAL_ERRORS[code];
     if (terminal) { terminalReason = terminal; setState(terminal); }
   }
@@ -327,6 +334,10 @@ export function createNet(opts: NetOptions): NetClient {
     socket = null;
     if (closedByUser) {
       setState('offline');
+      return;
+    }
+    if (waitingApproval) {
+      reconnectTimer = setTimeout(open, APPROVAL_RETRY_MS);
       return;
     }
     if (terminalReason !== null) {

@@ -182,6 +182,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.room_closed': '🌙 Este mundo foi fechado',
     'coop.time_up': '⏰ Você já jogou seu tempo de hoje! Volte amanhã.',
     'coop.needs_approval': '⏳ Espere um adulto te liberar pra entrar',
+    'coop.waiting_approval_title': 'Quase lá!',
+    'coop.waiting_approval_hint': 'Pedimos pro responsável te liberar. Assim que ele aceitar, você entra sozinho! 🎉',
     'coop.back_to_lobby': '🏠 Voltar ao início',
     'coop.ping': '📶 {ping}ms',
 
@@ -541,6 +543,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.room_closed': '🌙 This world has been closed',
     'coop.time_up': '⏰ You\'ve used your play time for today! Come back tomorrow.',
     'coop.needs_approval': '⏳ Waiting for a grown-up to let you in',
+    'coop.waiting_approval_title': 'Almost there!',
+    'coop.waiting_approval_hint': "We asked a grown-up to let you in. The moment they say yes, you'll drop right in! 🎉",
     'coop.back_to_lobby': '🏠 Back to start',
     'coop.ping': '📶 {ping}ms',
 
