@@ -3,10 +3,11 @@
   --sky2: #bfeaff;
   --grass: #6bd06b;
   --gold: #ffd23f;
+  --accent: #22c55e;
   --ink: #2a1a4a;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body { width: 100%; height: 100%; font-family: 'Baloo 2', 'Comic Sans MS', system-ui, sans-serif; background: #000; }
+html, body { width: 100%; height: 100%; font-family: 'Comic Sans MS', system-ui, sans-serif; background: #000; }
 html.game, body.game { overflow: hidden; }
 canvas { display: block; }
 input, textarea, select { font-size: max(16px, 1em); }
@@ -50,7 +51,7 @@ input, textarea, select { font-size: max(16px, 1em); }
   overflow: hidden;
 }
 .slot:hover { transform: translateY(-4px); }
-.slot.active { border-color: var(--gold); box-shadow: 0 0 16px var(--gold); transform: translateY(-6px); }
+.slot.active { border-color: var(--accent); box-shadow: 0 0 16px var(--accent); transform: translateY(-6px); }
 .slot .swatch { width: 100%; height: 100%; }
 .slot .key {
   position: absolute; top: 2px; left: 5px; font-size: 12px; font-weight: 800;

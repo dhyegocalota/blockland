@@ -485,6 +485,84 @@ impl Db {
         Ok(())
     }
 
+    /// Drop bans older than the retention window so a banned IP is never kept indefinitely. Returns the
+    /// number of rows removed.
+    pub async fn purge_stale_bans(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
+        let cutoff = now_ms() - max_age_ms;
+        self.conn
+            .execute("DELETE FROM bans WHERE created_at < ?1", params![cutoff])
+            .await
+    }
+
+    /// Insert a ban with an explicit timestamp, to exercise the retention purge.
+    #[cfg(test)]
+    pub(crate) async fn add_ban_at(&self, ip: &str, created_at: i64) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO bans (ip, created_at) VALUES (?1, ?2)
+                 ON CONFLICT(ip) DO UPDATE SET created_at = excluded.created_at",
+                params![ip, created_at],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Drop timeline/moderation events older than the retention window. Returns the rows removed.
+    pub async fn purge_stale_events(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
+        let cutoff = now_ms() - max_age_ms;
+        self.conn
+            .execute("DELETE FROM events WHERE created_at < ?1", params![cutoff])
+            .await
+    }
+
+    /// Drop play-time accounting rows whose window started before the retention cutoff. Returns the
+    /// rows removed.
+    pub async fn purge_stale_playtime(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
+        let cutoff = now_ms() - max_age_ms;
+        self.conn
+            .execute(
+                "DELETE FROM playtime WHERE window_start_ms < ?1",
+                params![cutoff],
+            )
+            .await
+    }
+
+    /// Insert a timeline event with an explicit timestamp, to exercise the retention purge.
+    #[cfg(test)]
+    pub(crate) async fn add_event_at(
+        &self,
+        tenant: &str,
+        account_id: &str,
+        created_at: i64,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO events (tenant, account_id, kind, name, detail, created_at)
+                 VALUES (?1, ?2, 'test', '', '', ?3)",
+                params![tenant, account_id, created_at],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Insert a play-time window with an explicit start, to exercise the retention purge.
+    #[cfg(test)]
+    pub(crate) async fn add_playtime_at(
+        &self,
+        tenant: &str,
+        account_id: &str,
+        window_start_ms: i64,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO playtime (tenant, account_id, window_start_ms, used_ms)
+                 VALUES (?1, ?2, ?3, 0)",
+                params![tenant, account_id, window_start_ms],
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Milliseconds the account has played inside the current window (0 if the window has rolled over).
     pub async fn playtime_used(
         &self,
@@ -1355,6 +1433,48 @@ mod tests {
 
     async fn memory_db() -> Db {
         Db::memory().await
+    }
+
+    #[tokio::test]
+    async fn purge_stale_bans_drops_only_old_entries() {
+        let db = memory_db().await;
+        let day_ms = 24 * 60 * 60 * 1000;
+        db.add_ban_at("203.0.113.1", now_ms() - 100 * day_ms)
+            .await
+            .unwrap();
+        db.add_ban("203.0.113.2").await.unwrap();
+        let removed = db.purge_stale_bans(90 * day_ms).await.unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(db.all_bans().await.unwrap(), vec!["203.0.113.2"]);
+    }
+
+    #[tokio::test]
+    async fn purge_stale_events_drops_only_old_entries() {
+        let db = memory_db().await;
+        let now = now_ms();
+        let day_ms = 24 * 60 * 60 * 1000;
+        db.add_event_at("acme", "old", now - 100 * day_ms)
+            .await
+            .unwrap();
+        db.record_event("acme", "acc", "rename", "New", "Old")
+            .await
+            .unwrap();
+        let removed = db.purge_stale_events(30 * day_ms).await.unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(db.recent_events("acme", 20).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn purge_stale_playtime_drops_only_old_windows() {
+        let db = memory_db().await;
+        let now = now_ms();
+        let day_ms = 24 * 60 * 60 * 1000;
+        db.add_playtime_at("acme", "old", now - 100 * day_ms)
+            .await
+            .unwrap();
+        db.add_playtime_at("acme", "new", now).await.unwrap();
+        let removed = db.purge_stale_playtime(30 * day_ms).await.unwrap();
+        assert_eq!(removed, 1);
     }
 
     #[tokio::test]

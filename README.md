@@ -148,4 +148,4 @@ server workspace and `npm run build` for the web client on every push.
 
 ---
 
-Made with 💛 — it started as a Minecraft for one kid and became a platform.
+Made with 💛 — it started as a custom 3D block world for one kid and became a platform.

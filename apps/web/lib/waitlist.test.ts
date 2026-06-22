@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./api', () => ({ signedFetch: vi.fn() }));
 
-import { isValidEmail, joinWaitlist } from './waitlist';
+import { isConsentGiven, isValidEmail, joinWaitlist } from './waitlist';
 import { signedFetch } from './api';
 
 const signedFetchMock = vi.mocked(signedFetch);
@@ -31,6 +31,20 @@ describe('isValidEmail', () => {
   it('rejects an address past the max length', () => {
     const long = `${'a'.repeat(250)}@b.com`;
     expect(isValidEmail(long)).toBe(false);
+  });
+});
+
+describe('isConsentGiven', () => {
+  it('accepts only a literal true', () => {
+    expect(isConsentGiven(true)).toBe(true);
+  });
+
+  it('rejects missing, false, and truthy non-boolean values', () => {
+    expect(isConsentGiven(undefined)).toBe(false);
+    expect(isConsentGiven(false)).toBe(false);
+    expect(isConsentGiven('true')).toBe(false);
+    expect(isConsentGiven(1)).toBe(false);
+    expect(isConsentGiven(null)).toBe(false);
   });
 });
 

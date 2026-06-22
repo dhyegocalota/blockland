@@ -32,6 +32,8 @@ function makeLobby(overrides: Partial<ReturnType<typeof useLobbyAdmin>>): Return
     toggleStructure: noop,
     kickPlayer: noop,
     banPlayer: noop,
+    reportPlayer: noop,
+    reports: [],
     setRole: noop,
     pendingApprovals: [],
     toggleApprovalRequired: noop,

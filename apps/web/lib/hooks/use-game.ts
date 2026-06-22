@@ -81,7 +81,7 @@ export function useGame() {
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
     resetArmed, resetWorld, resetScoresArmed, resetScores, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
-    kickPlayer, banPlayer, setRole, suspendRoom,
+    kickPlayer, banPlayer, reportPlayer, setRole, suspendRoom,
     pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
     bans, setBans, unban,
   } = useRoomAdmin(gameApiRef);
@@ -391,7 +391,7 @@ export function useGame() {
     lobby,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
-    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
+    toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, reportPlayer, setRole, suspendRoom,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
     bans, unban, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
