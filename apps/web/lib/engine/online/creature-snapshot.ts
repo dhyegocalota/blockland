@@ -3,7 +3,7 @@
 // `CreatureState` to the local creature definition (model/color/size) and resolves the i18n name key
 // for the kill feed. No three.js, no DOM — fully unit-tested.
 
-import { CREATURE_DEFS, type CreatureDef } from './creatures';
+import { CREATURE_DEFS, type CreatureDef } from '../offline/creatures';
 
 export function creatureDefFor(kind: string): CreatureDef {
   const def = CREATURE_DEFS[kind];

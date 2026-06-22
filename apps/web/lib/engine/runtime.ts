@@ -12,7 +12,7 @@ import type { Brand } from '../tenants';
 import type { BlockDef } from './blocks';
 import type { VoxelWorld } from './world';
 import type { VoxelHit } from './raycast';
-import type { CreatureDef } from './creatures';
+import type { CreatureDef } from './offline/creatures';
 import type { StructureKind } from './structures';
 import type { BlockInventory } from './inventory';
 import type { EngineState } from './engine-state';
@@ -111,20 +111,29 @@ export interface GameRuntime {
   setupTouchControls(): void;
   typingInField(): boolean;
 
-  // ---- Poofs (filled by creature-runtime) ----
+  // ---- Creature view + poofs + damage cue (filled by rendering/creature-view) ----
   spawnPoof(pos: THREE.Vector3, color: string): void;
   updatePoofs(dt: number): void;
+  buildCreatureBody(def: CreatureDef, x: number, y: number, z: number): {
+    mesh: THREE.Group;
+    body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  };
+  syncCreatureMesh(cr: Creature, transform: { x: number; y: number; z: number; rotationY: number; flashing: boolean }): void;
+  knockbackCreatureMesh(cr: Creature, delta: { x: number; z: number }): void;
+  disposeCreatureMesh(cr: Creature): void;
+  flashDamage(): void;
 
-  // ---- Creatures (filled by creature-runtime) ----
+  // ---- Single-player creatures (filled by offline/creature-simulation) ----
   spawnCreature(typeKey: string): void;
   populateCreatures(): void;
   updateCreatures(dt: number): void;
-  flashDamage(): void;
   hurtPlayer(): void;
   napAndRespawn(): void;
   raycastCreature(): { creature: Creature; t: number } | null;
   hitCreature(cr: Creature): void;
   defeatCreature(cr: Creature): void;
+
+  // ---- Co-op targeting (filled by online/creature-targeting) ----
   raycastServerCreature(): { creature: CoopCreature; t: number } | null;
   hitServerCreature(cr: CoopCreature): void;
   raycastRemotePlayer(): { player: CoopPlayer; t: number } | null;

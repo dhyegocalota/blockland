@@ -2,7 +2,7 @@
 // nearest-filtered THREE texture. Touches the DOM canvas and a passed BlockDef only — no scene,
 // renderer or closure state.
 import * as THREE from 'three';
-import type { BlockDef } from './blocks';
+import type { BlockDef } from '../blocks';
 
 const TEXTURE_SIZE = 16;
 

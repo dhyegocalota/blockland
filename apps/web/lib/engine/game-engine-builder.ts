@@ -22,12 +22,14 @@ import { type EngineContext } from './context';
 import { createEngineState } from './engine-state';
 import { createViewRenderer } from './rendering/renderers';
 import { createScene } from './rendering/scene-setup';
-import { buildMaterials } from './rendering/materials';
 import { createChunkMesher } from './rendering/chunk-mesher';
 import { createPoofRuntime } from './rendering/poofs-runtime';
+import { createCreatureGroup, loadFaceTexture } from './rendering/face-texture';
 import { resolveCoopPlan, type EngineMode } from './builder-plan';
 import { createActions } from './actions';
-import { createCreatureRuntime } from './rendering/creature-runtime';
+import { createCreatureView } from './rendering/creature-view';
+import { createCreatureSimulation } from './offline/creature-simulation';
+import { createCreatureTargeting } from './online/creature-targeting';
 import { createHud } from './rendering/hud';
 import { createGameLoop } from './game-loop';
 import { createCoopWiring } from './online/coop-wiring';
@@ -114,8 +116,7 @@ export class GameEngineBuilder {
       return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + SPAWN_OFFSET_Z);
     };
     const state = createEngineState({ spawn: savedPos ? new THREE.Vector3(savedPos.x, savedPos.y, savedPos.z) : spawnPoint() });
-    const creatureGroup = new THREE.Group();
-    scene.add(creatureGroup);
+    const creatureGroup = createCreatureGroup(scene);
 
     const runtime = {
       brand, bridge, faceUrl, faceBlockName,
@@ -156,7 +157,9 @@ export class GameEngineBuilder {
 
     createHud(runtime);
     createActions(runtime);
-    createCreatureRuntime(runtime);
+    createCreatureView(runtime);
+    createCreatureSimulation(runtime);
+    createCreatureTargeting(runtime);
     createOfflineMode(runtime);
     createCoopWiring(runtime);
     createGameLoop(runtime);
@@ -166,27 +169,28 @@ export class GameEngineBuilder {
     const player = state.player;
     runtime.el('playBtn').addEventListener('click', runtime.start, { signal });
 
-    new THREE.TextureLoader().load(faceUrl, (faceTex) => {
-      if (state.disposed) return;
-      faceTex.magFilter = THREE.NearestFilter;
-      faceTex.colorSpace = THREE.SRGBColorSpace;
-      buildMaterials({ materials, faceTexture: faceTex });
-      runtime.updateChunks(true);
-      runtime.processMeshQueue(isTouch ? 24 : 60);
-      if (plan.populateAtBoot) runtime.populateCreatures();
-      runtime.buildHotbar(faceUrl);
-      runtime.selectSlot(1);
-      runtime.updateStats();
-      runtime.el('startRecord').textContent = t('start.record_score', { score: runtime.storedBest() });
-      runtime.last = performance.now();
-      state.rafId = requestAnimationFrame(runtime.loop);
-      debug('engine', 'boot complete', {
-        tenant: brand.id,
-        worldX: SIZE_X, worldZ: SIZE_Z, worldY: SIZE_Y,
-        chunks: chunkMeshes.size,
-        creatures: runtime.creatures.length,
-        ms: Math.round(performance.now() - bootStart),
-      });
+    loadFaceTexture({
+      url: faceUrl,
+      materials,
+      cancelled: () => state.disposed,
+      onReady: () => {
+        runtime.updateChunks(true);
+        runtime.processMeshQueue(isTouch ? 24 : 60);
+        if (plan.populateAtBoot) runtime.populateCreatures();
+        runtime.buildHotbar(faceUrl);
+        runtime.selectSlot(1);
+        runtime.updateStats();
+        runtime.el('startRecord').textContent = t('start.record_score', { score: runtime.storedBest() });
+        runtime.last = performance.now();
+        state.rafId = requestAnimationFrame(runtime.loop);
+        debug('engine', 'boot complete', {
+          tenant: brand.id,
+          worldX: SIZE_X, worldZ: SIZE_Z, worldY: SIZE_Y,
+          chunks: chunkMeshes.size,
+          creatures: runtime.creatures.length,
+          ms: Math.round(performance.now() - bootStart),
+        });
+      },
     });
 
     const cleanup = (): void => {

@@ -13,7 +13,7 @@ import { debug } from './log';
 import { createNet, type NetClient, type NetState } from './net';
 import type { EditCell, EditOp, Role } from './protocol';
 import type { FeedEvent, RosterMember } from './feed';
-import { creatureDefFor, creatureNameKey } from './engine/creature-snapshot';
+import { creatureDefFor, creatureNameKey } from './engine/online/creature-snapshot';
 import { t } from './i18n';
 
 // One persistent world per tenant (see apps/server model); the world name is fixed and global.

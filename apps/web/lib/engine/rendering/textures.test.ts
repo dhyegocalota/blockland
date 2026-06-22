@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlockDef } from './blocks';
+import type { BlockDef } from '../blocks';
 import { ctx2d, makeCanvas, renderBlockCanvas, textureFromCanvas } from './textures';
 
 interface FakeCanvas {

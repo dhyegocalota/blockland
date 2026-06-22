@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CREATURE_DEFS } from './creatures';
+import { CREATURE_DEFS } from '../offline/creatures';
 import { creatureDefFor, creatureNameKey } from './creature-snapshot';
 
 describe('creatureDefFor', () => {
