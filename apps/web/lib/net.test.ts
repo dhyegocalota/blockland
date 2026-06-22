@@ -42,9 +42,9 @@ class MockWebSocket implements WebSocketLike {
 const welcome = {
   t: 'welcome',
   you: 1,
-  tenant: 'teo',
+  tenant: 'acme',
   world: 'main',
-  brand: { name: 'Teocraft', image: '/tenants/teo/avatar.png' },
+  brand: { name: 'Acme', image: '/tenants/acme/avatar.png' },
   tick_hz: 20,
   spawn: [0, 0, 0],
   admin: false,
@@ -58,7 +58,7 @@ function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
   let clock = 1_000;
   const client = createNet({
     url: 'ws://test',
-    tenant: 'teo',
+    tenant: 'acme',
     world: 'main',
     name: 'Bot',
     skin: '#f2c18b',
@@ -100,7 +100,7 @@ describe('net client', () => {
 
     const socket = MockWebSocket.instances[0];
     socket.open();
-    expect(socket.sent[0]).toBe(JSON.stringify({ t: 'join', tenant: 'teo', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok' }));
+    expect(socket.sent[0]).toBe(JSON.stringify({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok' }));
 
     socket.receive(welcome);
     expect(client.state).toBe('online');

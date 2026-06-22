@@ -28,9 +28,9 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/release/server /usr/local/bin/server
-COPY tenants.toml /etc/teocraft/tenants.toml
-ENV TENANTS_FILE=/etc/teocraft/tenants.toml \
-    DATABASE_PATH=/var/lib/teocraft/blockland.db \
+COPY tenants.toml /etc/blockland/tenants.toml
+ENV TENANTS_FILE=/etc/blockland/tenants.toml \
+    DATABASE_PATH=/var/lib/blockland/blockland.db \
     BIND=0.0.0.0:8080 \
     RUST_LOG=info,server=debug
 EXPOSE 8080

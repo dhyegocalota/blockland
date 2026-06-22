@@ -296,11 +296,11 @@ mod tests {
     async fn request_rejects_invalid_name_or_email() {
         let db = Db::memory().await;
         assert!(matches!(
-            request(&db, "teo", "  ", "a@b.com").await.unwrap(),
+            request(&db, "acme", "  ", "a@b.com").await.unwrap(),
             RequestResult::Invalid
         ));
         assert!(matches!(
-            request(&db, "teo", "Ann", "bad-email").await.unwrap(),
+            request(&db, "acme", "Ann", "bad-email").await.unwrap(),
             RequestResult::Invalid
         ));
     }
@@ -317,19 +317,19 @@ mod tests {
     async fn verify_by_code_mints_claim_and_persists_account() {
         let db = Db::memory().await;
         let claims = Claims::default();
-        let (_token, code) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        let (_token, code) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
 
-        let verified = verify(&db, &claims, None, Some(("teo", "Ann", &code)))
+        let verified = verify(&db, &claims, None, Some(("acme", "Ann", &code)))
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(verified.tenant, "teo");
+        assert_eq!(verified.tenant, "acme");
         assert_eq!(verified.name, "Ann");
         assert_eq!(verified.claim.len(), TOKEN_HEX_CHARS);
-        let id = account_id(&db, "teo", "Ann").await;
+        let id = account_id(&db, "acme", "Ann").await;
         assert_eq!(claims.get(&id).as_deref(), Some(verified.claim.as_str()));
         assert_eq!(
-            db.get_account_by_name("teo", "Ann")
+            db.get_account_by_name("acme", "Ann")
                 .await
                 .unwrap()
                 .unwrap()
@@ -342,19 +342,19 @@ mod tests {
     async fn verify_renames_a_returning_email_and_logs_the_event() {
         let db = Db::memory().await;
         let claims = Claims::default();
-        let (first, _) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        let (first, _) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
         verify(&db, &claims, Some(&first), None)
             .await
             .unwrap()
             .unwrap();
         // Same email comes back asking for a free name -> renamed, and the timeline records it.
-        let (second, _) = ok_request(&db, "teo", "Annie", "ann@x.com").await;
+        let (second, _) = ok_request(&db, "acme", "Annie", "ann@x.com").await;
         let verified = verify(&db, &claims, Some(&second), None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(verified.name, "Annie");
-        let events = db.recent_events("teo", 20).await.unwrap();
+        let events = db.recent_events("acme", 20).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "rename");
         assert_eq!(events[0].name, "Annie");
@@ -365,14 +365,14 @@ mod tests {
     async fn request_refuses_a_name_owned_by_another_email() {
         let db = Db::memory().await;
         let claims = Claims::default();
-        let (token, _code) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        let (token, _code) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
         verify(&db, &claims, Some(&token), None)
             .await
             .unwrap()
             .unwrap();
 
         assert!(matches!(
-            request(&db, "teo", "Ann", "mallory@x.com").await.unwrap(),
+            request(&db, "acme", "Ann", "mallory@x.com").await.unwrap(),
             RequestResult::NotOwner
         ));
         // The same name in another tenant is a different, unowned account.
@@ -386,13 +386,13 @@ mod tests {
     async fn reclaim_replaces_the_live_claim() {
         let db = Db::memory().await;
         let claims = Claims::default();
-        let (first, _) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        let (first, _) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
         let first_claim = verify(&db, &claims, Some(&first), None)
             .await
             .unwrap()
             .unwrap()
             .claim;
-        let (second, _) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        let (second, _) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
         let second_claim = verify(&db, &claims, Some(&second), None)
             .await
             .unwrap()
@@ -400,7 +400,7 @@ mod tests {
             .claim;
 
         assert_ne!(first_claim, second_claim);
-        let id = account_id(&db, "teo", "Ann").await;
+        let id = account_id(&db, "acme", "Ann").await;
         assert_eq!(claims.get(&id).as_deref(), Some(second_claim.as_str()));
     }
 
@@ -408,19 +408,19 @@ mod tests {
     async fn logout_only_clears_the_matching_claim() {
         let db = Db::memory().await;
         let claims = Claims::default();
-        let (token, _) = ok_request(&db, "teo", "Ann", "ann@x.com").await;
+        let (token, _) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
         let claim = verify(&db, &claims, Some(&token), None)
             .await
             .unwrap()
             .unwrap()
             .claim;
-        let id = account_id(&db, "teo", "Ann").await;
+        let id = account_id(&db, "acme", "Ann").await;
 
         // A stale token resolves to no account and never clears the live claim.
-        logout(&db, &claims, "teo", "stale-token").await.unwrap();
+        logout(&db, &claims, "acme", "stale-token").await.unwrap();
         assert_eq!(claims.get(&id).as_deref(), Some(claim.as_str()));
 
-        logout(&db, &claims, "teo", &claim).await.unwrap();
+        logout(&db, &claims, "acme", &claim).await.unwrap();
         assert!(claims.get(&id).is_none());
     }
 
@@ -428,7 +428,7 @@ mod tests {
     async fn rename_updates_name_logs_event_and_guards_taken_or_invalid() {
         let db = std::sync::Arc::new(Db::memory().await);
         let hub = Hub::load(db).await;
-        let (token, _) = ok_request(&hub.db, "teo", "Ann", "ann@x.com").await;
+        let (token, _) = ok_request(&hub.db, "acme", "Ann", "ann@x.com").await;
         let claim = verify(&hub.db, &hub.claims, Some(&token), None)
             .await
             .unwrap()
@@ -436,38 +436,38 @@ mod tests {
             .claim;
 
         // A free name renames the account and records a timeline event.
-        let renamed = rename(&hub, "teo", &claim, "Annie").await.unwrap();
+        let renamed = rename(&hub, "acme", &claim, "Annie").await.unwrap();
         assert!(matches!(renamed, RenameResult::Ok { name } if name == "Annie"));
         let account = hub
             .db
-            .claim_to_account("teo", &claim)
+            .claim_to_account("acme", &claim)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(account.1, "Annie");
-        let events = hub.db.recent_events("teo", 20).await.unwrap();
+        let events = hub.db.recent_events("acme", 20).await.unwrap();
         assert_eq!(events.last().unwrap().name, "Annie");
         assert_eq!(events.last().unwrap().detail, "Ann");
 
         // A name already taken in the tenant is refused; the current name stays.
-        let (bob_token, _) = ok_request(&hub.db, "teo", "Bob", "bob@x.com").await;
+        let (bob_token, _) = ok_request(&hub.db, "acme", "Bob", "bob@x.com").await;
         verify(&hub.db, &hub.claims, Some(&bob_token), None)
             .await
             .unwrap()
             .unwrap();
         assert!(matches!(
-            rename(&hub, "teo", &claim, "Bob").await.unwrap(),
+            rename(&hub, "acme", &claim, "Bob").await.unwrap(),
             RenameResult::NameTaken
         ));
 
         // An unknown claim cannot rename anything.
         assert!(matches!(
-            rename(&hub, "teo", "stale-token", "Zed").await.unwrap(),
+            rename(&hub, "acme", "stale-token", "Zed").await.unwrap(),
             RenameResult::Invalid
         ));
         // An empty/over-long name is invalid.
         assert!(matches!(
-            rename(&hub, "teo", &claim, "  ").await.unwrap(),
+            rename(&hub, "acme", &claim, "  ").await.unwrap(),
             RenameResult::Invalid
         ));
     }

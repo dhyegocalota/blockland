@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn fake_storage_honors_put_delete_url_contract() {
         let storage = FakeStorage::new();
-        let key = "tenants/teo/avatar.png";
+        let key = "tenants/acme/avatar.png";
 
         storage
             .put(key, "image/png", b"pixels".to_vec())
@@ -248,7 +248,7 @@ mod tests {
             assert_eq!(content_type, "image/png");
             assert_eq!(bytes, b"pixels");
         }
-        assert_eq!(storage.public_url(key), "mem://tenants/teo/avatar.png");
+        assert_eq!(storage.public_url(key), "mem://tenants/acme/avatar.png");
 
         storage.delete(key).await.unwrap();
         assert!(storage.objects.lock().unwrap().get(key).is_none());
@@ -261,7 +261,7 @@ mod tests {
             root: dir.path().to_path_buf(),
             public_base: "https://cdn.example".into(),
         };
-        let key = "tenants/teo/face.png";
+        let key = "tenants/acme/face.png";
 
         storage
             .put(key, "image/png", b"face-bytes".to_vec())
@@ -281,8 +281,8 @@ mod tests {
             public_base: "https://cdn.example/".into(),
         };
         assert_eq!(
-            storage.public_url("tenants/teo/avatar.png"),
-            "https://cdn.example/uploads/tenants/teo/avatar.png"
+            storage.public_url("tenants/acme/avatar.png"),
+            "https://cdn.example/uploads/tenants/acme/avatar.png"
         );
     }
 

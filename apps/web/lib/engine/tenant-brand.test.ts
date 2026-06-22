@@ -3,7 +3,7 @@ import { DEFAULT_BRAND_COLOR, faceBlockNameFor } from './tenant-brand';
 
 describe('faceBlockNameFor', () => {
   it('appends a bang to the tenant name', () => {
-    expect(faceBlockNameFor('Teocraft')).toBe('Teocraft!');
+    expect(faceBlockNameFor('Acme')).toBe('Acme!');
     expect(faceBlockNameFor('Blockland')).toBe('Blockland!');
   });
 

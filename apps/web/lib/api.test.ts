@@ -100,34 +100,34 @@ describe('typed helpers', () => {
   });
 
   it('getTenant returns the tenant on 200', async () => {
-    const tenant = { id: 'teo', name: 'Teocraft' };
+    const tenant = { id: 'acme', name: 'Acme' };
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify(tenant), { status: 200 }),
     );
-    expect(await api.getTenant('teo')).toMatchObject(tenant);
+    expect(await api.getTenant('acme')).toMatchObject(tenant);
   });
 
   it('topScores requests the leaderboard path with limit', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('[]', { status: 200 }));
-    await api.topScores({ tenant: 'teo', limit: 5 });
-    expect(fetchMock.mock.calls[0][0]).toBe('http://rust.test:9090/internal/leaderboard/teo?limit=5');
+    await api.topScores({ tenant: 'acme', limit: 5 });
+    expect(fetchMock.mock.calls[0][0]).toBe('http://rust.test:9090/internal/leaderboard/acme?limit=5');
   });
 
   it('topScores adds the window=month param for the last-30-days board', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('[]', { status: 200 }));
-    await api.topScores({ tenant: 'teo', window: 'month', limit: 5 });
+    await api.topScores({ tenant: 'acme', window: 'month', limit: 5 });
     expect(fetchMock.mock.calls[0][0]).toBe(
-      'http://rust.test:9090/internal/leaderboard/teo?limit=5&window=month',
+      'http://rust.test:9090/internal/leaderboard/acme?limit=5&window=month',
     );
   });
 
   it('deleteTenant throws on a non-ok response', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
-    await expect(api.deleteTenant('teo')).rejects.toThrow();
+    await expect(api.deleteTenant('acme')).rejects.toThrow();
   });
 });
 

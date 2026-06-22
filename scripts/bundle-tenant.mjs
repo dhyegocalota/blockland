@@ -2,7 +2,7 @@
 // GET ${SITE_URL}/api/tenants/<id> and writes it to apps/web/public/tenant.json, which
 // resolveTenant() reads when the data API is unreachable. The file is a generated build
 // artifact (gitignored), NOT hardcoded content. Run before `next build` (or locally now).
-//   SITE_URL=http://localhost:3000 NEXT_PUBLIC_DEFAULT_TENANT=teo node scripts/bundle-tenant.mjs
+//   SITE_URL=http://localhost:3000 BUNDLE_TENANT=acme node scripts/bundle-tenant.mjs
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -11,8 +11,8 @@ const DEFAULT_SITE_URL = 'http://localhost:3000';
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'web', 'public');
 
 function tenantId() {
-  const id = process.env.NEXT_PUBLIC_DEFAULT_TENANT;
-  if (!id) throw new Error('bundle-tenant: NEXT_PUBLIC_DEFAULT_TENANT is not set');
+  const id = process.env.BUNDLE_TENANT;
+  if (!id) throw new Error('bundle-tenant: BUNDLE_TENANT is not set');
   return id;
 }
 

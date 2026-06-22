@@ -20,13 +20,13 @@ afterEach(() => vi.clearAllMocks());
 describe('POST /api/auth/logout', () => {
   it('proxies the claim triple and returns the result', async () => {
     logoutMock.mockResolvedValue({ ok: true });
-    const res = await POST(post({ tenant: 'teo', name: 'Ann', claim: 'cl' }));
-    expect(logoutMock).toHaveBeenCalledWith({ tenant: 'teo', name: 'Ann', claim: 'cl' });
+    const res = await POST(post({ tenant: 'acme', name: 'Ann', claim: 'cl' }));
+    expect(logoutMock).toHaveBeenCalledWith({ tenant: 'acme', name: 'Ann', claim: 'cl' });
     expect(await res.json()).toEqual({ ok: true });
   });
 
   it('rejects an incomplete body', async () => {
-    const res = await POST(post({ tenant: 'teo', name: 'Ann' }));
+    const res = await POST(post({ tenant: 'acme', name: 'Ann' }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false });
     expect(logoutMock).not.toHaveBeenCalled();

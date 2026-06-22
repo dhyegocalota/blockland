@@ -1,17 +1,17 @@
 // Client-side tenant resolution. Picks the tenant id from `?tenant=` or the subdomain and
 // fetches its branding from the data API (Rust-owned). There is no hardcoded fallback: if the
 // tenant can't be loaded we surface the failure instead of silently masking it.
-import { DEFAULT_TENANT, type Tenant } from './builtins';
+import { type Tenant } from './builtins';
 import { debug, warn } from './log';
 
 export { PLATFORM_NAME } from './builtins';
 export type Brand = Tenant;
 
-// The app's own root domain; tenants live on subdomains of it (teo.<ROOT_DOMAIN>). Defaults to
-// localhost for dev (tenants are teo.localhost); set NEXT_PUBLIC_ROOT_DOMAIN in production. Knowing
+// The app's own root domain; tenants live on subdomains of it (acme.<ROOT_DOMAIN>). Defaults to
+// localhost for dev (tenants are acme.localhost); set NEXT_PUBLIC_ROOT_DOMAIN in production. Knowing
 // the root, a host is a tenant iff it ends with `.<ROOT_DOMAIN>` — no per-platform special cases.
-// The tenant subdomain prefix for a host, or null when the host IS the app root (admin and the
-// default tenant live there). Pure, so the server (metadata, manifest) shares it with the client.
+// The tenant subdomain prefix for a host, or null when the host IS the app root (admin lives there).
+// Pure, so the server (metadata, manifest) shares it with the client.
 export function tenantSubdomainOf(host: string): string | null {
   const root = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost';
   if (host === root || host === `www.${root}`) return null;
@@ -21,7 +21,7 @@ export function tenantSubdomainOf(host: string): string | null {
 
 // The app root domain for an arbitrary host: drop the tenant subdomain label so a host taken from a
 // preview or prod request maps back to the indexable landing. Bare-localhost dev keeps its host
-// (teo.localhost → localhost). Returns the host unchanged when it already IS the root.
+// (acme.localhost → localhost). Returns the host unchanged when it already IS the root.
 export function rootDomainOf(host: string): string {
   const subdomain = tenantSubdomainOf(host);
   if (!subdomain) return host;
@@ -33,11 +33,11 @@ export function tenantSubdomain(): string | null {
   return tenantSubdomainOf(window.location.hostname);
 }
 
-export function tenantIdFromLocation(): string {
+export function tenantIdFromLocation(): string | null {
   const params = new URLSearchParams(window.location.search);
   const q = params.get('tenant');
   if (q) return q.toLowerCase();
-  return tenantSubdomain() ?? DEFAULT_TENANT;
+  return tenantSubdomain();
 }
 
 export interface ResolvedTenant {
@@ -72,6 +72,7 @@ async function fetchBundledTenant(): Promise<Tenant | null> {
 
 export async function resolveTenant(): Promise<ResolvedTenant> {
   const id = tenantIdFromLocation();
+  if (!id) throw new Error('tenant_unresolved');
   debug('tenant', 'resolving', { id, host: window.location.hostname, search: window.location.search });
 
   const online = await fetchOnlineTenant(id);

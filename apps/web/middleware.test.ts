@@ -34,15 +34,15 @@ describe('middleware', () => {
 
   it('serves the game at / on a tenant subdomain (no rewrite)', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(rewrittenTo(request({ host: `teo.${PROD_ROOT}`, path: '/' }))).toBeNull();
+    expect(rewrittenTo(request({ host: `acme.${PROD_ROOT}`, path: '/' }))).toBeNull();
   });
 
   it('serves the game at / on a localhost tenant subdomain (no rewrite)', () => {
-    expect(rewrittenTo(request({ host: 'teo.localhost', path: '/' }))).toBeNull();
+    expect(rewrittenTo(request({ host: 'acme.localhost', path: '/' }))).toBeNull();
   });
 
   it('ignores the port in the host when classifying a tenant subdomain', () => {
-    expect(rewrittenTo(request({ host: 'teo.localhost:3099', path: '/' }))).toBeNull();
+    expect(rewrittenTo(request({ host: 'acme.localhost:3099', path: '/' }))).toBeNull();
   });
 
   it('ignores the port in the host on the app root', () => {
@@ -56,14 +56,14 @@ describe('middleware', () => {
 
   it('308-redirects a tenant subdomain hitting /welcome to the root home', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', PROD_ROOT);
-    expect(redirect(request({ host: `teo.${PROD_ROOT}`, path: '/welcome' }))).toEqual({
+    expect(redirect(request({ host: `acme.${PROD_ROOT}`, path: '/welcome' }))).toEqual({
       status: 308,
       location: `https://${PROD_ROOT}/`,
     });
   });
 
   it('308-redirects a localhost tenant on /welcome to bare localhost', () => {
-    expect(redirect(request({ host: 'teo.localhost', path: '/welcome' }))).toEqual({
+    expect(redirect(request({ host: 'acme.localhost', path: '/welcome' }))).toEqual({
       status: 308,
       location: 'http://localhost/',
     });

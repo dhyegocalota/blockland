@@ -13,14 +13,14 @@ afterEach(() => vi.clearAllMocks());
 
 describe('GET /api/tenants/[id]', () => {
   it('returns the tenant from the api proxy', async () => {
-    const tenant = { id: 'teo', name: 'Teocraft' } as Awaited<ReturnType<typeof getTenant>>;
+    const tenant = { id: 'acme', name: 'Acme' } as Awaited<ReturnType<typeof getTenant>>;
     getTenantMock.mockResolvedValue(tenant);
 
-    const res = await GET(new Request('http://x/api/tenants/teo'), { params: { id: 'teo' } });
+    const res = await GET(new Request('http://x/api/tenants/acme'), { params: { id: 'acme' } });
 
-    expect(getTenantMock).toHaveBeenCalledWith('teo');
+    expect(getTenantMock).toHaveBeenCalledWith('acme');
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ id: 'teo' });
+    expect(await res.json()).toMatchObject({ id: 'acme' });
     // no-store so a shared/edge cache never pins a stale branding shape (e.g. the old fields without `image`).
     expect(res.headers.get('cache-control')).toBe('no-store');
   });

@@ -112,13 +112,13 @@ mod tests {
     #[test]
     fn allows_supported_image_types() {
         for content_type in ["image/png", "image/jpeg", "image/webp"] {
-            assert!(validate(&params("tenants/teo/avatar.png", content_type), 10).is_none());
+            assert!(validate(&params("tenants/acme/avatar.png", content_type), 10).is_none());
         }
     }
 
     #[test]
     fn rejects_unsupported_content_type() {
-        let rejection = validate(&params("tenants/teo/avatar.png", "image/gif"), 10);
+        let rejection = validate(&params("tenants/acme/avatar.png", "image/gif"), 10);
         assert_eq!(
             rejection,
             Some((StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type"))
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn rejects_oversize_body() {
         let rejection = validate(
-            &params("tenants/teo/avatar.png", "image/png"),
+            &params("tenants/acme/avatar.png", "image/png"),
             MAX_UPLOAD_BYTES + 1,
         );
         assert_eq!(
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn accepts_max_size_body() {
         assert!(validate(
-            &params("tenants/teo/avatar.png", "image/png"),
+            &params("tenants/acme/avatar.png", "image/png"),
             MAX_UPLOAD_BYTES
         )
         .is_none());
@@ -148,20 +148,20 @@ mod tests {
 
     #[test]
     fn accepts_well_formed_keys() {
-        assert!(is_valid_key("tenants/teo/avatar.png"));
+        assert!(is_valid_key("tenants/acme/avatar.png"));
         assert!(is_valid_key("tenants/acme-2/face_texture-1.webp"));
     }
 
     #[test]
     fn rejects_traversal_and_malformed_keys() {
-        assert!(!is_valid_key("tenants/teo/../secret.png"));
+        assert!(!is_valid_key("tenants/acme/../secret.png"));
         assert!(!is_valid_key("tenants/../etc/passwd"));
-        assert!(!is_valid_key("/tenants/teo/avatar.png"));
-        assert!(!is_valid_key("tenants/teo/sub/avatar.png"));
-        assert!(!is_valid_key("other/teo/avatar.png"));
-        assert!(!is_valid_key("tenants/Teo/avatar.png"));
-        assert!(!is_valid_key("tenants/teo/"));
+        assert!(!is_valid_key("/tenants/acme/avatar.png"));
+        assert!(!is_valid_key("tenants/acme/sub/avatar.png"));
+        assert!(!is_valid_key("other/acme/avatar.png"));
+        assert!(!is_valid_key("tenants/Acme/avatar.png"));
+        assert!(!is_valid_key("tenants/acme/"));
         assert!(!is_valid_key("tenants//avatar.png"));
-        assert!(!is_valid_key("tenants/teo"));
+        assert!(!is_valid_key("tenants/acme"));
     }
 }

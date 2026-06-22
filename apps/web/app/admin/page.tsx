@@ -49,7 +49,7 @@ export default function Admin() {
 
   // Let the admin page scroll (the game's global CSS pins body overflow to hidden).
   useEffect(() => {
-    // The admin panel lives on the app root, never on a tenant subdomain (teo.blockland...).
+    // The admin panel lives on the app root, never on a tenant subdomain (acme.blockland...).
     if (tenantSubdomain()) {
       setBlocked(true);
       window.location.replace('/welcome');

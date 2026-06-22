@@ -2112,7 +2112,7 @@ mod tests {
         // with no cross-test leak — no file-backed-gate reset needed anymore.
         let db = Arc::new(Db::memory().await);
         let hub = Arc::new(Hub::load(db).await);
-        let tcfg = hub.tenants.get("teo").unwrap().clone();
+        let tcfg = hub.tenants.get("acme").unwrap().clone();
         let (_tx, rx) = mpsc::channel::<RoomCmd>(16);
         Room::new(hub, &tcfg, "main".into(), rx)
     }
@@ -3053,7 +3053,7 @@ mod tests {
         let acc = room
             .hub
             .db
-            .claim_account("teo", "kid@x.com", "Kid")
+            .claim_account("acme", "kid@x.com", "Kid")
             .await
             .unwrap()
             .account_id;
@@ -3072,7 +3072,7 @@ mod tests {
         let acc = room
             .hub
             .db
-            .claim_account("teo", "kid@x.com", "Kid")
+            .claim_account("acme", "kid@x.com", "Kid")
             .await
             .unwrap()
             .account_id;
@@ -3085,11 +3085,11 @@ mod tests {
         });
         assert_eq!(coded.as_deref(), Some("needs_approval"));
         // The held-out account is now pending.
-        let pending = room.hub.db.pending_approvals("teo").await.unwrap();
+        let pending = room.hub.db.pending_approvals("acme").await.unwrap();
         assert_eq!(pending.len(), 1);
 
         // After an admin approves it, the same account is admitted.
-        room.hub.db.approve_account("teo", &acc).await.unwrap();
+        room.hub.db.approve_account("acme", &acc).await.unwrap();
         let (allowed, _rx2) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
         assert!(allowed.is_ok(), "an approved account is admitted");
     }
@@ -3105,7 +3105,7 @@ mod tests {
         let acc = room
             .hub
             .db
-            .claim_account("teo", "parent@x.com", "Parent")
+            .claim_account("acme", "parent@x.com", "Parent")
             .await
             .unwrap()
             .account_id;
@@ -3114,7 +3114,7 @@ mod tests {
         assert!(
             room.hub
                 .db
-                .pending_approvals("teo")
+                .pending_approvals("acme")
                 .await
                 .unwrap()
                 .is_empty(),
@@ -3141,7 +3141,7 @@ mod tests {
         let acc = room
             .hub
             .db
-            .claim_account("teo", "kid@x.com", "Kid")
+            .claim_account("acme", "kid@x.com", "Kid")
             .await
             .unwrap()
             .account_id;
@@ -3158,7 +3158,7 @@ mod tests {
 
         room.hub
             .db
-            .record_approval_request("teo", &acc, "Kid", "kid@x.com")
+            .record_approval_request("acme", &acc, "Kid", "kid@x.com")
             .await
             .unwrap();
         room.on_input(
@@ -3170,16 +3170,16 @@ mod tests {
         // The approve is spawned async; let it run, then confirm the account is approved + cleared.
         tokio::task::yield_now().await;
         for _ in 0..50 {
-            if room.hub.db.is_approved("teo", &acc).await.unwrap() {
+            if room.hub.db.is_approved("acme", &acc).await.unwrap() {
                 break;
             }
             tokio::task::yield_now().await;
         }
-        assert!(room.hub.db.is_approved("teo", &acc).await.unwrap());
+        assert!(room.hub.db.is_approved("acme", &acc).await.unwrap());
         assert!(room
             .hub
             .db
-            .pending_approvals("teo")
+            .pending_approvals("acme")
             .await
             .unwrap()
             .is_empty());

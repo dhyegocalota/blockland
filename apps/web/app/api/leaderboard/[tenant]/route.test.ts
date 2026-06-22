@@ -17,9 +17,9 @@ describe('GET /api/leaderboard/[tenant]', () => {
   it('returns the all-time top scores with a cache-control header', async () => {
     topScoresMock.mockResolvedValue([{ name: 'Ann', score: 30 }]);
 
-    const res = await GET(new Request('http://x/api/leaderboard/teo'), { params: { tenant: 'teo' } });
+    const res = await GET(new Request('http://x/api/leaderboard/acme'), { params: { tenant: 'acme' } });
 
-    expect(topScoresMock).toHaveBeenCalledWith({ tenant: 'teo', window: 'all', limit: 10 });
+    expect(topScoresMock).toHaveBeenCalledWith({ tenant: 'acme', window: 'all', limit: 10 });
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('public, s-maxage=60, stale-while-revalidate=120');
     expect(await res.json()).toEqual([{ name: 'Ann', score: 30 }]);
@@ -28,16 +28,16 @@ describe('GET /api/leaderboard/[tenant]', () => {
   it('passes window=month through for the last-30-days board', async () => {
     topScoresMock.mockResolvedValue([{ name: 'Bo', score: 9 }]);
 
-    await GET(new Request('http://x/api/leaderboard/teo?window=month'), { params: { tenant: 'teo' } });
+    await GET(new Request('http://x/api/leaderboard/acme?window=month'), { params: { tenant: 'acme' } });
 
-    expect(topScoresMock).toHaveBeenCalledWith({ tenant: 'teo', window: 'month', limit: 10 });
+    expect(topScoresMock).toHaveBeenCalledWith({ tenant: 'acme', window: 'month', limit: 10 });
   });
 
   it('serves a second identical request from cache without re-hitting the proxy', async () => {
     topScoresMock.mockResolvedValue([{ name: 'Ann', score: 30 }]);
 
-    await GET(new Request('http://x/api/leaderboard/teo'), { params: { tenant: 'teo' } });
-    await GET(new Request('http://x/api/leaderboard/teo'), { params: { tenant: 'teo' } });
+    await GET(new Request('http://x/api/leaderboard/acme'), { params: { tenant: 'acme' } });
+    await GET(new Request('http://x/api/leaderboard/acme'), { params: { tenant: 'acme' } });
 
     expect(topScoresMock).toHaveBeenCalledTimes(1);
   });
@@ -46,7 +46,7 @@ describe('GET /api/leaderboard/[tenant]', () => {
     const many = Array.from({ length: 25 }, (_, i) => ({ name: `P${i}`, score: 25 - i }));
     topScoresMock.mockResolvedValue(many);
 
-    const res = await GET(new Request('http://x/api/leaderboard/teo'), { params: { tenant: 'teo' } });
+    const res = await GET(new Request('http://x/api/leaderboard/acme'), { params: { tenant: 'acme' } });
 
     expect((await res.json()) as unknown[]).toHaveLength(10);
   });
