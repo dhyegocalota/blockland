@@ -3,7 +3,7 @@
 // admin/GameApi bridge bind, and the createCoop call itself (startCoop). createCoop is invoked only when
 // a server URL is configured AND the player did not choose single-player, so the offline path never
 // opens a socket. All bodies move verbatim from the engine closure.
-import * as THREE from 'three';
+import { Vec3 } from '../vec3';
 import { t } from '../../i18n';
 import { debug } from '../../log';
 import { AIR, EYE_HEIGHT } from '../constants';
@@ -169,7 +169,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       onRole: (role) => bridge.hud.onRole(role),
     };
     runtime.coop = createCoop({
-      three: THREE,
+      three: runtime.gfx,
       scene: runtime.scene,
       url: serverUrl,
       tenant: brand.id,
@@ -184,7 +184,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       applyRemoteEditBatch: runtime.applyRemoteEditBatch,
       applyRoomState: runtime.applyRoomState,
       applyHurt: runtime.applyHurt,
-      onCreaturePoof: ({ x, y, z, color }) => runtime.spawnPoof(new THREE.Vector3(x, y, z), color),
+      onCreaturePoof: ({ x, y, z, color }) => runtime.spawnPoof(new Vec3(x, y, z), color),
       onWorldReset: runtime.resetLocalWorld,
       onSpawn: (x, y, z) => { player.pos.set(x, y, z); player.vel.set(0, 0, 0); },
       onHealth: (hp) => {

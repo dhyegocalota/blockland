@@ -15,11 +15,12 @@ import {
 } from '../chunk-grid';
 import { type QueuedChunk, enqueueChunks, shouldMeshDequeued, sortQueueByDistance } from '../mesh-queue';
 import { meshChunkBuckets } from '../meshing';
+import type { Vec3 } from '../physics';
 import type { EngineContext } from '../context';
 
 export interface ChunkMesher {
   meshChunk(cxh: number, czh: number): void;
-  updateChunks(args: { playerPos: THREE.Vector3; force?: boolean }): void;
+  updateChunks(args: { playerPos: Vec3; force?: boolean }): void;
   processMeshQueue(budget: number): void;
   remeshRegion(minX: number, maxX: number, minZ: number, maxZ: number): void;
 }
@@ -67,7 +68,7 @@ export function createChunkMesher(ctx: EngineContext): ChunkMesher {
     debug('engine', 'first chunk streamed', { cx: cxh, cz: czh, meshes: meshes.length });
   }
 
-  function updateChunks({ playerPos, force }: { playerPos: THREE.Vector3; force?: boolean }): void {
+  function updateChunks({ playerPos, force }: { playerPos: Vec3; force?: boolean }): void {
     const center = playerChunk(playerPos);
     if (!force && center.cx === lastPlayerChunkX && center.cz === lastPlayerChunkZ) return;
     lastPlayerChunkX = center.cx; lastPlayerChunkZ = center.cz;

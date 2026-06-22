@@ -7,7 +7,10 @@
 // The builder constructs one instance, then each createX(runtime) factory fills its slice of the
 // function fields. Fields are late-bound by design: a module may read runtime.spawnPoof before the
 // module that assigns it has run, because every call happens at game time, never at wire time.
-import type * as THREE from 'three';
+import type {
+  GfxModule, GfxScene, GfxCamera, GfxRenderer, GfxGroup, GfxChunkMesh, GfxMaterial, GfxCreatureBody,
+} from './rendering/gfx';
+import type { Vec3 } from './vec3';
 import type { Brand } from '../tenants';
 import type { BlockDef } from './blocks';
 import type { VoxelWorld } from './world';
@@ -27,8 +30,10 @@ import type { EditCell, EditOp } from '../protocol';
 export interface Creature {
   typeKey: string;
   def: CreatureDef;
-  mesh: THREE.Group;
-  body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  // The authoritative position the offline AI reads/writes; rendering syncs cr.mesh from it each tick.
+  pos: Vec3;
+  mesh: GfxGroup;
+  body: GfxCreatureBody;
   hp: number;
   dir: number;
   timer: number;
@@ -51,16 +56,17 @@ export interface GameRuntime {
   coopEnabled: boolean;
   serverUrl: string | undefined;
 
-  // ---- Three.js handles ----
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
-  renderer: THREE.WebGLRenderer;
+  // ---- Three.js handles (owned/created by rendering) ----
+  gfx: GfxModule;
+  scene: GfxScene;
+  camera: GfxCamera;
+  renderer: GfxRenderer;
   canvas: HTMLCanvasElement;
 
   // ---- Voxel world ----
   world: VoxelWorld;
-  chunkMeshes: Map<string, THREE.Mesh[]>;
-  materials: Record<number, THREE.MeshLambertMaterial>;
+  chunkMeshes: Map<string, GfxChunkMesh[]>;
+  materials: Record<number, GfxMaterial>;
 
   // ---- Runtimes ----
   mesher: ChunkMesher;
@@ -72,7 +78,7 @@ export interface GameRuntime {
   inventory: BlockInventory;
   blockedStructures: Set<string>;
   creatures: Creature[];
-  creatureGroup: THREE.Group;
+  creatureGroup: GfxGroup;
   coop: CoopController | null;
 
   // ---- World helpers ----
@@ -82,7 +88,7 @@ export interface GameRuntime {
   isSolid(x: number, y: number, z: number): boolean;
   blockName(b: BlockDef): string;
   el(id: string): HTMLElement;
-  spawnPoint(): THREE.Vector3;
+  spawnPoint(): Vec3;
   savePos(): void;
   groundHeight(x: number, z: number): number;
   updateChunks(force?: boolean): void;
@@ -112,11 +118,14 @@ export interface GameRuntime {
   typingInField(): boolean;
 
   // ---- Creature view + poofs + damage cue (filled by rendering/creature-view) ----
-  spawnPoof(pos: THREE.Vector3, color: string): void;
+  // The camera's world-space forward, read off the live three.js camera by rendering so the crosshair
+  // raycasts stay pure (and bit-for-bit identical to camera.getWorldDirection).
+  cameraForward(): Vec3;
+  spawnPoof(pos: Vec3, color: string): void;
   updatePoofs(dt: number): void;
   buildCreatureBody(def: CreatureDef, x: number, y: number, z: number): {
-    mesh: THREE.Group;
-    body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+    mesh: GfxGroup;
+    body: GfxCreatureBody;
   };
   syncCreatureMesh(cr: Creature, transform: { x: number; y: number; z: number; rotationY: number; flashing: boolean }): void;
   knockbackCreatureMesh(cr: Creature, delta: { x: number; z: number }): void;

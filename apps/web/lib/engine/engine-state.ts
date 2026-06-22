@@ -2,12 +2,12 @@
 // (server-authoritative online, local toggles offline) and the loop bookkeeping. game-engine.ts holds
 // one instance and mutates its fields in place — pulling it out of the closure keeps the "what the
 // engine remembers this tick" in one typed shape, separate from the three.js/DOM glue that drives it.
-import * as THREE from 'three';
+import { Vec3 } from './vec3';
 import { MAX_HEARTS } from './constants';
 
 export interface Player {
-  pos: THREE.Vector3;
-  vel: THREE.Vector3;
+  pos: Vec3;
+  vel: Vec3;
   yaw: number;
   pitch: number;
   onGround: boolean;
@@ -49,11 +49,11 @@ export interface EngineState {
   rafId: number;
 }
 
-export function createEngineState({ spawn }: { spawn: THREE.Vector3 }): EngineState {
+export function createEngineState({ spawn }: { spawn: Vec3 }): EngineState {
   return {
     player: {
       pos: spawn.clone(),
-      vel: new THREE.Vector3(),
+      vel: new Vec3(),
       yaw: Math.PI, pitch: -0.2,
       onGround: false, fly: false,
       hearts: MAX_HEARTS, stars: 0, bag: 0, hurtCooldown: 0,

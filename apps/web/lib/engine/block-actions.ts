@@ -3,7 +3,7 @@
 // eligibility and player-overlap guards. Pure pieces it leans on (chooseCoopTarget/chooseLocalTarget,
 // place-eligibility, the DDA raycast, cellOverlapsActor) are already unit-tested; this is the glue that
 // drives them against the live world + coop.
-import * as THREE from 'three';
+import { Vec3 } from './vec3';
 import { t } from '../i18n';
 import { debug } from '../log';
 import {
@@ -21,15 +21,14 @@ export function createBlockActions(runtime: GameRuntime): void {
 
   // ---------- Voxel raycast (DDA) ----------
   runtime.raycastVoxel = function raycastVoxel(maxDist = REACH): VoxelHit | null {
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
+    const dir = runtime.cameraForward();
     return ddaRaycast({ world: runtime.world, origin: camera.position, dir, maxDist });
   };
 
   // ---------- Build / break ----------
   runtime.primaryAction = function primaryAction(): void {
     const block = runtime.raycastVoxel();
-    const blockDistance = block ? new THREE.Vector3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
+    const blockDistance = block ? new Vec3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
     if (runtime.coop) {
       const playerHit = runtime.raycastRemotePlayer();
       const serverHit = runtime.raycastServerCreature();
@@ -53,7 +52,7 @@ export function createBlockActions(runtime: GameRuntime): void {
     // Same hit feedback a creature attack gives: a poof at the struck cell on every tap, tinted the
     // block's own colour (dirt puffs brown, stone grey...), so digging reads as a hit too.
     const struck = blockById(runtime.getVoxel(r.hit[0], r.hit[1], r.hit[2]));
-    if (struck) runtime.spawnPoof(new THREE.Vector3(r.hit[0] + 0.5, r.hit[1] + 0.5, r.hit[2] + 0.5), struck.color);
+    if (struck) runtime.spawnPoof(new Vec3(r.hit[0] + 0.5, r.hit[1] + 0.5, r.hit[2] + 0.5), struck.color);
     // Co-op: the server counts the taps and decides the break (authoritative dig). We just send the tap
     // and chip — the block is removed + collected when the server's break edit comes back to us.
     if (runtime.coop) {

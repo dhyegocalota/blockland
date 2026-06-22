@@ -4,7 +4,7 @@
 // creatureBitesPlayer, knockbackVector, sphere-cast, creature-spawn); the three.js body lives in
 // rendering/creature-view.ts and is reached only through runtime.buildCreatureBody / syncCreatureMesh /
 // knockbackCreatureMesh / disposeCreatureMesh, so this module never touches three.js.
-import { Vector3 } from 'three';
+import { Vec3 } from '../vec3';
 import { t } from '../../i18n';
 import { debug } from '../../log';
 import {
@@ -23,9 +23,10 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
     const def = CREATURE_DEFS[typeKey];
     if (!def) throw new Error(`unknown creature ${typeKey}`);
     const { x, z } = spawnPosition({ sizeX: SIZE_X, sizeZ: SIZE_Z, random: Math.random });
-    const { mesh, body } = runtime.buildCreatureBody(def, x, runtime.groundHeight(x, z) + def.size[1] / 2, z);
+    const y = runtime.groundHeight(x, z) + def.size[1] / 2;
+    const { mesh, body } = runtime.buildCreatureBody(def, x, y, z);
     runtime.creatures.push({
-      typeKey, def, mesh, body,
+      typeKey, def, pos: new Vec3(x, y, z), mesh, body,
       hp: def.hp,
       dir: Math.random() * Math.PI * 2,
       timer: 0, bob: Math.random() * Math.PI * 2, flash: 0,
@@ -43,8 +44,8 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
       cr.timer -= dt;
       cr.bob += dt * 6;
       cr.flash = Math.max(0, cr.flash - dt);
-      const toPlayerX = player.pos.x - cr.mesh.position.x;
-      const toPlayerZ = player.pos.z - cr.mesh.position.z;
+      const toPlayerX = player.pos.x - cr.pos.x;
+      const toPlayerZ = player.pos.z - cr.pos.z;
       const dist = Math.hypot(toPlayerX, toPlayerZ);
       const isMonster = cr.def.kind === 'monster';
       const hostile = isMonster && !runtime.state.peaceful;
@@ -56,12 +57,13 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
       cr.dir = motion.dir; cr.timer = motion.timer;
 
       const stepped = stepCreaturePosition({
-        x: cr.mesh.position.x, z: cr.mesh.position.z, dir: cr.dir, speed: cr.def.speed, dt, sizeX: SIZE_X, sizeZ: SIZE_Z,
+        x: cr.pos.x, z: cr.pos.z, dir: cr.dir, speed: cr.def.speed, dt, sizeX: SIZE_X, sizeZ: SIZE_Z,
       });
       const y = runtime.groundHeight(stepped.x, stepped.z) + cr.def.size[1] / 2 + bobOffset(cr.bob);
+      cr.pos.set(stepped.x, y, stepped.z);
       runtime.syncCreatureMesh(cr, { x: stepped.x, y, z: stepped.z, rotationY: cr.dir, flashing: cr.flash > 0 });
 
-      const verticalGap = Math.abs(player.pos.y - EYE_HEIGHT - cr.mesh.position.y);
+      const verticalGap = Math.abs(player.pos.y - EYE_HEIGHT - cr.pos.y);
       if (hostile && player.hurtCooldown === 0 && creatureBitesPlayer({ horizontalDistance: dist, verticalGap })) runtime.hurtPlayer();
     }
   };
@@ -85,9 +87,8 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
   };
 
   runtime.raycastCreature = function raycastCreature(): { creature: Creature; t: number } | null {
-    const dir = new Vector3();
-    camera.getWorldDirection(dir);
-    const targets = runtime.creatures.map((cr) => ({ x: cr.mesh.position.x, y: cr.mesh.position.y, z: cr.mesh.position.z, radius: Math.max(...cr.def.size) * 0.7 }));
+    const dir = runtime.cameraForward();
+    const targets = runtime.creatures.map((cr) => ({ x: cr.pos.x, y: cr.pos.y, z: cr.pos.z, radius: Math.max(...cr.def.size) * 0.7 }));
     const pick = sphereCastClosest({ origin: camera.position, dir, targets, maxDist: REACH });
     return pick ? { creature: runtime.creatures[pick.index], t: pick.t } : null;
   };
@@ -97,16 +98,16 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
     cr.hp -= 1;
     cr.flash = FLASH_TIME;
     runtime.blip(cr.def.kind === 'monster' ? 300 : 880, 0.08);
-    const knock = knockbackVector({ creatureX: cr.mesh.position.x, creatureZ: cr.mesh.position.z, playerX: player.pos.x, playerZ: player.pos.z });
+    const knock = knockbackVector({ creatureX: cr.pos.x, creatureZ: cr.pos.z, playerX: player.pos.x, playerZ: player.pos.z });
     runtime.knockbackCreatureMesh(cr, knock);
-    debug('engine', 'hit creature', { kind: cr.typeKey, hp: cr.hp, x: Math.round(cr.mesh.position.x), z: Math.round(cr.mesh.position.z) });
+    debug('engine', 'hit creature', { kind: cr.typeKey, hp: cr.hp, x: Math.round(cr.pos.x), z: Math.round(cr.pos.z) });
     if (cr.hp > 0) return;
     runtime.defeatCreature(cr);
   };
 
   runtime.defeatCreature = function defeatCreature(cr: Creature): void {
     const { player } = runtime.state;
-    runtime.spawnPoof(cr.mesh.position, cr.def.color);
+    runtime.spawnPoof(cr.pos, cr.def.color);
     player.stars += cr.def.reward;
     player.bag += 1;
     runtime.toast(t('toast.reward', { emoji: cr.def.emoji, reward: cr.def.reward }));

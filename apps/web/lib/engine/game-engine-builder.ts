@@ -4,7 +4,8 @@
 // runtimes — assembles them onto one GameRuntime, picks the offline-vs-online plan (see
 // builder-plan.ts) and returns the running engine's cleanup. game-engine.ts's initGame is a thin call
 // into `GameEngine.builder()`. Modules never import game-engine.ts; the builder is the only wirer.
-import * as THREE from 'three';
+import { gfx, type GfxMaterial, type GfxChunkMesh } from './rendering/gfx';
+import { Vec3 } from './vec3';
 import { PLATFORM_NAME, type Brand } from '../tenants';
 import { t } from '../i18n';
 import { debug } from '../log';
@@ -95,11 +96,11 @@ export class GameEngineBuilder {
 
     // ---------- Voxel storage (sparse: only visited chunks use memory -> endless world) ----------
     const world = new VoxelWorld();
-    const materials: Record<number, THREE.MeshLambertMaterial> = {};
+    const materials: Record<number, GfxMaterial> = {};
 
     // ---------- Scene + meshing (streamed chunk meshes around the player) ----------
     const { scene, camera, renderer, canvas, worldGroup, highlight } = createScene({ isTouch });
-    const chunkMeshes = new Map<string, THREE.Mesh[]>();
+    const chunkMeshes = new Map<string, GfxChunkMesh[]>();
     const ctx: EngineContext = { isTouch, scene, worldGroup, world, materials, chunkMeshes, chunksX, chunksZ };
     const mesher = createChunkMesher(ctx);
     const poofRuntime = createPoofRuntime({ scene });
@@ -110,19 +111,19 @@ export class GameEngineBuilder {
     const savedPos = parseSavedPosition(localStorage.getItem(posKey));
     // The engine's mutable runtime state (player, keys, joystick, room flags, loop bookkeeping). Room
     // flags default to the offline sandbox (peaceful, infinite resources, no gates).
-    const spawnPoint = (): THREE.Vector3 => {
+    const spawnPoint = (): Vec3 => {
       const sx = SIZE_X >> 1, sz = (SIZE_Z >> 1) + SPAWN_OFFSET_Z;
       const feet = clearFeetAbove({ feet: heightAt(sx, sz) + 1, isSolid: (y) => world.isSolid(sx, y, sz) });
-      return new THREE.Vector3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + SPAWN_OFFSET_Z);
+      return new Vec3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + SPAWN_OFFSET_Z);
     };
-    const state = createEngineState({ spawn: savedPos ? new THREE.Vector3(savedPos.x, savedPos.y, savedPos.z) : spawnPoint() });
+    const state = createEngineState({ spawn: savedPos ? new Vec3(savedPos.x, savedPos.y, savedPos.z) : spawnPoint() });
     const creatureGroup = createCreatureGroup(scene);
 
     const runtime = {
       brand, bridge, faceUrl, faceBlockName,
       bestKey: `bl-best-${brand.id}`, posKey, appVersion: APP_VERSION,
       isTouch, signal, bootStart, coopEnabled: plan.coopEnabled, serverUrl,
-      scene, camera, renderer, canvas,
+      gfx, scene, camera, renderer, canvas,
       world, chunkMeshes, materials,
       mesher, poofRuntime, view,
       state, inventory: new BlockInventory(),
@@ -212,7 +213,7 @@ export class GameEngineBuilder {
         creatures: () =>
           runtime.coop
             ? runtime.coop.getCreatures()
-            : runtime.creatures.map((c) => ({ id: -1, kind: c.typeKey, x: c.mesh.position.x, y: c.mesh.position.y, z: c.mesh.position.z })),
+            : runtime.creatures.map((c) => ({ id: -1, kind: c.typeKey, x: c.pos.x, y: c.pos.y, z: c.pos.z })),
         players: () => (runtime.coop ? runtime.coop.getPlayers() : []),
         pos: () => ({ x: player.pos.x, y: player.pos.y, z: player.pos.z }),
         stars: () => player.stars,
@@ -224,12 +225,12 @@ export class GameEngineBuilder {
         attackAt: (x: number, y: number, z: number) => {
           player.yaw = aimYaw({ targetX: x, targetZ: z, fromX: player.pos.x, fromZ: player.pos.z });
           player.pitch = aimPitch({ targetX: x, targetY: y, targetZ: z, fromX: player.pos.x, fromY: player.pos.y, fromZ: player.pos.z });
-          camera.position.copy(player.pos);
+          camera.position.set(player.pos.x, player.pos.y, player.pos.z);
           camera.lookAt(x, y, z);
           runtime.primaryAction();
         },
         rayHitAt: (x: number, y: number, z: number) => {
-          camera.position.copy(player.pos);
+          camera.position.set(player.pos.x, player.pos.y, player.pos.z);
           camera.lookAt(x, y, z);
           const r = runtime.raycastServerCreature();
           return r ? { id: r.creature.id, t: r.t } : null;

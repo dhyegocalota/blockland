@@ -3,6 +3,7 @@
 // returns spawn/update plus a clear() the world-reset uses to wipe particles in place.
 import * as THREE from 'three';
 import { POOF_COUNT, POOF_LIFE, spawnPoofVelocity, stepPoof } from '../poofs';
+import type { Vec3 } from '../vec3';
 
 interface Poof {
   mesh: THREE.Mesh;
@@ -11,7 +12,7 @@ interface Poof {
 }
 
 export interface PoofRuntime {
-  spawn(pos: THREE.Vector3, color: string): void;
+  spawn(pos: Vec3, color: string): void;
   update(dt: number): void;
   clear(): void;
 }
@@ -19,10 +20,10 @@ export interface PoofRuntime {
 export function createPoofRuntime({ scene }: { scene: THREE.Scene }): PoofRuntime {
   const poofs: Poof[] = [];
 
-  function spawn(pos: THREE.Vector3, color: string): void {
+  function spawn(pos: Vec3, color: string): void {
     for (let i = 0; i < POOF_COUNT; i++) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), new THREE.MeshBasicMaterial({ color }));
-      m.position.copy(pos);
+      m.position.set(pos.x, pos.y, pos.z);
       scene.add(m);
       const v = spawnPoofVelocity(Math.random);
       poofs.push({ mesh: m, vel: new THREE.Vector3(v.x, v.y, v.z), life: POOF_LIFE });

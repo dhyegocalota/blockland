@@ -7,16 +7,26 @@ import {
   DAMAGE_BLIP_DURATION, DAMAGE_BLIP_FREQ, HURT_FLASH_MS,
 } from '../constants';
 import { makeFaceMaterial } from './materials';
+import { Vec3 } from '../vec3';
 import type { CreatureDef } from '../offline/creatures';
+import type { GfxCreatureBody, GfxGroup } from './gfx';
 import type { Creature, GameRuntime } from '../runtime';
 
 export function createCreatureView(runtime: GameRuntime): void {
-  runtime.spawnPoof = (pos: THREE.Vector3, color: string): void => runtime.poofRuntime.spawn(pos, color);
+  const { camera } = runtime;
+
+  // The live camera's world forward, handed to the (pure) crosshair raycasts as a Vec3.
+  runtime.cameraForward = (): Vec3 => {
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    return new Vec3(dir.x, dir.y, dir.z);
+  };
+  runtime.spawnPoof = (pos: Vec3, color: string): void => runtime.poofRuntime.spawn(pos, color);
   runtime.updatePoofs = (dt: number): void => runtime.poofRuntime.update(dt);
 
   runtime.buildCreatureBody = function buildCreatureBody(def: CreatureDef, x: number, y: number, z: number): {
-    mesh: THREE.Group;
-    body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+    mesh: GfxGroup;
+    body: GfxCreatureBody;
   } {
     const body = new THREE.Mesh(new THREE.BoxGeometry(...def.size), makeFaceMaterial(def.color));
     const mesh = new THREE.Group();
@@ -37,8 +47,10 @@ export function createCreatureView(runtime: GameRuntime): void {
   };
 
   runtime.knockbackCreatureMesh = function knockbackCreatureMesh(cr: Creature, delta: { x: number; z: number }): void {
-    cr.mesh.position.x += delta.x;
-    cr.mesh.position.z += delta.z;
+    cr.pos.x += delta.x;
+    cr.pos.z += delta.z;
+    cr.mesh.position.x = cr.pos.x;
+    cr.mesh.position.z = cr.pos.z;
   };
 
   runtime.disposeCreatureMesh = function disposeCreatureMesh(cr: Creature): void {
