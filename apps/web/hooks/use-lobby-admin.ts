@@ -79,6 +79,10 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
             chatEnabled: msg.chat_enabled,
             suspended: msg.suspended,
             approvalRequired: msg.approval_required,
+            playtimeLimitMin: msg.playtime_limit_min,
+            playtimeWindowH: msg.playtime_window_h,
+            onlineAllowed: msg.online_allowed,
+            offlineAllowed: msg.offline_allowed,
           });
         },
         onRole: (msg) => { setIsAdmin(msg.admin); setIsModerator(msg.moderator); },

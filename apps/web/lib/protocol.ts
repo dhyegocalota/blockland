@@ -84,6 +84,18 @@ export const adminReject = (accountId: string): ClientMsg => ({ t: 'admin_reject
 
 export const adminUnban = (ip: string): ClientMsg => ({ t: 'admin_unban', ip });
 
+export const adminSetLimits = (playtimeLimitMin: number, playtimeWindowH: number): ClientMsg => ({
+  t: 'admin_set_limits',
+  playtime_limit_min: playtimeLimitMin,
+  playtime_window_h: playtimeWindowH,
+});
+
+export const adminSetModes = (onlineAllowed: boolean, offlineAllowed: boolean): ClientMsg => ({
+  t: 'admin_set_modes',
+  online_allowed: onlineAllowed,
+  offline_allowed: offlineAllowed,
+});
+
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 
 export const parseServerMsg = (data: string): ServerMsg => JSON.parse(data) as ServerMsg;

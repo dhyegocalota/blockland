@@ -18,7 +18,7 @@ function makeLobby(overrides: Partial<ReturnType<typeof useLobbyAdmin>>): Return
   return {
     state: 'online',
     roster: [],
-    room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false },
+    room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
     isAdmin: false,
     isModerator: false,
     resetArmed: false,
@@ -41,6 +41,9 @@ function makeLobby(overrides: Partial<ReturnType<typeof useLobbyAdmin>>): Return
     rejectPlayer: noop,
     bans: [],
     unban: noop,
+    setLimits: noop,
+    toggleOnlineAllowed: noop,
+    toggleOfflineAllowed: noop,
     ...overrides,
   } as ReturnType<typeof useLobbyAdmin>;
 }

@@ -33,6 +33,8 @@ function recordingNet() {
     sendAdminReject: record('sendAdminReject'),
     sendAdminUnban: record('sendAdminUnban'),
     sendAdminSetRole: record('sendAdminSetRole'),
+    sendAdminSetLimits: record('sendAdminSetLimits'),
+    sendAdminSetModes: record('sendAdminSetModes'),
     ping: 0,
     state: 'online' as const,
   } satisfies NetClient;
@@ -59,6 +61,8 @@ describe('lobbyAdminApi', () => {
     api.approvePlayer('acc1');
     api.rejectPlayer('acc2');
     api.unban('1.2.3.4');
+    api.setLimits(5, 24);
+    api.setModes(false, true);
 
     expect(calls).toEqual([
       ['sendAdminSetPeace', false],
@@ -76,6 +80,8 @@ describe('lobbyAdminApi', () => {
       ['sendAdminApprove', 'acc1'],
       ['sendAdminReject', 'acc2'],
       ['sendAdminUnban', '1.2.3.4'],
+      ['sendAdminSetLimits', 5, 24],
+      ['sendAdminSetModes', false, true],
     ]);
   });
 });

@@ -23,6 +23,8 @@ export interface RoomAdminApi {
   approvePlayer(accountId: string): void;
   rejectPlayer(accountId: string): void;
   unban(ip: string): void;
+  setLimits(playtimeLimitMin: number, playtimeWindowH: number): void;
+  setModes(onlineAllowed: boolean, offlineAllowed: boolean): void;
 }
 
 // The bridge connects the React HUD to the engine: the HUD supplies the player name (resolved at

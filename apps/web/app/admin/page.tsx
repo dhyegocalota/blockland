@@ -3,13 +3,26 @@
 import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEvent } from 'react';
 import { t } from '../../lib/i18n';
 import { tenantSubdomain } from '../../lib/tenants';
-import type { Tenant } from '../../lib/builtins';
+import type { Tenant, TenantTextField } from '../../lib/builtins';
 import { DEFAULT_BRAND_COLOR } from '../../lib/engine/tenant-brand';
 import type { ScoreEntry } from '../../lib/api';
 
-const EMPTY: Tenant = { id: '', name: '', image: '' };
+// The /admin editor only manages id/name/image; the limit fields (play-time + modes) are admin-set
+// at runtime from the in-game / lobby panels, so they sit here as inert defaults only to satisfy the
+// type. The save route writes id/name/image and the server keeps the existing limit columns intact.
+const EMPTY: Tenant = {
+  id: '',
+  name: '',
+  image: '',
+  playtime_limit_min: 0,
+  playtime_window_h: 0,
+  online_allowed: true,
+  offline_allowed: true,
+};
 
-const FIELDS: [keyof Tenant, string][] = [
+// Only the text fields are edited in this form (the limit fields are runtime admin toggles); typing
+// over them keeps the <input value> + change handlers off the number/bool tenant fields.
+const FIELDS: [TenantTextField, string][] = [
   ['id', 'admin.field_id'],
   ['name', 'admin.field_name'],
   ['image', 'admin.field_image'],
@@ -24,7 +37,7 @@ interface RoomSnapshot { tenant: string; players: OnlinePlayer[] }
 interface AdminStats { room_list: RoomSnapshot[] }
 interface Account { name: string; email: string; is_admin: boolean; is_moderator: boolean }
 
-const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'image'>> = {
+const UPLOAD_FIELD: Partial<Record<TenantTextField, 'image'>> = {
   image: 'image',
 };
 
@@ -192,10 +205,10 @@ export default function Admin() {
     backToList();
   }
 
-  const set = (field: keyof Tenant) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const set = (field: TenantTextField) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm({ ...form, [field]: e.target.value });
 
-  async function upload(field: keyof Tenant, kind: 'image', file: File) {
+  async function upload(field: TenantTextField, kind: 'image', file: File) {
     if (!TENANT_ID.test(form.id)) { setMsg(t('admin.upload_needs_id')); return; }
     const data = new FormData();
     data.set('tenantId', form.id);
@@ -209,7 +222,7 @@ export default function Admin() {
     setMsg(t('admin.uploaded'));
   }
 
-  const pickFile = (field: keyof Tenant, kind: 'image') => (e: ChangeEvent<HTMLInputElement>) => {
+  const pickFile = (field: TenantTextField, kind: 'image') => (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) upload(field, kind, file);
     e.target.value = '';

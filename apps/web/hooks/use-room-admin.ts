@@ -7,7 +7,7 @@ import type { Role } from '../lib/protocol';
 // window or it disarms itself — a misclick can never wipe the world.
 const RESET_ARM_MS = 4000;
 
-const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false };
+const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true };
 
 // Owns the room settings + admin authority the engine reports (setRoom/setIsAdmin feed the bridge),
 // the admin panel open state, and the admin command dispatch incl. the two-step world reset.
@@ -46,6 +46,20 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const approvePlayer = useCallback((accountId: string) => gameApi.current?.approvePlayer(accountId), [gameApi]);
   const rejectPlayer = useCallback((accountId: string) => gameApi.current?.rejectPlayer(accountId), [gameApi]);
   const unban = useCallback((ip: string) => gameApi.current?.unban(ip), [gameApi]);
+  const setLimits = useCallback(
+    (playtimeLimitMin: number, playtimeWindowH: number) => gameApi.current?.setLimits(playtimeLimitMin, playtimeWindowH),
+    [gameApi],
+  );
+  // Mode toggles never disable the last enabled mode (the server rejects it too, but gate here so the
+  // UI can't even send it): flipping one off is ignored when the other is already off.
+  const toggleOnlineAllowed = useCallback(() => {
+    if (room.onlineAllowed && !room.offlineAllowed) return;
+    gameApi.current?.setModes(!room.onlineAllowed, room.offlineAllowed);
+  }, [gameApi, room.onlineAllowed, room.offlineAllowed]);
+  const toggleOfflineAllowed = useCallback(() => {
+    if (room.offlineAllowed && !room.onlineAllowed) return;
+    gameApi.current?.setModes(room.onlineAllowed, !room.offlineAllowed);
+  }, [gameApi, room.onlineAllowed, room.offlineAllowed]);
 
   const resetWorld = useCallback(() => {
     if (!resetArmed) {
@@ -101,6 +115,9 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     bans,
     setBans,
     unban,
+    setLimits,
+    toggleOnlineAllowed,
+    toggleOfflineAllowed,
     reports,
     setReports,
   };

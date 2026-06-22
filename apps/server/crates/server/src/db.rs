@@ -14,13 +14,29 @@ const ACCOUNT_ID_HEX_CHARS: usize = 24;
 const DEFAULT_EVENT_BACKLOG: u32 = 20;
 const MAX_EVENT_BACKLOG: u32 = 100;
 
-/// White-label branding for one tenant: a subdomain id, a display name, and one image URL that
-/// serves both the lobby avatar and the in-game face-block texture. Mirrors the web `Tenant`.
+/// White-label branding + per-tenant limits for one tenant: a subdomain id, a display name, one
+/// image URL (lobby avatar + in-game face-block texture), the play-time budget (minutes within a
+/// rolling window of hours; 0 = unlimited) and which game modes are allowed. The lobby fetches this
+/// over HTTP before joining so it can gate the mode buttons. Mirrors the web `Tenant`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tenant {
     pub id: String,
     pub name: String,
     pub image: String,
+    // The limit fields default on deserialize so the /admin upsert (which posts only id/name/image)
+    // still parses; `insert_tenant` never writes them, so the db column defaults stay authoritative.
+    #[serde(default)]
+    pub playtime_limit_min: u32,
+    #[serde(default)]
+    pub playtime_window_h: u32,
+    #[serde(default = "mode_default")]
+    pub online_allowed: bool,
+    #[serde(default = "mode_default")]
+    pub offline_allowed: bool,
+}
+
+fn mode_default() -> bool {
+    true
 }
 
 /// One leaderboard row in the public top-scores view.
@@ -217,6 +233,10 @@ impl Db {
             // Per-tenant moderation flags an admin toggles at runtime (both off by default).
             "ALTER TABLE tenants ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE tenants ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0",
+            // Which game modes a tenant allows (both on by default); an admin can block either, but
+            // never the last one (enforced where the toggle is applied).
+            "ALTER TABLE tenants ADD COLUMN online_allowed INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE tenants ADD COLUMN offline_allowed INTEGER NOT NULL DEFAULT 1",
             // The slim branding model: one image replaces the old avatar/face_texture split. On a
             // legacy-wide db this adds the column and the backfill below seeds it from `avatar`.
             "ALTER TABLE tenants ADD COLUMN image TEXT NOT NULL DEFAULT ''",
@@ -449,6 +469,53 @@ impl Db {
         Ok(())
     }
 
+    /// Persist a tenant's play-time budget (minutes within a rolling window of hours; 0 = unlimited).
+    pub async fn set_tenant_playtime(
+        &self,
+        tenant: &str,
+        limit_min: u32,
+        window_h: u32,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE tenants SET playtime_limit_min = ?2, playtime_window_h = ?3 WHERE id = ?1",
+                params![tenant, limit_min as i64, window_h as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// A tenant's allowed game modes: (online_allowed, offline_allowed). Both on for a fresh tenant.
+    pub async fn tenant_modes(&self, tenant: &str) -> Result<(bool, bool), libsql::Error> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT online_allowed, offline_allowed FROM tenants WHERE id = ?1",
+                params![tenant],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok((row.get::<i64>(0)? != 0, row.get::<i64>(1)? != 0)),
+            None => Ok((true, true)),
+        }
+    }
+
+    /// Persist a tenant's allowed game modes. The caller must guarantee at least one stays on.
+    pub async fn set_tenant_modes(
+        &self,
+        tenant: &str,
+        online_allowed: bool,
+        offline_allowed: bool,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE tenants SET online_allowed = ?2, offline_allowed = ?3 WHERE id = ?1",
+                params![tenant, online_allowed as i64, offline_allowed as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
     /// A tenant's persisted world blob (the compressed edit diff), if it has one.
     pub async fn load_world(&self, tenant: &str) -> Result<Option<Vec<u8>>, libsql::Error> {
         let mut rows = self
@@ -663,7 +730,8 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, name, image FROM tenants WHERE id = ?1",
+                "SELECT id, name, image, playtime_limit_min, playtime_window_h, online_allowed, \
+                 offline_allowed FROM tenants WHERE id = ?1",
                 params![id],
             )
             .await?;
@@ -677,7 +745,8 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, name, image FROM tenants ORDER BY created_at ASC",
+                "SELECT id, name, image, playtime_limit_min, playtime_window_h, online_allowed, \
+                 offline_allowed FROM tenants ORDER BY created_at ASC",
                 (),
             )
             .await?;
@@ -1454,6 +1523,10 @@ fn row_to_tenant(row: &libsql::Row) -> Result<Tenant, libsql::Error> {
         id: row.get::<String>(0)?,
         name: row.get::<String>(1)?,
         image: row.get::<String>(2)?,
+        playtime_limit_min: row.get::<i64>(3)? as u32,
+        playtime_window_h: row.get::<i64>(4)? as u32,
+        online_allowed: row.get::<i64>(5)? != 0,
+        offline_allowed: row.get::<i64>(6)? != 0,
     })
 }
 
@@ -1465,11 +1538,19 @@ fn builtin_tenants() -> Vec<Tenant> {
             id: "acme".into(),
             name: "Acme".into(),
             image: "/default-avatar.png".into(),
+            playtime_limit_min: 0,
+            playtime_window_h: 0,
+            online_allowed: true,
+            offline_allowed: true,
         },
         Tenant {
             id: "demo".into(),
             name: "Blockland".into(),
             image: "/default-avatar.png".into(),
+            playtime_limit_min: 0,
+            playtime_window_h: 0,
+            online_allowed: true,
+            offline_allowed: true,
         },
     ]
 }
@@ -1604,6 +1685,10 @@ mod tests {
             id: "acme".into(),
             name: "Acme".into(),
             image: "/tenants/acme/avatar.png".into(),
+            playtime_limit_min: 0,
+            playtime_window_h: 0,
+            online_allowed: true,
+            offline_allowed: true,
         };
 
         let saved = db.upsert_tenant(&draft).await.unwrap().unwrap();
@@ -1618,8 +1703,8 @@ mod tests {
     }
 
     /// A db created with the old wide tenants schema (avatar + the 8 branding columns) migrates to the
-    /// slim model on open: the `image` column is added and backfilled from `avatar`, and the slim
-    /// `Tenant` reads back through the explicit `id, name, image` SELECT without touching dead columns.
+    /// slim model on open: the `image` column is added and backfilled from `avatar`, the limit columns
+    /// are added with their defaults, and the `Tenant` reads back without touching the dead columns.
     #[tokio::test]
     async fn legacy_wide_tenant_migrates_to_slim_image() {
         let database = Builder::new_local(":memory:").build().await.unwrap();

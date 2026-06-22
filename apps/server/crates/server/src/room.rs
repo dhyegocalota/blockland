@@ -155,8 +155,10 @@ struct Player {
     // When this player's last primary action (dig / creature hit / pvp attack) was accepted, used to
     // throttle a too-fast client to the hold cadence (ATTACK_MIN_INTERVAL).
     last_action: Instant,
-    // Play-time accounting: the account's used time before this session, and how much of this session
-    // has already been persisted (so the periodic flush only writes the new delta).
+    // Play-time accounting key: the account id for a logged-in player, else `ip:<addr>` so an
+    // anonymous guest's budget tracks by address. Together with the baseline (used time before this
+    // session) and the persisted delta (so the periodic flush only writes the new time).
+    playtime_key: String,
     playtime_baseline_ms: i64,
     playtime_persisted_ms: i64,
     // Server-authoritative block resources: a count per block id, banked on a break and spent on a
@@ -193,14 +195,20 @@ pub struct Room {
     // Server-authoritative creature population and the monotonic id counter that names each one.
     creatures: Vec<Creature>,
     next_creature_id: u32,
-    // Per-tenant play-time budget, cached from the db on the first join (0 = unlimited). A logged-in
-    // account that exceeds `playtime_limit_ms` within `playtime_window_ms` is sent to the lobby.
+    // Per-tenant play-time budget, cached from the db (refreshed on join, written through on the admin
+    // toggle; 0 = unlimited). A player (logged-in or anonymous) that exceeds `playtime_limit_ms` within
+    // `playtime_window_ms` is sent to the lobby. The raw minutes/hours are kept to echo on RoomState.
     playtime_limit_ms: i64,
     playtime_window_ms: i64,
-    // Per-tenant moderation flags, cached from the `tenants` row (refreshed on join, written through on
-    // toggle). This room is the only writer for its tenant, so the cache is authoritative at runtime.
+    playtime_limit_min: u32,
+    playtime_window_h: u32,
+    // Per-tenant moderation flags + allowed game modes, cached from the `tenants` row (refreshed on
+    // join, written through on toggle). This room is the only writer for its tenant, so the cache is
+    // authoritative at runtime.
     suspended: bool,
     approval_required: bool,
+    online_allowed: bool,
+    offline_allowed: bool,
 }
 
 /// The server build identifier shown in the in-game debug panel: the deploy's `GIT_SHA` when set,
@@ -259,8 +267,12 @@ impl Room {
             next_creature_id: 1,
             playtime_limit_ms: 0,
             playtime_window_ms: 0,
+            playtime_limit_min: 0,
+            playtime_window_h: 0,
             suspended: false,
             approval_required: false,
+            online_allowed: true,
+            offline_allowed: true,
             hub,
         }
     }
@@ -430,8 +442,8 @@ impl Room {
         conn: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
-        // Refresh the per-tenant moderation flags from the db (this room is the single writer, so the
-        // cache stays authoritative between joins).
+        // Refresh the per-tenant moderation flags + allowed modes from the db (this room is the single
+        // writer, so the cache stays authoritative between joins).
         let (suspended, approval_required) = self
             .hub
             .db
@@ -440,6 +452,24 @@ impl Room {
             .unwrap_or((false, false));
         self.suspended = suspended;
         self.approval_required = approval_required;
+        let (online_allowed, offline_allowed) = self
+            .hub
+            .db
+            .tenant_modes(&self.key.0)
+            .await
+            .unwrap_or((true, true));
+        self.online_allowed = online_allowed;
+        self.offline_allowed = offline_allowed;
+        // Online play disabled for this tenant: reject the join (offline reaches the client only, gated
+        // there). Admins still get in so they can re-enable it from the in-game panel.
+        if !self.online_allowed && !role.is_admin() {
+            let _ = conn.try_send(ServerMsg::Error {
+                code: "online_blocked".into(),
+                msg: "Online play is turned off for this world.".into(),
+            });
+            let _ = reply.send(Err("online_blocked".into()));
+            return;
+        }
         // A suspended world turns everyone away except admins, who still need to get in to resume it.
         if self.suspended && !role.is_admin() {
             let _ = conn.try_send(ServerMsg::Error {
@@ -492,24 +522,28 @@ impl Room {
                 return;
             }
         }
-        // Play-time budget (per-tenant, logged-in accounts only): cache the tenant's config and turn an
-        // over-budget player away with "time_up".
+        // Play-time budget (per-tenant): cache the tenant's config and turn an over-budget player away
+        // with "time_up". A logged-in player is keyed by account; an anonymous guest by their IP, so
+        // their budget still accrues (in the same `playtime` table) across guest sessions.
         let (limit_min, window_h) = self
             .hub
             .db
             .tenant_playtime(&self.key.0)
             .await
             .unwrap_or((0, 0));
+        self.playtime_limit_min = limit_min as u32;
+        self.playtime_window_h = window_h as u32;
         self.playtime_limit_ms = limit_min * 60_000;
         self.playtime_window_ms = window_h * 3_600_000;
+        let playtime_key = playtime_key(&account_id, ip);
         let mut playtime_baseline = 0;
-        if self.playtime_limit_ms > 0 && !account_id.is_empty() {
+        if self.playtime_limit_ms > 0 {
             playtime_baseline = self
                 .hub
                 .db
                 .playtime_used(
                     &self.key.0,
-                    &account_id,
+                    &playtime_key,
                     self.playtime_window_ms,
                     epoch_ms() as i64,
                 )
@@ -562,6 +596,7 @@ impl Room {
             dig_block: None,
             dig_hits: 0,
             last_action: now - ATTACK_MIN_INTERVAL,
+            playtime_key,
             playtime_baseline_ms: playtime_baseline,
             playtime_persisted_ms: 0,
             inventory: HashMap::new(),
@@ -726,6 +761,24 @@ impl Room {
         }
         if let ClientMsg::AdminUnban { ip } = msg {
             self.on_admin_unban(id, ip);
+            return;
+        }
+
+        // Play-time + mode limits write the tenant row and re-cache, so they own the handler.
+        if let ClientMsg::AdminSetLimits {
+            playtime_limit_min,
+            playtime_window_h,
+        } = msg
+        {
+            self.on_admin_set_limits(id, playtime_limit_min, playtime_window_h);
+            return;
+        }
+        if let ClientMsg::AdminSetModes {
+            online_allowed,
+            offline_allowed,
+        } = msg
+        {
+            self.on_admin_set_modes(id, online_allowed, offline_allowed);
             return;
         }
 
@@ -940,6 +993,8 @@ impl Room {
             | ClientMsg::AdminApprove { .. }
             | ClientMsg::AdminReject { .. }
             | ClientMsg::AdminUnban { .. }
+            | ClientMsg::AdminSetLimits { .. }
+            | ClientMsg::AdminSetModes { .. }
             | ClientMsg::AdminReport { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
@@ -1401,6 +1456,98 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %id, on, "approval gate set by admin");
     }
 
+    /// Set the per-tenant play-time budget. Admin-only; re-caches the live limit so the running tick
+    /// loop enforces it at once (and re-baselines current players so a freshly set limit counts their
+    /// stored usage), persists the tenant row, and broadcasts the new RoomState.
+    fn on_admin_set_limits(&mut self, id: PlayerId, limit_min: u32, window_h: u32) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "limits ignored: not an admin");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        if self.playtime_limit_min == limit_min && self.playtime_window_h == window_h {
+            return;
+        }
+        self.playtime_limit_min = limit_min;
+        self.playtime_window_h = window_h;
+        self.playtime_limit_ms = limit_min as i64 * 60_000;
+        self.playtime_window_ms = window_h as i64 * 3_600_000;
+        let db = self.hub.db.clone();
+        let tenant = self.key.0.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.set_tenant_playtime(&tenant, limit_min, window_h).await {
+                tracing::error!(error = %e, "set_tenant_playtime failed");
+            }
+        });
+        let state = self.room_state();
+        self.broadcast(&state);
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("limits|{limit_min}|{window_h}"),
+        });
+        tracing::info!(tenant = %self.key.0, %id, limit_min, window_h, "play-time budget set by admin");
+    }
+
+    /// Set the per-tenant allowed game modes. Admin-only; a toggle that would disable BOTH modes is
+    /// ignored (a tenant always keeps at least one). Persists the tenant row + broadcasts RoomState.
+    fn on_admin_set_modes(&mut self, id: PlayerId, online_allowed: bool, offline_allowed: bool) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "modes ignored: not an admin");
+            return;
+        }
+        if !online_allowed && !offline_allowed {
+            tracing::debug!(%id, "modes ignored: cannot disable the last mode");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        if self.online_allowed == online_allowed && self.offline_allowed == offline_allowed {
+            return;
+        }
+        self.online_allowed = online_allowed;
+        self.offline_allowed = offline_allowed;
+        let db = self.hub.db.clone();
+        let tenant = self.key.0.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db
+                .set_tenant_modes(&tenant, online_allowed, offline_allowed)
+                .await
+            {
+                tracing::error!(error = %e, "set_tenant_modes failed");
+            }
+        });
+        let state = self.room_state();
+        self.broadcast(&state);
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("modes|{online_allowed}|{offline_allowed}"),
+        });
+        // Turning online play off sends everyone but the admin who did it to the lobby (they manage from
+        // there); the gate in `admit` keeps new online joins out until it's re-enabled.
+        if !online_allowed {
+            let ids: Vec<PlayerId> = self.players.keys().copied().filter(|&p| p != id).collect();
+            for pid in ids {
+                if let Some(p) = self.players.remove(&pid) {
+                    let _ = p.conn.try_send(ServerMsg::Error {
+                        code: "online_blocked".into(),
+                        msg: "Online play is turned off for this world.".into(),
+                    });
+                }
+                self.broadcast(&ServerMsg::Left { id: pid });
+            }
+        }
+        tracing::info!(tenant = %self.key.0, %id, online_allowed, offline_allowed, "modes set by admin");
+    }
+
     /// Approve a pending account. Admin-only; records the approval, tells the waiting player they can
     /// join (so their client retries), and refreshes the pending list for online admins.
     fn on_admin_approve(&mut self, id: PlayerId, account_id: String) {
@@ -1634,6 +1781,10 @@ impl Room {
             chat_enabled: self.chat_enabled,
             suspended: self.suspended,
             approval_required: self.approval_required,
+            playtime_limit_min: self.playtime_limit_min,
+            playtime_window_h: self.playtime_window_h,
+            online_allowed: self.online_allowed,
+            offline_allowed: self.offline_allowed,
         }
     }
 
@@ -1689,8 +1840,8 @@ impl Room {
                 self.broadcast(&ServerMsg::Left { id });
             }
 
-            // Play-time accounting: flush each logged-in player's session delta to the db and send the
-            // ones who hit their budget to the lobby.
+            // Play-time accounting: flush each player's session delta to the db (keyed by account or
+            // IP, so anonymous guests accrue too) and send the ones who hit their budget to the lobby.
             if self.playtime_limit_ms > 0 {
                 let limit = self.playtime_limit_ms;
                 let window = self.playtime_window_ms;
@@ -1698,20 +1849,16 @@ impl Room {
                 let tenant = self.key.0.clone();
                 let mut time_up: Vec<PlayerId> = Vec::new();
                 for p in self.players.values_mut() {
-                    if p.account_id.is_empty() {
-                        continue;
-                    }
                     let session = now_ms - p.joined_at_ms as i64;
                     let delta = session - p.playtime_persisted_ms;
                     if delta > 0 {
                         p.playtime_persisted_ms = session;
                         let db = self.hub.db.clone();
                         let tenant = tenant.clone();
-                        let account = p.account_id.clone();
+                        let key = p.playtime_key.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = db
-                                .add_playtime(&tenant, &account, delta, window, now_ms)
-                                .await
+                            if let Err(e) =
+                                db.add_playtime(&tenant, &key, delta, window, now_ms).await
                             {
                                 tracing::error!(error = %e, "add_playtime failed");
                             }
@@ -2206,6 +2353,15 @@ fn epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// The `playtime` table key for a player: their account id when logged in, else their IP (prefixed so
+/// it can never collide with a real account id), so an anonymous guest's budget accrues by address.
+fn playtime_key(account_id: &str, ip: IpAddr) -> String {
+    if account_id.is_empty() {
+        return format!("ip:{ip}");
+    }
+    account_id.to_string()
+}
+
 /// Load the tenant's pending-approval list and send it to each given (admin) connection.
 async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<ServerMsg>]) {
     if conns.is_empty() {
@@ -2283,6 +2439,7 @@ mod tests {
             dig_block: None,
             dig_hits: 0,
             last_action: now - ATTACK_MIN_INTERVAL,
+            playtime_key: format!("acc{id}"),
             playtime_baseline_ms: 0,
             playtime_persisted_ms: 0,
             inventory: HashMap::new(),
@@ -3467,6 +3624,173 @@ mod tests {
             !room.approval_required,
             "a non-admin cannot turn approval on"
         );
+    }
+
+    /// Admit a guest/account from a chosen IP, so the play-time + mode-block paths can be exercised.
+    async fn admit_from_ip(
+        room: &mut Room,
+        account_id: &str,
+        name: &str,
+        role: Role,
+        ip: &str,
+    ) -> (Result<PlayerId, String>, mpsc::Receiver<ServerMsg>) {
+        let (conn, conn_rx) = mpsc::channel::<ServerMsg>(64);
+        let (reply, reply_rx) = oneshot::channel();
+        let look = Appearance {
+            skin: "#fff".into(),
+            shirt: "#fff".into(),
+            hair: "#fff".into(),
+        };
+        room.admit(
+            account_id.to_string(),
+            name.to_string(),
+            role,
+            "claim".into(),
+            look,
+            ip.parse().unwrap(),
+            conn,
+            reply,
+        )
+        .await;
+        (reply_rx.await.unwrap(), conn_rx)
+    }
+
+    fn first_error_code(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<String> {
+        std::iter::from_fn(|| rx.try_recv().ok()).find_map(|m| match m {
+            ServerMsg::Error { code, .. } => Some(code),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn playtime_key_keys_anon_by_ip_and_account_by_id() {
+        assert_eq!(
+            playtime_key("", "203.0.113.7".parse().unwrap()),
+            "ip:203.0.113.7"
+        );
+        assert_eq!(playtime_key("acc1", "203.0.113.7".parse().unwrap()), "acc1");
+    }
+
+    #[tokio::test]
+    async fn anonymous_playtime_accrues_by_ip_and_kicks_with_time_up() {
+        let mut room = test_room().await;
+        // A 1-minute budget within a 24h window for this tenant.
+        room.hub
+            .db
+            .set_tenant_playtime(&room.key.0, 1, 24)
+            .await
+            .unwrap();
+        // An anonymous guest (empty account id) joins from a known IP.
+        let (admitted, mut rx) =
+            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
+        let id = admitted.expect("a guest within budget is admitted");
+        // Pretend the session started two minutes ago, past the 1-minute budget.
+        let two_min_ms = 2 * 60_000u64;
+        room.players.get_mut(&id).unwrap().joined_at_ms = epoch_ms() - two_min_ms;
+        // The status sweep flushes the time and sends the over-budget guest to the lobby.
+        room.tick = STATUS_EVERY_TICKS - 1;
+        room.tick(0.05);
+        assert_eq!(first_error_code(&mut rx).as_deref(), Some("time_up"));
+        assert!(!room.players.contains_key(&id), "the guest is removed");
+        // The accrual write is fire-and-forget (spawned off the tick), so let it land before reading.
+        let mut used = 0;
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            used = room
+                .hub
+                .db
+                .playtime_used(
+                    &room.key.0,
+                    "ip:203.0.113.7",
+                    24 * 3_600_000,
+                    epoch_ms() as i64,
+                )
+                .await
+                .unwrap();
+            if used >= 60_000 {
+                break;
+            }
+        }
+        assert!(used >= 60_000, "anonymous time accrued by IP, got {used}ms");
+        // The IP is now over budget, so the next guest from it is turned away with "time_up".
+        let (blocked, mut rx2) =
+            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
+        assert_eq!(blocked, Err("time_up".into()), "the IP is over budget");
+        assert_eq!(first_error_code(&mut rx2).as_deref(), Some("time_up"));
+    }
+
+    #[tokio::test]
+    async fn online_blocked_rejects_a_non_admin_join_but_admits_admins() {
+        let mut room = test_room().await;
+        room.hub
+            .db
+            .set_tenant_modes(&room.key.0, false, true)
+            .await
+            .unwrap();
+        let (refused, mut rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.9").await;
+        assert_eq!(refused, Err("online_blocked".into()));
+        assert_eq!(first_error_code(&mut rx).as_deref(), Some("online_blocked"));
+        // An admin still gets in so they can re-enable online play from the panel.
+        let acc = room
+            .hub
+            .db
+            .claim_account("acme", "parent@x.com", "Parent")
+            .await
+            .unwrap()
+            .account_id;
+        let (allowed, _rx) =
+            admit_from_ip(&mut room, &acc, "Parent", Role::Admin, "203.0.113.9").await;
+        assert!(allowed.is_ok(), "an admin is admitted to manage the world");
+    }
+
+    #[tokio::test]
+    async fn admin_cannot_disable_the_last_mode() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, true);
+        // Start online-only, then try to also disable online: the toggle must be ignored.
+        room.on_input(
+            1,
+            ClientMsg::AdminSetModes {
+                online_allowed: true,
+                offline_allowed: false,
+            },
+        );
+        assert!(room.online_allowed && !room.offline_allowed);
+        room.on_input(
+            1,
+            ClientMsg::AdminSetModes {
+                online_allowed: false,
+                offline_allowed: false,
+            },
+        );
+        assert!(
+            room.online_allowed,
+            "disabling the last enabled mode is rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_sets_playtime_limit_and_broadcasts() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        room.on_input(
+            1,
+            ClientMsg::AdminSetLimits {
+                playtime_limit_min: 5,
+                playtime_window_h: 24,
+            },
+        );
+        assert_eq!(room.playtime_limit_ms, 5 * 60_000);
+        assert_eq!(room.playtime_window_ms, 24 * 3_600_000);
+        let limits = std::iter::from_fn(|| admin_rx.try_recv().ok()).find_map(|m| match m {
+            ServerMsg::RoomState {
+                playtime_limit_min,
+                playtime_window_h,
+                ..
+            } => Some((playtime_limit_min, playtime_window_h)),
+            _ => None,
+        });
+        assert_eq!(limits, Some((5, 24)), "the limit broadcasts on RoomState");
     }
 
     #[tokio::test]

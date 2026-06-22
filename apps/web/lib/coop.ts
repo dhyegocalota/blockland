@@ -50,6 +50,12 @@ export interface RoomState {
   chatEnabled: boolean;
   suspended: boolean;
   approvalRequired: boolean;
+  // Per-tenant play-time budget (minutes within a rolling window of hours; 0 = unlimited) and which
+  // game modes the tenant allows, mirrored live so the admin panels edit them without a rejoin.
+  playtimeLimitMin: number;
+  playtimeWindowH: number;
+  onlineAllowed: boolean;
+  offlineAllowed: boolean;
 }
 
 export interface PendingApproval {
@@ -202,6 +208,8 @@ export interface CoopController {
   sendAdminApprove(accountId: string): void;
   sendAdminReject(accountId: string): void;
   sendAdminUnban(ip: string): void;
+  sendAdminSetLimits(playtimeLimitMin: number, playtimeWindowH: number): void;
+  sendAdminSetModes(onlineAllowed: boolean, offlineAllowed: boolean): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
@@ -385,6 +393,10 @@ export function createCoop(opts: CoopOptions): CoopController {
           chatEnabled: msg.chat_enabled,
           suspended: msg.suspended,
           approvalRequired: msg.approval_required,
+          playtimeLimitMin: msg.playtime_limit_min,
+          playtimeWindowH: msg.playtime_window_h,
+          onlineAllowed: msg.online_allowed,
+          offlineAllowed: msg.offline_allowed,
         };
         opts.applyRoomState(room);
         opts.hud.onRoomState(room);
@@ -530,6 +542,12 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminUnban(ip): void {
       net.sendAdminUnban(ip);
+    },
+    sendAdminSetLimits(playtimeLimitMin, playtimeWindowH): void {
+      net.sendAdminSetLimits(playtimeLimitMin, playtimeWindowH);
+    },
+    sendAdminSetModes(onlineAllowed, offlineAllowed): void {
+      net.sendAdminSetModes(onlineAllowed, offlineAllowed);
     },
     update(now): void {
       for (const [id, avatar] of avatars) {

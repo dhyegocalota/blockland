@@ -7,6 +7,7 @@
 import { t } from '../lib/i18n';
 import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { roleBadge } from '../lib/roster-roles';
+import AdminLimits from './AdminLimits';
 import type { useLobbyAdmin } from '../hooks/use-lobby-admin';
 
 export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobbyAdmin> }) {
@@ -14,6 +15,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
     state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, bans, unban, reportPlayer, reports,
+    setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
   } = lobby;
 
   if (!isAdmin && !isModerator) {
@@ -122,6 +124,14 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
               ))}
             </ul>
           </>
+        )}
+        {isAdmin && (
+          <AdminLimits
+            room={room}
+            setLimits={setLimits}
+            toggleOnlineAllowed={toggleOnlineAllowed}
+            toggleOfflineAllowed={toggleOfflineAllowed}
+          />
         )}
         {isAdmin && (
           <button id="adminReset" className={resetArmed ? 'armed' : undefined} onClick={resetWorld}>

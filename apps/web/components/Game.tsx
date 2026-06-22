@@ -3,10 +3,12 @@
 import { t } from '../lib/i18n';
 import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { type FeedEntry, type FeedEventKind } from '../lib/feed';
+import { ModeBlockReason } from '../lib/lobby-modes';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
+import AdminLimits from './AdminLimits';
 import LocaleSwitcher from './LocaleSwitcher';
 import { useGame } from '../hooks/use-game';
 import { roleBadge } from '../lib/roster-roles';
@@ -23,11 +25,19 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   kicked: 'coop.kicked',
   room_closed: 'coop.room_closed',
   time_up: 'coop.time_up',
+  online_blocked: 'coop.online_blocked',
   needs_approval: null,
   rejected: 'coop.rejected',
 };
 
-const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'rejected'];
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'online_blocked', 'rejected'];
+
+// Why a lobby mode button is disabled → the short hint shown under the mode toggle.
+const MODE_BLOCK_HINT_KEYS: Record<ModeBlockReason, string | null> = {
+  [ModeBlockReason.Allowed]: null,
+  [ModeBlockReason.Unreachable]: 'lobby.mode_offline_hint',
+  [ModeBlockReason.AdminDisabled]: 'lobby.mode_blocked_hint',
+};
 
 const FEED_ICONS: Record<FeedEventKind, string> = {
   join: '➕',
@@ -61,7 +71,7 @@ function feedText(entry: FeedEntry): string {
 export default function Game() {
   const {
     brand, failed, offline, offlineDismissed, setOfflineDismissed,
-    name, look, solo, setSolo, soloRef,
+    name, look, solo, setSolo, soloRef, modeGates,
     netState, ping, online,
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData,
@@ -73,7 +83,7 @@ export default function Game() {
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, reportPlayer, setRole, suspendRoom,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
-    bans, unban, updateRequired,
+    bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   } = useGame();
@@ -179,6 +189,14 @@ export default function Game() {
                 >
                   {room.approvalRequired ? t('game_admin.approval_on') : t('game_admin.approval_off')}
                 </button>
+              )}
+              {isAdmin && !solo && (
+                <AdminLimits
+                  room={room}
+                  setLimits={setLimits}
+                  toggleOnlineAllowed={toggleOnlineAllowed}
+                  toggleOfflineAllowed={toggleOfflineAllowed}
+                />
               )}
               {isAdmin && pendingApprovals.length > 0 && (
                 <>
@@ -539,17 +557,27 @@ export default function Game() {
             <div id="modeToggle">
               <button
                 className={solo ? '' : 'on'}
-                disabled={offline}
-                title={offline ? t('lobby.offline_badge') : undefined}
+                disabled={modeGates.online.disabled}
+                title={MODE_BLOCK_HINT_KEYS[modeGates.online.reason] ? t(MODE_BLOCK_HINT_KEYS[modeGates.online.reason]!) : undefined}
                 onClick={() => { soloRef.current = false; setSolo(false); }}
               >
                 {t('start.mode_multi')}
               </button>
-              <button className={solo ? 'on' : ''} onClick={() => { soloRef.current = true; setSolo(true); }}>
+              <button
+                className={solo ? 'on' : ''}
+                disabled={modeGates.offline.disabled}
+                title={MODE_BLOCK_HINT_KEYS[modeGates.offline.reason] ? t(MODE_BLOCK_HINT_KEYS[modeGates.offline.reason]!) : undefined}
+                onClick={() => { soloRef.current = true; setSolo(true); }}
+              >
                 {t('start.mode_solo')}
               </button>
             </div>
-            {offline && <span className="modeOfflineHint">{t('lobby.mode_offline_hint')}</span>}
+            {modeGates.online.disabled && MODE_BLOCK_HINT_KEYS[modeGates.online.reason] && (
+              <span className="modeOfflineHint">{t(MODE_BLOCK_HINT_KEYS[modeGates.online.reason]!)}</span>
+            )}
+            {modeGates.offline.disabled && MODE_BLOCK_HINT_KEYS[modeGates.offline.reason] && (
+              <span className="modeOfflineHint">{t(MODE_BLOCK_HINT_KEYS[modeGates.offline.reason]!)}</span>
+            )}
           </div>
 
           <button id="playBtn">{t('start.play')}</button>
