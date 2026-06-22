@@ -6,6 +6,7 @@
 // live in useLobbyAdmin (wired in use-game), this is just the markup.
 import { t } from '../lib/i18n';
 import { STRUCTURE_KINDS } from '../lib/game-engine';
+import { roleBadge } from '../lib/roster-roles';
 import type { useLobbyAdmin } from '../lib/hooks/use-lobby-admin';
 
 const STRUCTURE_LABEL_KEYS: Record<string, string> = {
@@ -47,18 +48,24 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
         )}
         <span className="adminLabel">{t('game_admin.players')}</span>
         <ul id="adminPlayers">
-          {roster.filter((player) => !player.self).map((player) => (
-            <li key={player.id}>
-              <span>{player.name}</span>
-              <span className="adminPlayerActions">
-                <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
-                {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
-                <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
-                {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
-                {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
-              </span>
-            </li>
-          ))}
+          {roster.filter((player) => !player.self).map((player) => {
+            const badge = roleBadge(player);
+            return (
+              <li key={player.id}>
+                <span className="playerName">
+                  {badge && <span className="roleBadge">{badge}</span>}
+                  {player.name}
+                </span>
+                <span className="adminPlayerActions">
+                  <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
+                  {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
+                  <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
+                  {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
+                  {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
+                </span>
+              </li>
+            );
+          })}
         </ul>
         <span className="adminLabel">{t('game_admin.structures')}</span>
         <ul id="adminStructures">
@@ -85,7 +92,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
             <ul id="adminPending">
               {pendingApprovals.map((entry) => (
                 <li key={entry.accountId}>
-                  <span>{entry.name}</span>
+                  <span className="playerName">{entry.name}</span>
                   <span className="adminPlayerActions">
                     <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
                   </span>

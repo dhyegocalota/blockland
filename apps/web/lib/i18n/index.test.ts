@@ -23,3 +23,11 @@ describe('t', () => {
     expect(t('feed.kill', { name: 'Maria', detail: t('creature.spider') })).toBe('Maria derrotou um Aranha');
   });
 });
+
+describe('catalog parity', () => {
+  it('has every key in both locales', () => {
+    const ptKeys = Object.keys(messages['pt-BR']).sort();
+    const enKeys = Object.keys(messages['en-US']).sort();
+    expect(enKeys).toEqual(ptKeys);
+  });
+});

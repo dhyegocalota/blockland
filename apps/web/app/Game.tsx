@@ -8,6 +8,7 @@ import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
 import { useGame } from './use-game';
+import { roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
 
 const AUTHOR_URL = 'https://dhyegocalota.com.br';
@@ -177,7 +178,7 @@ export default function Game() {
                   <ul id="adminPending">
                     {pendingApprovals.map((entry) => (
                       <li key={entry.accountId}>
-                        <span>{entry.name}</span>
+                        <span className="playerName">{entry.name}</span>
                         <span className="adminPlayerActions">
                           <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
                         </span>
@@ -197,18 +198,24 @@ export default function Game() {
               )}
               <span className="adminLabel">{t('game_admin.players')}</span>
               <ul id="adminPlayers">
-                {roster.filter((player) => !player.self).map((player) => (
-                  <li key={player.id}>
-                    <span>{player.name}</span>
-                    <span className="adminPlayerActions">
-                      <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
-                      {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
-                      <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
-                      {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
-                      {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
-                    </span>
-                  </li>
-                ))}
+                {roster.filter((player) => !player.self).map((player) => {
+                  const badge = roleBadge(player);
+                  return (
+                    <li key={player.id}>
+                      <span className="playerName">
+                        {badge && <span className="roleBadge">{badge}</span>}
+                        {player.name}
+                      </span>
+                      <span className="adminPlayerActions">
+                        <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
+                        {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
+                        <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
+                        {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
+                        {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
               <span className="adminLabel">{t('game_admin.structures')}</span>
               <ul id="adminStructures">
@@ -460,7 +467,7 @@ export default function Game() {
         </div>
 
         <div className="startPanel">
-          <LobbyPresence tenant={brand.id} />
+          <LobbyPresence tenant={brand.id} roster={lobby.roster} />
 
           {(lobbyAdmin || lobbyModerator) && <LobbyAdmin lobby={lobby} />}
 

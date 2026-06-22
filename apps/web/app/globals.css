@@ -200,6 +200,7 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 #lobbyPresence .count { font-weight: 900; color: var(--gold); font-size: 15px; }
 #lobbyPresence .names { font-weight: 700; font-size: 12px; opacity: .85; text-align: center; word-break: break-word; }
+#lobbyPresence .presenceBadge { margin-right: 2px; opacity: 1; }
 #lobbyPresence .suspended { font-weight: 900; color: #ffb84d; font-size: 14px; }
 #startFooter {
   z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 4px; padding-bottom: 6px;
@@ -468,21 +469,32 @@ input, textarea, select { font-size: max(16px, 1em); }
 #adminPeace.on, #adminPvp.on, #adminChat.on, #adminApproval.on, #adminInfinite.on, #adminSuspend.on { background: rgba(91,216,106,.35); border-color: var(--gold); }
 #adminPeace:active, #adminPvp:active, #adminChat:active, #adminApproval:active, #adminInfinite:active, #adminSuspend:active { transform: translateY(2px); }
 #adminBody .adminLabel { color: #cbb8ff; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-#adminStructures, #adminPlayers { list-style: none; display: flex; flex-direction: column; gap: 6px; }
-#adminStructures li, #adminPlayers li { display: flex; align-items: center; gap: 8px; }
-#adminStructures li > span:first-child, #adminPlayers li > span:first-child {
+#adminStructures, #adminPlayers, #adminPending { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+#adminStructures li { display: flex; align-items: center; gap: 8px; }
+#adminStructures li > span:first-child {
   flex: 1; color: #fff; font-weight: 700; font-size: 13px; word-break: break-word;
 }
-#adminPlayers .adminPlayerActions { display: flex; gap: 6px; flex-shrink: 0; }
-#adminStructures button, #adminPlayers button {
-  font-family: inherit; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff;
-  border: 2px solid rgba(255,255,255,.35); border-radius: 9px; padding: 4px 9px; white-space: nowrap; transition: transform .08s;
+/* Each player is a row that stacks: the name (with its role badge) on its own full-width line so it
+   never starves into a 1-char vertical column, then the action buttons wrapping neatly below it. */
+#adminPlayers li, #adminPending li {
+  display: flex; flex-direction: column; gap: 6px;
+  background: rgba(255,255,255,.06); border-radius: 10px; padding: 7px 9px;
 }
-#adminStructures button:active, #adminPlayers button:active { transform: translateY(2px); }
+#adminPlayers .playerName, #adminPending .playerName {
+  display: flex; align-items: center; gap: 6px; color: #fff; font-weight: 800; font-size: 13px; word-break: break-word;
+}
+#adminPlayers .playerName .roleBadge, #adminPending .playerName .roleBadge { font-size: 14px; line-height: 1; }
+#adminPlayers .adminPlayerActions, #adminPending .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; }
+#adminStructures button, #adminPlayers button, #adminPending button {
+  font-family: inherit; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff;
+  background: rgba(123,79,194,.45); border: 2px solid rgba(255,255,255,.35); border-radius: 9px;
+  padding: 4px 9px; white-space: nowrap; transition: transform .08s;
+}
+#adminStructures button:active, #adminPlayers button:active, #adminPending button:active { transform: translateY(2px); }
 #adminStructures button.allowed { background: rgba(91,216,106,.3); }
 #adminStructures button.blocked { background: rgba(255,93,46,.4); }
-#adminPlayers button.kick { background: rgba(255,210,63,.3); }
-#adminPlayers button.ban { background: rgba(255,93,46,.45); }
+#adminPlayers button.kick { background: rgba(255,184,77,.45); border-color: var(--gold); }
+#adminPlayers button.ban { background: rgba(255,46,46,.5); border-color: rgba(255,93,46,.7); }
 #adminReset, #adminResetScores {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,46,46,.45); border: 2px solid rgba(255,93,46,.7); border-radius: 10px;
@@ -502,6 +514,7 @@ input, textarea, select { font-size: max(16px, 1em); }
   color: #fff; font-weight: 900; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; text-align: center;
 }
 #lobbyAdminBody { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow-y: auto; }
+#lobbyAdmin .adminLabel { color: #fff; }
 
 /* On phones the centered top bar used to wrap into a tall column that the side panels collided with.
    Keep it to a single compact row so the presence + admin panels sit clear just below it. */
