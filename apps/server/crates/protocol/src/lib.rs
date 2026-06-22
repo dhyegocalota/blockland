@@ -263,7 +263,8 @@ pub struct InventoryItem {
     pub count: u32,
 }
 
-/// A player's unchanging identity, carried by `Roster` so `PlayerState` (per tick) can omit it.
+/// A player's identity + current room role, carried by `Roster` so `PlayerState` (per tick) can omit
+/// it. The role lets the lobby/admin UI badge admins and reflect promotions in real time.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct PlayerMeta {
     pub id: u32,
@@ -271,6 +272,8 @@ pub struct PlayerMeta {
     pub skin: String,
     pub shirt: String,
     pub hair: String,
+    pub admin: bool,
+    pub moderator: bool,
 }
 
 /// One player's per-tick dynamics as a fixed-order number array (no field names, to keep the hot

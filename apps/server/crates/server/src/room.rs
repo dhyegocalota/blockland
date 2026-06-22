@@ -1182,10 +1182,6 @@ impl Room {
         let Some(target) = self.players.get_mut(&target_id) else {
             return;
         };
-        if target.account_id.is_empty() {
-            tracing::debug!(%target_id, "set-role ignored: target is a guest");
-            return;
-        }
         if !actor_is_admin && target.is_admin {
             tracing::debug!(%actor_id, "set-role ignored: a moderator cannot change an admin");
             return;
@@ -1208,12 +1204,18 @@ impl Room {
             name: actor_name,
             detail: format!("{role_word}|{target_name}"),
         });
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.set_role(&target_account, role).await {
-                tracing::error!(error = %e, "set_role persist failed");
-            }
-        });
+        // Reflect the new badge for everyone immediately rather than waiting for the next roster sweep.
+        let roster = self.roster_msg();
+        self.broadcast(&roster);
+        // A guest's promotion is session-only (no account to persist to); registered players keep it.
+        if !target_account.is_empty() {
+            let db = self.hub.db.clone();
+            tokio::spawn(async move {
+                if let Err(e) = db.set_role(&target_account, role).await {
+                    tracing::error!(error = %e, "set_role persist failed");
+                }
+            });
+        }
         tracing::info!(tenant = %self.key.0, %actor_id, %target_id, ?role, "role changed in-game");
     }
 
@@ -1416,6 +1418,8 @@ impl Room {
                     skin: p.skin.clone(),
                     shirt: p.shirt.clone(),
                     hair: p.hair.clone(),
+                    admin: p.is_admin,
+                    moderator: p.is_moderator,
                 })
                 .collect(),
         }
@@ -2204,6 +2208,47 @@ mod tests {
         assert_eq!(room.players.get(&1).unwrap().hp, MAX_HP - 1);
     }
 
+    // End-to-end of the co-op damage the players keep reporting as broken: a player who synced onto open
+    // ground (first move is the anti-cheat baseline, so the server tracks their real position) is chased
+    // by a hostile creature spawned several blocks away, which closes the gap and bites — dropping a
+    // heart server-side and pushing a Hurt cue. If this holds, broken co-op damage is a stale deploy
+    // (the player wedged at the old centre spawn), not the combat logic.
+    #[tokio::test]
+    async fn a_hostile_creature_chases_a_synced_player_and_bites() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        room.peace = false;
+        let feet = room.world.surface_y(60, 60) as f32;
+        room.on_input(
+            1,
+            ClientMsg::Move {
+                x: 60.0,
+                y: feet + PLAYER_EYE_HEIGHT,
+                z: 60.0,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        );
+        room.players.get_mut(&1).unwrap().hurt_at = Instant::now() - Duration::from_secs(5);
+        let spider = Creature::spawn(99, CreatureKind::Spider, 65.0, 60.0, |x, z| {
+            room.world.surface_y(x, z)
+        });
+        room.creatures.clear();
+        room.creatures.push(spider);
+        let start = room.players.get(&1).unwrap().hp;
+        for _ in 0..200 {
+            room.simulate_creatures(0.1);
+        }
+        let hp = room.players.get(&1).unwrap().hp;
+        assert!(
+            hp < start,
+            "the chaser should reach and bite (hp {start} -> {hp})"
+        );
+        let hurt =
+            std::iter::from_fn(|| rx.try_recv().ok()).any(|m| matches!(m, ServerMsg::Hurt { .. }));
+        assert!(hurt, "the bitten player gets a Hurt cue");
+    }
+
     #[tokio::test]
     async fn a_bite_that_empties_the_hearts_respawns_at_spawn() {
         let mut room = test_room().await;
@@ -2320,6 +2365,36 @@ mod tests {
         let alice = players.iter().find(|p| p.id == 1).unwrap();
         assert_eq!(alice.name, "Alice");
         assert_eq!(alice.skin, "#abc123");
+        // The role rides along so the lobby/admin UI can badge admins without a separate query.
+        assert!(!alice.admin);
+        assert!(players.iter().find(|p| p.id == 2).unwrap().admin);
+    }
+
+    #[tokio::test]
+    async fn an_admin_can_session_promote_a_guest_who_then_rides_the_roster() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, true); // the admin
+        let mut guest_rx = add_player(&mut room, 2, false);
+        room.players.get_mut(&2).unwrap().account_id = String::new(); // an anonymous guest
+
+        room.on_admin_set_role(1, 2, protocol::Role::Moderator);
+
+        // Applied live (session-only, no account to persist) and pushed to the guest + the roster.
+        assert!(room.players.get(&2).unwrap().is_moderator);
+        let got_role = std::iter::from_fn(|| guest_rx.try_recv().ok()).any(|m| {
+            matches!(
+                m,
+                ServerMsg::Role {
+                    moderator: true,
+                    ..
+                }
+            )
+        });
+        assert!(got_role, "the promoted guest is told their new role");
+        let ServerMsg::Roster { players } = room.roster_msg() else {
+            panic!("expected a roster message");
+        };
+        assert!(players.iter().find(|p| p.id == 2).unwrap().moderator);
     }
 
     #[tokio::test]

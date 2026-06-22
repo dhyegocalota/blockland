@@ -46,6 +46,8 @@ export interface LocalPose {
 
 export interface RosterEntry extends RosterMember {
   self: boolean;
+  admin: boolean;
+  moderator: boolean;
 }
 
 export interface RoomState {
@@ -199,7 +201,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   const creatures = new Map<number, ServerCreature>();
   // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
   // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
-  const identities = new Map<number, Appearance & { name: string }>();
+  const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean }>();
   let selfId: number | null = null;
   let backendVersion = '';
   let lastMoveSentAt = 0;
@@ -481,7 +483,10 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onRoster(
           msg.players
             .filter((p) => identities.has(p.id))
-            .map((p) => ({ id: p.id, name: identities.get(p.id)!.name, self: p.id === selfId })),
+            .map((p) => {
+              const identity = identities.get(p.id)!;
+              return { id: p.id, name: identity.name, self: p.id === selfId, admin: identity.admin, moderator: identity.moderator };
+            }),
         );
         opts.hud.onPing(selfPing);
         opts.hud.onScore(selfScore);
@@ -575,7 +580,7 @@ export function createCoop(opts: CoopOptions): CoopController {
       },
       onRoster: (msg) => {
         identities.clear();
-        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair });
+        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair, admin: p.admin, moderator: p.moderator });
         debug('coop', 'roster', { players: msg.players.length });
       },
       onError: (code, message) => {
