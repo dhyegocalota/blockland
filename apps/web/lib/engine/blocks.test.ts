@@ -63,6 +63,12 @@ describe('BLOCKS registry', () => {
     }
   });
 
+  it('gives every block a hex hit-poof colour', () => {
+    for (const block of definedBlocks()) {
+      expect(block.color).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
   it('keeps hotbar keys unique', () => {
     const keys = definedBlocks().map((block) => block.key);
     expect(new Set(keys).size).toBe(keys.length);

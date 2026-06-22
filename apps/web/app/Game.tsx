@@ -144,14 +144,16 @@ export default function Game() {
               >
                 {room.peace ? t('game_admin.monsters_calm') : t('game_admin.monsters_attack')}
               </button>
-              <button
-                id="adminPvp"
-                className={room.pvp ? 'on' : undefined}
-                onClick={toggleRoomPvp}
-              >
-                {room.pvp ? t('game_admin.pvp_on') : t('game_admin.pvp_off')}
-              </button>
-              {isAdmin && (
+              {!solo && (
+                <button
+                  id="adminPvp"
+                  className={room.pvp ? 'on' : undefined}
+                  onClick={toggleRoomPvp}
+                >
+                  {room.pvp ? t('game_admin.pvp_on') : t('game_admin.pvp_off')}
+                </button>
+              )}
+              {isAdmin && !solo && (
                 <button
                   id="adminChat"
                   className={room.chatEnabled ? undefined : 'on'}
@@ -160,7 +162,7 @@ export default function Game() {
                   {room.chatEnabled ? t('game_admin.chat_on') : t('game_admin.chat_off')}
                 </button>
               )}
-              {isAdmin && (
+              {isAdmin && !solo && (
                 <button
                   id="adminApproval"
                   className={room.approvalRequired ? 'on' : undefined}
@@ -228,12 +230,12 @@ export default function Game() {
               <button id="adminReset" className={resetArmed ? 'armed' : undefined} onClick={resetWorld}>
                 {resetArmed ? t('game_admin.reset_confirm') : t('game_admin.reset')}
               </button>
-              {isAdmin && (
+              {isAdmin && !solo && (
                 <button id="adminResetScores" className={resetScoresArmed ? 'armed' : undefined} onClick={resetScores}>
                   {resetScoresArmed ? t('game_admin.reset_scores_confirm') : t('game_admin.reset_scores')}
                 </button>
               )}
-              {isAdmin && (
+              {isAdmin && !solo && (
                 <button id="adminSuspend" className={room.suspended ? 'on' : undefined} onClick={suspendRoom}>
                   {room.suspended ? t('game_admin.resume') : t('game_admin.suspend')}
                 </button>
@@ -294,6 +296,7 @@ export default function Game() {
                 <p className="loginSpam">{t('login.code_spam')}</p>
                 <input
                   id="loginCode"
+                  autoFocus
                   inputMode="numeric"
                   maxLength={6}
                   value={loginCode}

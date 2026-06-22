@@ -10,6 +10,8 @@ export interface BlockDef {
   nameKey: string | null;
   transparent?: boolean;
   build: TexturePainter | null;
+  // Representative tint for the dig hit-poof, so striking a block puffs in its own colour.
+  color: string;
 }
 
 const TILE = 16;
@@ -115,25 +117,25 @@ export function avaritiaTexture(g: CanvasRenderingContext2D): void {
 
 export const BLOCKS: (BlockDef | null)[] = [
   null,
-  { id: 1, key: '1', nameKey: 'block.grass', build: paint('#5fae3a', '#4c8b2b', '#7ac24a') },
-  { id: 2, key: '2', nameKey: 'block.dirt', build: paint('#866043', '#6b4c34', '#9c7250') },
-  { id: 3, key: '3', nameKey: 'block.stone', build: paint('#7f7f7f', '#6b6b6b', '#9a9a9a') },
-  { id: 4, key: '4', nameKey: 'block.wood', build: woodTexture },
-  { id: 5, key: '5', nameKey: 'block.leaf', build: paint('#4c8b2b', '#3a6e20', '#6aa83c') },
-  { id: 6, key: '6', nameKey: 'block.sand', build: paint('#dbd3a0', '#c8be88', '#ece4b8') },
-  { id: 7, key: '7', nameKey: 'block.brick', build: brickTexture },
-  { id: 8, key: '8', nameKey: 'block.gold', build: goldTexture },
-  { id: 9, key: '9', nameKey: 'block.rainbow', build: rainbowTexture },
-  { id: 10, key: '0', nameKey: null, build: null },
-  { id: 11, key: '-', nameKey: 'block.water', transparent: true, build: paint('#3f76e4', '#3667cc', '#5a8def') },
-  { id: 12, key: 'c', nameKey: 'block.white', build: paint('#f0f0f0', '#d8d8d8', '#ffffff') },
-  { id: 13, key: 'x', nameKey: 'block.black', build: paint('#191919', '#0e0e0e', '#2c2c2c') },
-  { id: 14, key: 'z', nameKey: 'block.diamond', build: diamondTexture },
-  { id: 15, key: 'i', nameKey: 'block.avaritia', build: avaritiaTexture },
-  { id: 16, key: 'k', nameKey: 'block.bedrock', build: paint('#565656', '#363636', '#787878') },
-  { id: 17, key: 'l', nameKey: 'block.celeste', build: paint('#4aa0d5', '#3d88ba', '#6db8e3') },
-  { id: 18, key: 'r', nameKey: 'block.red', build: paint('#b02e26', '#92241d', '#cf4a41') },
-  { id: 19, key: 'j', nameKey: 'block.blue', build: paint('#3c44aa', '#2f3589', '#525bc6') },
+  { id: 1, key: '1', nameKey: 'block.grass', color: '#5fae3a', build: paint('#5fae3a', '#4c8b2b', '#7ac24a') },
+  { id: 2, key: '2', nameKey: 'block.dirt', color: '#866043', build: paint('#866043', '#6b4c34', '#9c7250') },
+  { id: 3, key: '3', nameKey: 'block.stone', color: '#7f7f7f', build: paint('#7f7f7f', '#6b6b6b', '#9a9a9a') },
+  { id: 4, key: '4', nameKey: 'block.wood', color: '#6b5331', build: woodTexture },
+  { id: 5, key: '5', nameKey: 'block.leaf', color: '#4c8b2b', build: paint('#4c8b2b', '#3a6e20', '#6aa83c') },
+  { id: 6, key: '6', nameKey: 'block.sand', color: '#dbd3a0', build: paint('#dbd3a0', '#c8be88', '#ece4b8') },
+  { id: 7, key: '7', nameKey: 'block.brick', color: '#9c5a3c', build: brickTexture },
+  { id: 8, key: '8', nameKey: 'block.gold', color: '#fcee4b', build: goldTexture },
+  { id: 9, key: '9', nameKey: 'block.rainbow', color: '#ffe93d', build: rainbowTexture },
+  { id: 10, key: '0', nameKey: null, color: '#ffd23f', build: null },
+  { id: 11, key: '-', nameKey: 'block.water', transparent: true, color: '#3f76e4', build: paint('#3f76e4', '#3667cc', '#5a8def') },
+  { id: 12, key: 'c', nameKey: 'block.white', color: '#f0f0f0', build: paint('#f0f0f0', '#d8d8d8', '#ffffff') },
+  { id: 13, key: 'x', nameKey: 'block.black', color: '#191919', build: paint('#191919', '#0e0e0e', '#2c2c2c') },
+  { id: 14, key: 'z', nameKey: 'block.diamond', color: '#4aedd9', build: diamondTexture },
+  { id: 15, key: 'i', nameKey: 'block.avaritia', color: '#9b6bff', build: avaritiaTexture },
+  { id: 16, key: 'k', nameKey: 'block.bedrock', color: '#565656', build: paint('#565656', '#363636', '#787878') },
+  { id: 17, key: 'l', nameKey: 'block.celeste', color: '#4aa0d5', build: paint('#4aa0d5', '#3d88ba', '#6db8e3') },
+  { id: 18, key: 'r', nameKey: 'block.red', color: '#b02e26', build: paint('#b02e26', '#92241d', '#cf4a41') },
+  { id: 19, key: 'j', nameKey: 'block.blue', color: '#3c44aa', build: paint('#3c44aa', '#2f3589', '#525bc6') },
 ];
 
 export const blockById = (id: number): BlockDef | null => BLOCKS[id];
