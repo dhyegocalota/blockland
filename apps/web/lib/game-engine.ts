@@ -12,7 +12,7 @@ import { VoxelWorld } from './engine/world';
 import { type Axis, moveAxis } from './engine/physics';
 import { blockVelocityIntoActors, cellOverlapsActor, clearFeetAbove } from './engine/actors';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './engine/raycast';
-import { stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './engine/structures';
+import { STRUCTURE_KINDS, type StructureKind, structureDef } from './engine/structures';
 import { CREATURE_DEFS, type CreatureDef, stepCreatureDirection } from './engine/creatures';
 import { creatureDefFor } from './engine/creature-snapshot';
 import { renderBlockCanvas } from './engine/textures';
@@ -22,7 +22,7 @@ import { BlockInventory, hotbarCountLabel } from './engine/inventory';
 import { parseSavedPosition, serializeSavedPosition } from './engine/saved-position';
 import { faceBlockNameFor } from './engine/tenant-brand';
 import { nextFrame, smoothFps } from './engine/frame-cap';
-import { STRUCTURE_KINDS, type StructureKind, structureReach, structureTarget } from './engine/structure-build';
+import { structureTarget } from './engine/structure-build';
 import { bestScore, heartsLabel, persistedRecord } from './engine/scoreboard';
 import { aimPitch, aimYaw } from './engine/aim';
 import { type DebugSnapshot, buildDebugSnapshot } from './engine/debug-snapshot';
@@ -61,7 +61,7 @@ interface Creature {
   flash: number;
 }
 
-export { STRUCTURE_KINDS, type StructureKind } from './engine/structure-build';
+export { STRUCTURE_DEFS, STRUCTURE_KINDS, type StructureKind } from './engine/structures';
 
 interface GameWindow extends Window {
   __blGameBooted?: boolean;
@@ -606,7 +606,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       playerX: player.pos.x, playerZ: player.pos.z, yaw: player.yaw,
     });
     const gy = groundHeight(cx, cz);
-    const reach = structureReach(kind);
+    const def = structureDef(kind);
     const cells: EditCell[] = [];
     // Skip any cell that would land on a player so a structure can never trap someone.
     const collect = (x: number, y: number, z: number, id: number): void => {
@@ -614,15 +614,10 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
       setVoxel(x, y, z, id);
       cells.push({ x, y, z, id });
     };
-    if (kind === 'trophy') stampTrophy({ set: collect, cx, gy, cz });
-    if (kind === 'ball') stampBall({ set: collect, cx, gy, cz, radius: 8 });
-    if (kind === 'figure') stampFigure({ set: collect, cx, gy, cz });
-    if (kind === 'cola') stampCola({ set: collect, cx, gy, cz });
-    if (kind === 'steve') stampSteve({ set: collect, cx, gy, cz });
-    remeshRegion(cx - reach, cx + reach, cz - reach, cz + reach);
+    def.stamp({ set: collect, cx, gy, cz });
+    remeshRegion(cx - def.reach, cx + def.reach, cz - def.reach, cz + def.reach);
     coop?.sendEditBatch(cells);
-    const messages: Record<StructureKind, string> = { trophy: t('toast.built_trophy'), ball: t('toast.built_ball'), figure: t('toast.built_figure'), cola: t('toast.built_cola'), steve: t('toast.built_steve') };
-    toast(messages[kind]);
+    toast(t(def.builtToastKey));
     blip(680, 0.12); setTimeout(() => blip(1020, 0.14), 110);
     debug('engine', 'structure built', { kind, x: cx, y: gy, z: cz });
   }

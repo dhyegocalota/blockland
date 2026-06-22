@@ -1,26 +1,13 @@
-// Pure helpers for placing a magic structure: the kinds, the per-kind remesh reach, and the target
-// cell the structure centers on (where the player aims, or a fixed distance ahead when aiming at the
-// sky), clamped to keep it off the world edge. The stamping + three.js remesh stay in the glue.
+// Pure helpers for placing a magic structure: the target cell the structure centers on (where the
+// player aims, or a fixed distance ahead when aiming at the sky), clamped to keep it off the world
+// edge. The structure kinds and per-kind reach live in the registry (./structures); the stamping +
+// three.js remesh stay in the glue.
 
 import { SIZE_X, SIZE_Z } from './constants';
-
-export type StructureKind = 'trophy' | 'ball' | 'figure' | 'cola' | 'steve';
-export const STRUCTURE_KINDS: StructureKind[] = ['trophy', 'ball', 'figure', 'cola', 'steve'];
 
 export const STRUCTURE_MARGIN = 12;
 // How far ahead of the player a structure lands when they aim at the open sky.
 export const STRUCTURE_FORWARD = 24;
-
-const BALL_REACH = 9;
-const COLA_REACH = 6;
-const DEFAULT_REACH = 4;
-
-// The half-width to remesh around a freshly stamped structure.
-export function structureReach(kind: StructureKind): number {
-  if (kind === 'ball') return BALL_REACH;
-  if (kind === 'cola') return COLA_REACH;
-  return DEFAULT_REACH;
-}
 
 export interface StructureTarget {
   cx: number;

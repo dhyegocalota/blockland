@@ -3,7 +3,10 @@ import {
   BEDROCK_ID, BLACK_ID, BLUE_ID, CELESTE_ID, CYAN_ID, FACE_ID,
   GOLD_ID, GRASS_ID, HAIR_ID, RED_ID, SKIN_ID, WHITE_ID,
 } from './constants';
-import { type SetVoxel, stampBall, stampCola, stampFigure, stampSteve, stampTrophy } from './structures';
+import {
+  STRUCTURE_DEFS, STRUCTURE_KINDS, type SetVoxel, stampBall, stampCola, stampFigure, stampSteve, stampTrophy, structureDef,
+} from './structures';
+import { messages } from '../i18n/catalog';
 
 const SILVER_ID = 3;
 
@@ -263,6 +266,55 @@ describe('stampSteve', () => {
     stampSteve({ set, ...origin });
     expect(cells.get(voxelKey(origin.cx - 1, origin.gy + 9, origin.cz + 1))).toBe(HAIR_ID);
     expect(cells.get(voxelKey(origin.cx + 1, origin.gy + 9, origin.cz + 1))).toBe(HAIR_ID);
+  });
+});
+
+describe('STRUCTURE_DEFS registry', () => {
+  it('drives STRUCTURE_KINDS from its keys', () => {
+    expect(STRUCTURE_KINDS).toEqual(Object.keys(STRUCTURE_DEFS));
+    expect(STRUCTURE_KINDS).toEqual(['trophy', 'ball', 'figure', 'cola', 'steve']);
+  });
+
+  it('keeps the per-kind remesh reach', () => {
+    expect(structureDef('ball').reach).toBe(9);
+    expect(structureDef('cola').reach).toBe(6);
+    expect(structureDef('trophy').reach).toBe(4);
+    expect(structureDef('figure').reach).toBe(4);
+    expect(structureDef('steve').reach).toBe(4);
+  });
+
+  it('exposes label, toast and emoji for every kind', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const def = structureDef(kind);
+      expect(def.labelKey).toBe(`build.${kind}`);
+      expect(def.builtToastKey).toBe(`toast.built_${kind}`);
+      expect(def.emoji.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('has its label and toast strings in both locales', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const def = structureDef(kind);
+      expect(messages['pt-BR'][def.labelKey]).toBeTruthy();
+      expect(messages['en-US'][def.labelKey]).toBeTruthy();
+      expect(messages['pt-BR'][def.builtToastKey]).toBeTruthy();
+      expect(messages['en-US'][def.builtToastKey]).toBeTruthy();
+    }
+  });
+
+  it('stamps at least one voxel for every kind', () => {
+    for (const kind of STRUCTURE_KINDS) {
+      const { set, cells } = recorder();
+      structureDef(kind).stamp({ set, cx: 100, gy: 7, cz: 200 });
+      expect(cells.size).toBeGreaterThan(0);
+    }
+  });
+
+  it('stamps the ball at radius 8 through the registry', () => {
+    const { set, cells } = recorder();
+    structureDef('ball').stamp({ set, cx: 0, gy: 0, cz: 0 });
+    expect(cells.has(voxelKey(0, 16, 0))).toBe(true);
+    expect(cells.has(voxelKey(0, 0, 0))).toBe(true);
   });
 });
 

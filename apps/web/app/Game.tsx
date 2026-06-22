@@ -1,7 +1,7 @@
 'use client';
 
 import { t } from '../lib/i18n';
-import { STRUCTURE_KINDS } from '../lib/game-engine';
+import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { type FeedEntry, type FeedEventKind } from '../lib/feed';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
@@ -56,14 +56,6 @@ function feedText(entry: FeedEntry): string {
   }
   return t(entry.kind === 'join' ? 'feed.joined' : 'feed.left', { name: entry.name });
 }
-
-const STRUCTURE_LABEL_KEYS: Record<string, string> = {
-  trophy: 'build.trophy',
-  ball: 'build.ball',
-  figure: 'build.figure',
-  cola: 'build.cola',
-  steve: 'build.steve',
-};
 
 export default function Game() {
   const {
@@ -254,7 +246,7 @@ export default function Game() {
                   const blocked = room.blockedStructures.includes(kind);
                   return (
                     <li key={kind}>
-                      <span>{t(STRUCTURE_LABEL_KEYS[kind])}</span>
+                      <span>{t(STRUCTURE_DEFS[kind].labelKey)}</span>
                       <button
                         className={blocked ? 'blocked' : 'allowed'}
                         onClick={() => toggleStructure(kind, blocked)}
@@ -479,11 +471,12 @@ export default function Game() {
           <h2>{t('build.menu_title')}</h2>
           <p className="buildHint">{t('build.menu_hint')}</p>
           <div className="buildGrid">
-            <button className="buildCard" data-kind="trophy"><span className="emoji">🏆</span><span>{t('build.trophy')}</span></button>
-            <button className="buildCard" data-kind="ball"><span className="emoji">⚽</span><span>{t('build.ball')}</span></button>
-            <button className="buildCard" data-kind="figure"><span className="emoji">🧑‍🦱</span><span>{t('build.figure')}</span></button>
-            <button className="buildCard" data-kind="cola"><span className="emoji">🥤</span><span>{t('build.cola')}</span></button>
-            <button className="buildCard" data-kind="steve"><span className="emoji">🧍</span><span>{t('build.steve')}</span></button>
+            {STRUCTURE_KINDS.map((kind) => (
+              <button key={kind} className="buildCard" data-kind={kind}>
+                <span className="emoji">{STRUCTURE_DEFS[kind].emoji}</span>
+                <span>{t(STRUCTURE_DEFS[kind].labelKey)}</span>
+              </button>
+            ))}
           </div>
           <button id="closeBuild">{t('build.close')}</button>
         </div>

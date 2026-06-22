@@ -5,17 +5,9 @@
 // connection without entering the 3D game. Mirrors the in-game #adminPanel; the connection + state
 // live in useLobbyAdmin (wired in use-game), this is just the markup.
 import { t } from '../lib/i18n';
-import { STRUCTURE_KINDS } from '../lib/game-engine';
+import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { roleBadge } from '../lib/roster-roles';
 import type { useLobbyAdmin } from '../lib/hooks/use-lobby-admin';
-
-const STRUCTURE_LABEL_KEYS: Record<string, string> = {
-  trophy: 'build.trophy',
-  ball: 'build.ball',
-  figure: 'build.figure',
-  cola: 'build.cola',
-  steve: 'build.steve',
-};
 
 export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobbyAdmin> }) {
   const {
@@ -73,7 +65,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
             const blocked = room.blockedStructures.includes(kind);
             return (
               <li key={kind}>
-                <span>{t(STRUCTURE_LABEL_KEYS[kind])}</span>
+                <span>{t(STRUCTURE_DEFS[kind].labelKey)}</span>
                 <button className={blocked ? 'blocked' : 'allowed'} onClick={() => toggleStructure(kind, blocked)}>
                   {blocked ? t('game_admin.blocked') : t('game_admin.allowed')}
                 </button>

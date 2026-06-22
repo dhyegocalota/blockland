@@ -1,23 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { SIZE_X } from './constants';
 import {
-  STRUCTURE_FORWARD, STRUCTURE_MARGIN, structureReach, structureTarget,
+  STRUCTURE_FORWARD, STRUCTURE_MARGIN, structureTarget,
 } from './structure-build';
-
-describe('structureReach', () => {
-  it('gives the ball the widest remesh', () => {
-    expect(structureReach('ball')).toBe(9);
-  });
-
-  it('gives cola a medium remesh', () => {
-    expect(structureReach('cola')).toBe(6);
-  });
-
-  it('uses the default for the rest', () => {
-    expect(structureReach('trophy')).toBe(4);
-    expect(structureReach('steve')).toBe(4);
-  });
-});
 
 describe('structureTarget', () => {
   it('centres on the aim hit when present', () => {

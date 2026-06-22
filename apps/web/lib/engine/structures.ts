@@ -1,4 +1,8 @@
-// Magic structures stamped voxel-by-voxel. Pure: caller supplies `set` and the origin.
+// The magic structures, as one self-contained registry: each entry owns its i18n keys, build-menu
+// emoji, remesh reach and the pure voxel stamp. Adding a structure = append one entry here (plus its
+// `build.*`/`toast.built_*` strings in lib/i18n/catalog.ts for both locales). The kind id list,
+// label/toast lookups, build-menu and admin toggles all derive from this — nothing is hand-maintained
+// per structure elsewhere. Pure: a stamp receives `set` and the origin.
 import {
   BEDROCK_ID, BLACK_ID, BLUE_ID, CELESTE_ID, CYAN_ID, FACE_ID,
   GOLD_ID, GRASS_ID, HAIR_ID, RED_ID, SKIN_ID, WHITE_ID,
@@ -6,11 +10,19 @@ import {
 
 export type SetVoxel = (x: number, y: number, z: number, id: number) => void;
 
-interface Stamp {
+export interface Stamp {
   set: SetVoxel;
   cx: number;
   gy: number;
   cz: number;
+}
+
+export interface StructureDef {
+  labelKey: string;
+  builtToastKey: string;
+  emoji: string;
+  reach: number;
+  stamp: (stamp: Stamp) => void;
 }
 
 function fillSquare(set: SetVoxel, cx: number, cz: number, y: number, half: number, id: number): void {
@@ -92,4 +104,24 @@ export function stampSteve({ set, cx, gy, cz }: Stamp): void {
   }
   for (let dx = -1; dx <= 1; dx++) for (let dz = 0; dz <= 1; dz++) put(dx, 10, dz, HAIR_ID);  // brown hair
   put(-1, 9, 1, HAIR_ID); put(1, 9, 1, HAIR_ID);                                              // hair back sides
+}
+
+const BALL_RADIUS = 8;
+const BALL_REACH = 9;
+const COLA_REACH = 6;
+const DEFAULT_REACH = 4;
+
+export const STRUCTURE_DEFS = {
+  trophy: { labelKey: 'build.trophy', builtToastKey: 'toast.built_trophy', emoji: '🏆', reach: DEFAULT_REACH, stamp: stampTrophy },
+  ball: { labelKey: 'build.ball', builtToastKey: 'toast.built_ball', emoji: '⚽', reach: BALL_REACH, stamp: (s) => stampBall({ ...s, radius: BALL_RADIUS }) },
+  figure: { labelKey: 'build.figure', builtToastKey: 'toast.built_figure', emoji: '🧑‍🦱', reach: DEFAULT_REACH, stamp: stampFigure },
+  cola: { labelKey: 'build.cola', builtToastKey: 'toast.built_cola', emoji: '🥤', reach: COLA_REACH, stamp: stampCola },
+  steve: { labelKey: 'build.steve', builtToastKey: 'toast.built_steve', emoji: '🧍', reach: DEFAULT_REACH, stamp: stampSteve },
+} satisfies Record<string, StructureDef>;
+
+export type StructureKind = keyof typeof STRUCTURE_DEFS;
+export const STRUCTURE_KINDS = Object.keys(STRUCTURE_DEFS) as StructureKind[];
+
+export function structureDef(kind: StructureKind): StructureDef {
+  return STRUCTURE_DEFS[kind];
 }
