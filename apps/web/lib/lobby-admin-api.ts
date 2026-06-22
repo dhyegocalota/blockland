@@ -19,5 +19,7 @@ export function lobbyAdminApi(net: NetClient): RoomAdminApi {
     setRole: (id, role) => net.sendAdminSetRole(id, role),
     setApprovalRequired: (on) => net.sendAdminSetApproval(on),
     approvePlayer: (accountId) => net.sendAdminApprove(accountId),
+    rejectPlayer: (accountId) => net.sendAdminReject(accountId),
+    unban: (ip) => net.sendAdminUnban(ip),
   };
 }

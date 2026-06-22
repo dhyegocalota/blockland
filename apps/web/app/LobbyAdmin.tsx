@@ -21,7 +21,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
   const {
     state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
-    pendingApprovals, toggleApprovalRequired, approvePlayer,
+    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, bans, unban,
   } = lobby;
 
   if (!isAdmin && !isModerator) {
@@ -57,10 +57,10 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
                   {player.name}
                 </span>
                 <span className="adminPlayerActions">
-                  <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
+                  {isAdmin && <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>}
                   {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
-                  <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
-                  {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
+                  {isAdmin && <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>}
+                  {(isAdmin || isModerator) && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
                   {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
                 </span>
               </li>
@@ -95,6 +95,22 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
                   <span className="playerName">{entry.name}</span>
                   <span className="adminPlayerActions">
                     <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
+                    <button className="ban" onClick={() => rejectPlayer(entry.accountId)}>{t('game_admin.reject')}</button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {isAdmin && bans.length > 0 && (
+          <>
+            <span className="adminLabel">{t('game_admin.banned')}</span>
+            <ul id="adminBanned">
+              {bans.map((entry) => (
+                <li key={entry.ip}>
+                  <span className="playerName">{entry.name || entry.ip}</span>
+                  <span className="adminPlayerActions">
+                    <button className="role" onClick={() => unban(entry.ip)}>{t('game_admin.unban')}</button>
                   </span>
                 </li>
               ))}

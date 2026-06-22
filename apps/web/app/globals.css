@@ -306,6 +306,26 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 #approvalOverlay button:active { transform: translateY(4px); box-shadow: 0 2px 0 #00000022; }
 
+/* A newer build is live: a non-dismissable screen that forces a reload so nobody plays a stale build. */
+#updateOverlay {
+  position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .82); backdrop-filter: blur(7px); padding: 16px;
+}
+#updateOverlay .panel {
+  background: linear-gradient(#ffffff, #e9f0ff); border: 6px solid #fff; border-radius: 28px;
+  padding: 26px 28px; max-width: 460px; width: 100%; text-align: center; box-shadow: 0 24px 60px #0007;
+  animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
+}
+#updateOverlay .updateSpinner { font-size: 54px; animation: bob 1.6s ease-in-out infinite; }
+#updateOverlay h2 { color: var(--ink); font-size: clamp(20px, 5vw, 27px); font-weight: 900; margin: 8px 0; }
+#updateOverlay p { color: #3a4a6a; font-weight: 800; font-size: 15px; margin-bottom: 20px; }
+#updateOverlay button {
+  font-family: inherit; font-size: 20px; font-weight: 900; color: #fff;
+  background: linear-gradient(#5b9dff, #3d6dff); border: 5px solid #fff; border-radius: 20px;
+  padding: 12px 34px; cursor: pointer; box-shadow: 0 7px 0 #2a4dc4; transition: transform .1s;
+}
+#updateOverlay button:active { transform: translateY(5px); box-shadow: 0 2px 0 #2a4dc4; }
+
 /* ---------- Build menu ---------- */
 #buildMenu {
   position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
@@ -489,32 +509,32 @@ input, textarea, select { font-size: max(16px, 1em); }
 #adminPeace.on, #adminPvp.on, #adminChat.on, #adminApproval.on, #adminInfinite.on, #adminSuspend.on { background: rgba(91,216,106,.35); border-color: var(--gold); }
 #adminPeace:active, #adminPvp:active, #adminChat:active, #adminApproval:active, #adminInfinite:active, #adminSuspend:active { transform: translateY(2px); }
 #adminBody .adminLabel { color: #cbb8ff; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-#adminStructures, #adminPlayers, #adminPending { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+#adminStructures, #adminPlayers, #adminPending, #adminBanned { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 #adminStructures li { display: flex; align-items: center; gap: 8px; }
 #adminStructures li > span:first-child {
   flex: 1; color: #fff; font-weight: 700; font-size: 13px; word-break: break-word;
 }
 /* Each player is a row that stacks: the name (with its role badge) on its own full-width line so it
    never starves into a 1-char vertical column, then the action buttons wrapping neatly below it. */
-#adminPlayers li, #adminPending li {
+#adminPlayers li, #adminPending li, #adminBanned li {
   display: flex; flex-direction: column; gap: 6px;
   background: rgba(255,255,255,.06); border-radius: 10px; padding: 7px 9px;
 }
-#adminPlayers .playerName, #adminPending .playerName {
+#adminPlayers .playerName, #adminPending .playerName, #adminBanned .playerName {
   display: flex; align-items: center; gap: 6px; color: #fff; font-weight: 800; font-size: 13px; word-break: break-word;
 }
 #adminPlayers .playerName .roleBadge, #adminPending .playerName .roleBadge { font-size: 14px; line-height: 1; }
-#adminPlayers .adminPlayerActions, #adminPending .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; }
-#adminStructures button, #adminPlayers button, #adminPending button {
+#adminPlayers .adminPlayerActions, #adminPending .adminPlayerActions, #adminBanned .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; }
+#adminStructures button, #adminPlayers button, #adminPending button, #adminBanned button {
   font-family: inherit; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff;
   background: rgba(123,79,194,.45); border: 2px solid rgba(255,255,255,.35); border-radius: 9px;
   padding: 4px 9px; white-space: nowrap; transition: transform .08s;
 }
-#adminStructures button:active, #adminPlayers button:active, #adminPending button:active { transform: translateY(2px); }
+#adminStructures button:active, #adminPlayers button:active, #adminPending button:active, #adminBanned button:active { transform: translateY(2px); }
 #adminStructures button.allowed { background: rgba(91,216,106,.3); }
 #adminStructures button.blocked { background: rgba(255,93,46,.4); }
 #adminPlayers button.kick { background: rgba(255,184,77,.45); border-color: var(--gold); }
-#adminPlayers button.ban { background: rgba(255,46,46,.5); border-color: rgba(255,93,46,.7); }
+#adminPlayers button.ban, #adminPending button.ban { background: rgba(255,46,46,.5); border-color: rgba(255,93,46,.7); }
 #adminReset, #adminResetScores {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,46,46,.45); border: 2px solid rgba(255,93,46,.7); border-radius: 10px;

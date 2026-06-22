@@ -290,6 +290,51 @@ describe('net client', () => {
     expect(lists).toEqual([incoming]);
   });
 
+  it('routes bans to onBans', () => {
+    const lists: unknown[] = [];
+    const { client } = makeClient({ handlers: { onBans: (m) => lists.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const incoming = { t: 'bans', bans: [{ ip: '1.2.3.4', name: 'Kid' }] };
+    socket.receive(incoming);
+    expect(lists).toEqual([incoming]);
+  });
+
+  it('a rejected hold is terminal: it stops the approval retry loop', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+
+    socket.receive({ t: 'error', code: 'needs_approval', msg: 'waiting' });
+    expect(client.state).toBe('needs_approval');
+
+    // The admin rejects: terminal — the next close must NOT schedule another join.
+    socket.receive({ t: 'error', code: 'rejected', msg: 'no' });
+    expect(client.state).toBe('rejected');
+    const before = MockWebSocket.instances.length;
+    socket.serverClose();
+    vi.runAllTimers();
+    expect(MockWebSocket.instances.length).toBe(before);
+    expect(client.state).toBe('rejected');
+  });
+
+  it('serializes admin reject and unban messages', () => {
+    const { client } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    client.sendAdminReject('acc1');
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_reject', account_id: 'acc1' }));
+    client.sendAdminUnban('1.2.3.4');
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_unban', ip: '1.2.3.4' }));
+  });
+
   it('a needs_approval hold freezes on a waiting state and silently re-joins until approved', () => {
     const { client } = makeClient();
     client.connect();

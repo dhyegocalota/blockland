@@ -29,6 +29,8 @@ function recordingNet() {
     sendAdminSuspend: record('sendAdminSuspend'),
     sendAdminSetApproval: record('sendAdminSetApproval'),
     sendAdminApprove: record('sendAdminApprove'),
+    sendAdminReject: record('sendAdminReject'),
+    sendAdminUnban: record('sendAdminUnban'),
     sendAdminSetRole: record('sendAdminSetRole'),
     ping: 0,
     state: 'online' as const,
@@ -53,6 +55,8 @@ describe('lobbyAdminApi', () => {
     api.suspendRoom(true);
     api.setApprovalRequired(true);
     api.approvePlayer('acc1');
+    api.rejectPlayer('acc2');
+    api.unban('1.2.3.4');
 
     expect(calls).toEqual([
       ['sendAdminSetPeace', false],
@@ -67,6 +71,8 @@ describe('lobbyAdminApi', () => {
       ['sendAdminSuspend', true],
       ['sendAdminSetApproval', true],
       ['sendAdminApprove', 'acc1'],
+      ['sendAdminReject', 'acc2'],
+      ['sendAdminUnban', '1.2.3.4'],
     ]);
   });
 });

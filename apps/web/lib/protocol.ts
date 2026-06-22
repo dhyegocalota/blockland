@@ -4,7 +4,7 @@
 
 import type { ClientMsg, EditCell, EditOp, Role, ServerMsg } from './protocol.gen';
 
-export type { Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerState, Role, ServerMsg } from './protocol.gen';
+export type { BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerState, Role, ServerMsg } from './protocol.gen';
 
 export const join = (params: {
   tenant: string;
@@ -77,6 +77,10 @@ export const adminSetRole = (id: number, role: Role): ClientMsg => ({ t: 'admin_
 export const adminSetApproval = (on: boolean): ClientMsg => ({ t: 'admin_set_approval', on });
 
 export const adminApprove = (accountId: string): ClientMsg => ({ t: 'admin_approve', account_id: accountId });
+
+export const adminReject = (accountId: string): ClientMsg => ({ t: 'admin_reject', account_id: accountId });
+
+export const adminUnban = (ip: string): ClientMsg => ({ t: 'admin_unban', ip });
 
 export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
 

@@ -33,6 +33,11 @@ export const DAMAGE_BLIP_FREQ = 140;
 export const DAMAGE_BLIP_DURATION = 0.18;
 export const DIG_BLIP_FREQ = 180;
 export const DIG_BLIP_DURATION = 0.05;
+// A two-note rising cue played when a room-wide event lands (world reset, scores reset, suspend).
+export const CHIME_LOW_FREQ = 587;
+export const CHIME_HIGH_FREQ = 880;
+export const CHIME_NOTE_DURATION = 0.12;
+export const CHIME_GAP_MS = 110;
 
 // ---------- Structures ----------
 // Reach for aiming a magic structure (longer than block REACH so you can place one across a clearing).

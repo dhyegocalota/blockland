@@ -34,6 +34,7 @@ import { groundHeight as groundHeightAt } from './engine/terrain-column';
 import { readJoystick } from './engine/joystick';
 import { type EngineContext } from './engine/context';
 import {
+  CHIME_GAP_MS, CHIME_HIGH_FREQ, CHIME_LOW_FREQ, CHIME_NOTE_DURATION,
   DAMAGE_BLIP_DURATION, DAMAGE_BLIP_FREQ, DEFAULT_APP_VERSION, DIG_BLIP_DURATION, DIG_BLIP_FREQ,
   HURT_COOLDOWN, HURT_FLASH_MS, MAX_HEARTS, MOUSE_LOOK_SENSITIVITY, POS_SAVE_MS, RESPAWN_DELAY_MS,
   SPAWN_OFFSET_Z, STRUCTURE_REACH_DIST, TOAST_DURATION_MS, TOUCH_LOOK_SENSITIVITY, VOID_FALL_Y,
@@ -88,6 +89,8 @@ export interface RoomAdminApi {
   setRole(id: number, role: Role): void;
   setApprovalRequired(on: boolean): void;
   approvePlayer(accountId: string): void;
+  rejectPlayer(accountId: string): void;
+  unban(ip: string): void;
 }
 
 // The bridge connects the React HUD to the engine: the HUD supplies the player name (resolved at
@@ -98,6 +101,7 @@ export interface GameApi extends RoomAdminApi {
   sendChat(text: string): void;
   setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
+  chime(): void;
   debugSnapshot(): DebugSnapshot;
 }
 
@@ -307,6 +311,9 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     setRole: (id, role) => coop?.sendAdminSetRole(id, role),
     setApprovalRequired: (on) => coop?.sendAdminSetApproval(on),
     approvePlayer: (accountId) => coop?.sendAdminApprove(accountId),
+    rejectPlayer: (accountId) => coop?.sendAdminReject(accountId),
+    unban: (ip) => coop?.sendAdminUnban(ip),
+    chime,
     setInfiniteResources: (on) => {
       if (coop) { coop.sendAdminSetInfinite(on); return; }
       state.infiniteResources = on;
@@ -481,6 +488,7 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
   // resets without being kicked back to the lobby. The server's reset already cleared its own world
   // and creatures; the local creatures (single-player) and poofs are cleared to match.
   function resetLocalWorld(): void {
+    chime();
     world.reset();
     buildWelcomeMonument();
     updateChunks(true);
@@ -852,6 +860,12 @@ export function initGame(brand: Brand, bridge?: CoopBridge): (() => void) | unde
     g.gain.value = 0.06; o.connect(g); g.connect(audio.destination);
     o.start(); g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
     o.stop(audio.currentTime + dur);
+  }
+
+  // A friendly two-note rising cue for room-wide events (world reset, scores reset, suspend).
+  function chime(): void {
+    blip(CHIME_LOW_FREQ, CHIME_NOTE_DURATION);
+    setTimeout(() => blip(CHIME_HIGH_FREQ, CHIME_NOTE_DURATION), CHIME_GAP_MS);
   }
 
   // ---------- HUD ----------

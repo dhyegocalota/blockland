@@ -23,9 +23,10 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   room_closed: 'coop.room_closed',
   time_up: 'coop.time_up',
   needs_approval: null,
+  rejected: 'coop.rejected',
 };
 
-const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up'];
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'rejected'];
 
 const FEED_ICONS: Record<FeedEventKind, string> = {
   join: '➕',
@@ -78,7 +79,8 @@ export default function Game() {
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
-    pendingApprovals, toggleApprovalRequired, approvePlayer,
+    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
+    bans, unban, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   } = useGame();
@@ -89,6 +91,19 @@ export default function Game() {
   const bannerKey = netState ? BANNER_KEYS[netState] : null;
   const severe = netState ? SEVERE_STATES.includes(netState) : false;
   const showPing = netState === 'online';
+
+  if (updateRequired) {
+    return (
+      <div id="updateOverlay" role="alertdialog" aria-modal="true">
+        <div className="panel">
+          <div className="updateSpinner" aria-hidden="true">✨</div>
+          <h2>{t('update.title')}</h2>
+          <p>{t('update.body')}</p>
+          <button onClick={() => window.location.reload()}>{t('update.button')}</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -181,6 +196,22 @@ export default function Game() {
                         <span className="playerName">{entry.name}</span>
                         <span className="adminPlayerActions">
                           <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
+                          <button className="ban" onClick={() => rejectPlayer(entry.accountId)}>{t('game_admin.reject')}</button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {isAdmin && bans.length > 0 && (
+                <>
+                  <span className="adminLabel">{t('game_admin.banned')}</span>
+                  <ul id="adminBanned">
+                    {bans.map((entry) => (
+                      <li key={entry.ip}>
+                        <span className="playerName">{entry.name || entry.ip}</span>
+                        <span className="adminPlayerActions">
+                          <button className="role" onClick={() => unban(entry.ip)}>{t('game_admin.unban')}</button>
                         </span>
                       </li>
                     ))}
@@ -207,10 +238,10 @@ export default function Game() {
                         {player.name}
                       </span>
                       <span className="adminPlayerActions">
-                        <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>
+                        {isAdmin && <button className="role" onClick={() => setRole(player.id, 'moderator')}>{t('game_admin.make_mod')}</button>}
                         {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
-                        <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>
-                        {isAdmin && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
+                        {isAdmin && <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>}
+                        {(isAdmin || isModerator) && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
                         {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
                       </span>
                     </li>

@@ -65,6 +65,11 @@ export interface PendingApproval {
   email: string;
 }
 
+export interface Banned {
+  ip: string;
+  name: string;
+}
+
 export interface CoopHud {
   onState(state: NetState): void;
   onPing(ping: number): void;
@@ -76,6 +81,7 @@ export interface CoopHud {
   onRole(role: { admin: boolean; moderator: boolean }): void;
   onRoomState(room: RoomState): void;
   onPendingApprovals(pending: PendingApproval[]): void;
+  onBans(bans: Banned[]): void;
   onError(code: string): void;
 }
 
@@ -183,6 +189,8 @@ export interface CoopController {
   readonly infinite: boolean;
   sendAdminSetApproval(on: boolean): void;
   sendAdminApprove(accountId: string): void;
+  sendAdminReject(accountId: string): void;
+  sendAdminUnban(ip: string): void;
   update(now: number): void;
   getColliders(): ActorPos[];
   getCreatures(): CoopCreature[];
@@ -540,6 +548,11 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onPendingApprovals(pending);
         debug('coop', 'pending approvals', { count: pending.length });
       },
+      onBans: (msg) => {
+        const bans = msg.bans.map((b) => ({ ip: b.ip, name: b.name }));
+        opts.hud.onBans(bans);
+        debug('coop', 'bans', { count: bans.length });
+      },
       onHurt: (msg) => {
         opts.applyHurt(msg.by);
         debug('coop', 'hurt', { by: msg.by });
@@ -672,6 +685,12 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminApprove(accountId): void {
       net.sendAdminApprove(accountId);
+    },
+    sendAdminReject(accountId): void {
+      net.sendAdminReject(accountId);
+    },
+    sendAdminUnban(ip): void {
+      net.sendAdminUnban(ip);
     },
     update(now): void {
       for (const avatar of avatars.values()) {

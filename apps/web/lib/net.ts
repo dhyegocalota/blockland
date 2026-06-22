@@ -6,6 +6,8 @@
 import { debug } from './log';
 import {
   adminApprove,
+  adminReject,
+  adminUnban,
   adminBan,
   adminKick,
   adminResetWorld,
@@ -50,7 +52,8 @@ export type NetState =
   | 'kicked'
   | 'room_closed'
   | 'time_up'
-  | 'needs_approval';
+  | 'needs_approval'
+  | 'rejected';
 
 // The per-tick Snapshot travels as a compact numeric array (no field names) to keep it tiny; this
 // module decodes it back into the named shape the rest of the client consumes, so only net.ts knows
@@ -107,6 +110,7 @@ type ChatMsg = Extract<ServerMsg, { t: 'chat' }>;
 type EventMsg = Extract<ServerMsg, { t: 'event' }>;
 type RoomStateMsg = Extract<ServerMsg, { t: 'room_state' }>;
 type PendingApprovalsMsg = Extract<ServerMsg, { t: 'pending_approvals' }>;
+type BansMsg = Extract<ServerMsg, { t: 'bans' }>;
 type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
@@ -124,6 +128,7 @@ export interface NetHandlers {
   onEvent?(msg: EventMsg): void;
   onRoomState?(msg: RoomStateMsg): void;
   onPendingApprovals?(msg: PendingApprovalsMsg): void;
+  onBans?(msg: BansMsg): void;
   onHurt?(msg: HurtMsg): void;
   onRole?(msg: RoleMsg): void;
   onAttack?(msg: AttackMsg): void;
@@ -182,6 +187,8 @@ export interface NetClient {
   sendAdminSetInfinite(on: boolean): void;
   sendAdminSetApproval(on: boolean): void;
   sendAdminApprove(accountId: string): void;
+  sendAdminReject(accountId: string): void;
+  sendAdminUnban(ip: string): void;
   readonly ping: number;
   readonly state: NetState;
 }
@@ -271,6 +278,10 @@ export function createNet(opts: NetOptions): NetClient {
       opts.handlers.onPendingApprovals?.(msg);
       return;
     }
+    if (msg.t === 'bans') {
+      opts.handlers.onBans?.(msg);
+      return;
+    }
     if (msg.t === 'hurt') {
       opts.handlers.onHurt?.(msg);
       return;
@@ -319,6 +330,7 @@ export function createNet(opts: NetOptions): NetClient {
     reclaimed: 'kicked',
     claim_required: 'kicked',
     needs_login: 'kicked',
+    rejected: 'rejected',
   };
 
   function handleError(code: string, message: string): void {
@@ -327,7 +339,7 @@ export function createNet(opts: NetOptions): NetClient {
     // Not terminal: stay on the frozen waiting screen and let the close handler re-join until approved.
     if (code === 'needs_approval') { waitingApproval = true; setState('needs_approval'); return; }
     const terminal = TERMINAL_ERRORS[code];
-    if (terminal) { terminalReason = terminal; setState(terminal); }
+    if (terminal) { waitingApproval = false; terminalReason = terminal; setState(terminal); }
   }
 
   function handleClose(): void {
@@ -456,6 +468,12 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminApprove(accountId): void {
       rawSend(encodeClientMsg(adminApprove(accountId)));
+    },
+    sendAdminReject(accountId): void {
+      rawSend(encodeClientMsg(adminReject(accountId)));
+    },
+    sendAdminUnban(ip): void {
+      rawSend(encodeClientMsg(adminUnban(ip)));
     },
     get ping(): number {
       return ping;

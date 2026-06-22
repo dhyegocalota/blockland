@@ -16,6 +16,7 @@ import { useChat } from '../lib/hooks/use-chat';
 import { useFeed } from '../lib/hooks/use-feed';
 import { useRoomAdmin } from '../lib/hooks/use-room-admin';
 import { useLobbyAdmin } from '../lib/hooks/use-lobby-admin';
+import { useUpdateCheck } from '../lib/hooks/use-update-check';
 import type { NetState } from '../lib/net';
 
 const NAME_KEY = 'bl-name';
@@ -74,14 +75,17 @@ export function useGame() {
   const gameApiRef = useRef<GameApi | null>(null);
   const soloRef = useRef(false);
   const loginClearedRef = useRef(false);
+  const suspendedRef = useRef(false);
 
   const { entries: feed, pushFeedEntry } = useFeed();
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
     resetArmed, resetWorld, resetScoresArmed, resetScores, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, setRole, suspendRoom,
-    pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer,
+    pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
+    bans, setBans, unban,
   } = useRoomAdmin(gameApiRef);
+  const updateRequired = useUpdateCheck();
   const lobbyAdminActive = (lobbyAdmin || lobbyModerator) && !solo && !offline && !started;
   const lobby = useLobbyAdmin({
     tenant: brand ? brand.id : null,
@@ -152,12 +156,20 @@ export function useGame() {
         onChat: (from, text) => pushChatLine(from, text),
         onCount: (count) => setOnline(count),
         onRoster: (players) => setRoster(players),
-        onEvent: (event) => pushFeedEntry(event),
+        onEvent: (event) => {
+          if (event.kind === 'reset_scores') gameApiRef.current?.chime();
+          pushFeedEntry(event);
+        },
         // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
         onScore: () => undefined,
         onRole: (role) => { setIsAdmin(role.admin); setIsModerator(role.moderator); },
-        onRoomState: (state) => setRoom(state),
+        onRoomState: (state) => {
+          if (state.suspended && !suspendedRef.current) gameApiRef.current?.chime();
+          suspendedRef.current = state.suspended;
+          setRoom(state);
+        },
         onPendingApprovals: (pending) => setPendingApprovals(pending),
+        onBans: (bans) => setBans(bans),
         onError: (code) => {
           const key = AUTH_ERROR_KEYS[code];
           if (key) setAuthToast(t(key));
@@ -171,7 +183,7 @@ export function useGame() {
       cleanup = mod.initGame(brand, bridge);
     });
     return () => { alive = false; if (cleanup) cleanup(); };
-  }, [brand, pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom, setPendingApprovals]);
+  }, [brand, pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom, setPendingApprovals, setBans]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -380,7 +392,8 @@ export function useGame() {
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
-    pendingApprovals, toggleApprovalRequired, approvePlayer,
+    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
+    bans, unban, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
   };
