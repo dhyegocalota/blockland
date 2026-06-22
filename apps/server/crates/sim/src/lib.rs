@@ -11,6 +11,9 @@ pub const SIZE_Y: i32 = 48;
 pub const GROUND: i32 = 10;
 pub const WATER_LEVEL: i32 = GROUND - 1;
 pub const WORLD_SIZE: i32 = 163840;
+/// Blocks the spawn sits north of the exact world center so a player never lands inside the client's
+/// welcome monument (which the web builds at the center). Mirrors the web `spawnPoint` z offset.
+const SPAWN_MONUMENT_CLEARANCE: i32 = 4;
 /// Horizontal chunk edge for procedural decoration (trees + plants). Mirrors the TS `CHUNK`: the
 /// decoration RNG is seeded per chunk so every player and a post-reset regen see the same world.
 pub const CHUNK: i32 = 32;
@@ -349,10 +352,11 @@ impl World {
         }
     }
 
-    /// A reasonable spawn near the center of the world.
+    /// A reasonable spawn near the center of the world, offset a few blocks off the exact centre so the
+    /// player never lands inside the client's welcome monument (built at the center) and gets wedged.
     pub fn spawn() -> [f32; 3] {
         let cx = WORLD_SIZE / 2;
-        let cz = WORLD_SIZE / 2;
+        let cz = WORLD_SIZE / 2 + SPAWN_MONUMENT_CLEARANCE;
         let y = height_at(cx, cz) as f32 + 3.0;
         [cx as f32 + 0.5, y, cz as f32 + 0.5]
     }
@@ -649,6 +653,20 @@ mod tests {
         assert!(s[0] > 0.0 && s[0] < WORLD_SIZE as f32);
         assert!(s[2] > 0.0 && s[2] < WORLD_SIZE as f32);
         assert!(s[1] > 0.0 && s[1] < SIZE_Y as f32 + 8.0);
+    }
+
+    #[test]
+    fn spawn_clears_the_centre_monument() {
+        // The web builds a welcome monument at the exact world center; the spawn must sit clear of it
+        // (and its 1-block neighbours) so a co-op player who adopts this spawn is never wedged inside it.
+        let s = World::spawn();
+        let centre = (WORLD_SIZE / 2) as f32 + 0.5;
+        assert_eq!(s[0], centre, "spawn stays on the centre x");
+        assert!(
+            s[2] - centre >= SPAWN_MONUMENT_CLEARANCE as f32,
+            "spawn is offset clear of the centre monument, got z offset {}",
+            s[2] - centre
+        );
     }
 
     fn sorted(mut v: Vec<(i32, i32, i32, u8)>) -> Vec<(i32, i32, i32, u8)> {
