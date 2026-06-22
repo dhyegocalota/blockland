@@ -14,6 +14,7 @@ export interface RoomAdminApi {
   setAdminChat(on: boolean): void;
   kickPlayer(id: number): void;
   banPlayer(id: number): void;
+  reportPlayer(id: number): void;
   resetWorld(): void;
   resetScores(): void;
   suspendRoom(on: boolean): void;

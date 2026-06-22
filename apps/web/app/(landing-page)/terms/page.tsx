@@ -229,7 +229,7 @@ const S: Record<string, CSSProperties> = {
     minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22,
     padding: '32px 20px 48px',
     background: 'radial-gradient(circle at 50% 12%, #bfeaff, #7ec8ff 55%, #4aa3e0)',
-    fontFamily: "'Baloo 2', 'Comic Sans MS', system-ui, sans-serif", color: '#2a1a4a',
+    fontFamily: "'Comic Sans MS', system-ui, sans-serif", color: '#2a1a4a',
   },
   back: {
     alignSelf: 'flex-start', maxWidth: 680, width: '100%', color: '#1f3a63', fontWeight: 800,

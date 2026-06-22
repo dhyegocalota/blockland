@@ -119,6 +119,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       setAdminChat: (on) => { if (runtime.coop) { runtime.coop.sendAdminSetChat(on); return; } runtime.applyLocalRoom({ ...runtime.currentRoom(), chatEnabled: on }); },
       kickPlayer: (id) => runtime.coop?.sendAdminKick(id),
       banPlayer: (id) => runtime.coop?.sendAdminBan(id),
+      reportPlayer: (id) => runtime.coop?.sendAdminReport(id),
       resetWorld: () => { if (runtime.coop) { runtime.coop.sendAdminResetWorld(); return; } runtime.resetLocalWorld(); },
       resetScores: () => runtime.coop?.sendAdminResetScores(),
       suspendRoom: (on) => runtime.coop?.sendAdminSuspend(on),

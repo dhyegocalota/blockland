@@ -64,6 +64,8 @@ export const adminKick = (id: number): ClientMsg => ({ t: 'admin_kick', id });
 
 export const adminBan = (id: number): ClientMsg => ({ t: 'admin_ban', id });
 
+export const adminReport = (id: number): ClientMsg => ({ t: 'admin_report', id });
+
 export const attackPlayer = (id: number): ClientMsg => ({ t: 'attack_player', id });
 
 export const adminResetWorld = (): ClientMsg => ({ t: 'admin_reset_world' });

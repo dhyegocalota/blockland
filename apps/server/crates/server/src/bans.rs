@@ -10,6 +10,10 @@ use dashmap::DashMap;
 
 use crate::db::Db;
 
+// A banned IP is kept only long enough to deter a quick rejoin, then dropped — we never retain it
+// indefinitely. Mirrored in the public Privacy Policy.
+const BAN_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
 pub struct Bans {
     // ip -> the banned player's name, so admins unban by name. Bans restored from the db on restart have
     // no stored name (the db keeps only the ip), so they fall back to showing the ip.
@@ -22,6 +26,11 @@ impl Bans {
     /// the next successful start.
     pub async fn load(db: Arc<Db>) -> Self {
         let ips = DashMap::new();
+        match db.purge_stale_bans(BAN_RETENTION_MS).await {
+            Ok(removed) if removed > 0 => tracing::info!(count = removed, "purged stale bans"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to purge stale bans"),
+        }
         match db.all_bans().await {
             Ok(entries) => {
                 for entry in entries {
@@ -141,6 +150,16 @@ mod tests {
                 ("::1".into(), "Cy".into()),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn load_purges_stale_bans_before_warming() {
+        let db = Arc::new(Db::memory().await);
+        db.add_ban_at("198.51.100.9", 1).await.unwrap();
+        db.add_ban("198.51.100.10").await.unwrap();
+        let bans = Bans::load(db).await;
+        assert!(!bans.is_banned("198.51.100.9".parse().unwrap()));
+        assert!(bans.is_banned("198.51.100.10".parse().unwrap()));
     }
 
     #[tokio::test]

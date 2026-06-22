@@ -25,6 +25,12 @@ export function isValidEmail(raw: string): boolean {
   return true;
 }
 
+// Verifiable parental consent gate: the parent must affirmatively agree (a checked box posts `true`)
+// before we capture their contact data. Anything other than a literal `true` is treated as no consent.
+export function isConsentGiven(value: unknown): boolean {
+  return value === true;
+}
+
 export async function joinWaitlist(entry: WaitlistEntry): Promise<void> {
   const res = await signedFetch('POST', '/internal/waitlist', entry);
   if (!res.ok) throw new Error(`waitlist: join failed (${res.status})`);

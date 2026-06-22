@@ -4,8 +4,8 @@
 // label/toast lookups, build-menu and admin toggles all derive from this — nothing is hand-maintained
 // per structure elsewhere. Pure: a stamp receives `set` and the origin.
 import {
-  BEDROCK_ID, BLACK_ID, BLUE_ID, CELESTE_ID, CYAN_ID, FACE_ID,
-  GOLD_ID, GRASS_ID, HAIR_ID, RED_ID, SKIN_ID, WHITE_ID,
+  BEDROCK_ID, BLACK_ID, BLUE_ID, CELESTE_ID, FACE_ID,
+  GOLD_ID, GRASS_ID, RED_ID, SKIN_ID, WHITE_ID,
 } from './constants';
 
 export type SetVoxel = (x: number, y: number, z: number, id: number) => void;
@@ -77,12 +77,11 @@ export function stampFigure({ set, cx, gy, cz }: Stamp): void {
   put(0, 8, 0, FACE_ID);                                                                     // the player face
 }
 
-export function stampCola({ set, cx, gy, cz }: Stamp): void {
+export function stampBottle({ set, cx, gy, cz }: Stamp): void {
   const R = 4, H = 17;
   for (let dy = 0; dy < H; dy++) {
-    let id = RED_ID;
+    let id = BLUE_ID;
     if (dy === 0 || dy >= H - 2) id = 3;          // silvery top + bottom rim
-    if (dy >= 7 && dy <= 9) id = WHITE_ID;          // white band
     const r = (dy === 0 || dy === H - 1) ? R - 1 : R;
     for (let dx = -r; dx <= r; dx++)
       for (let dz = -r; dz <= r; dz++) {
@@ -90,33 +89,33 @@ export function stampCola({ set, cx, gy, cz }: Stamp): void {
         set(cx + dx, gy + dy, cz + dz, id);
       }
   }
-  set(cx, gy + H, cz, 3);                          // little pull-tab knob
+  set(cx, gy + H, cz, 3);                          // little cap knob
 }
 
-export function stampSteve({ set, cx, gy, cz }: Stamp): void {
+export function stampHero({ set, cx, gy, cz }: Stamp): void {
   const put = (dx: number, dy: number, dz: number, id: number): void => set(cx + dx, gy + dy, cz + dz, id);
   for (let dz = 0; dz <= 1; dz++) {
-    for (let dy = 0; dy <= 3; dy++) { put(-1, dy, dz, BLUE_ID); put(1, dy, dz, BLUE_ID); } // jeans legs
-    put(-1, 0, dz, BEDROCK_ID); put(1, 0, dz, BEDROCK_ID);                                   // shoes
-    for (let dy = 4; dy <= 7; dy++) for (let dx = -1; dx <= 1; dx++) put(dx, dy, dz, CYAN_ID); // cyan shirt
+    for (let dy = 0; dy <= 3; dy++) { put(-1, dy, dz, GRASS_ID); put(1, dy, dz, GRASS_ID); } // green trousers
+    put(-1, 0, dz, BEDROCK_ID); put(1, 0, dz, BEDROCK_ID);                                   // boots
+    for (let dy = 4; dy <= 7; dy++) for (let dx = -1; dx <= 1; dx++) put(dx, dy, dz, RED_ID); // red shirt
     for (let dy = 4; dy <= 6; dy++) { put(-2, dy, dz, SKIN_ID); put(2, dy, dz, SKIN_ID); }   // bare arms
     for (let dy = 8; dy <= 9; dy++) for (let dx = -1; dx <= 1; dx++) put(dx, dy, dz, SKIN_ID); // head
   }
-  for (let dx = -1; dx <= 1; dx++) for (let dz = 0; dz <= 1; dz++) put(dx, 10, dz, HAIR_ID);  // brown hair
-  put(-1, 9, 1, HAIR_ID); put(1, 9, 1, HAIR_ID);                                              // hair back sides
+  for (let dx = -1; dx <= 1; dx++) for (let dz = 0; dz <= 1; dz++) put(dx, 10, dz, GOLD_ID);  // blond hair
+  put(-1, 9, 1, GOLD_ID); put(1, 9, 1, GOLD_ID);                                              // hair back sides
 }
 
 const BALL_RADIUS = 8;
 const BALL_REACH = 9;
-const COLA_REACH = 6;
+const BOTTLE_REACH = 6;
 const DEFAULT_REACH = 4;
 
 export const STRUCTURE_DEFS = {
   trophy: { labelKey: 'build.trophy', builtToastKey: 'toast.built_trophy', emoji: '🏆', reach: DEFAULT_REACH, stamp: stampTrophy },
   ball: { labelKey: 'build.ball', builtToastKey: 'toast.built_ball', emoji: '⚽', reach: BALL_REACH, stamp: (s) => stampBall({ ...s, radius: BALL_RADIUS }) },
   figure: { labelKey: 'build.figure', builtToastKey: 'toast.built_figure', emoji: '🧑‍🦱', reach: DEFAULT_REACH, stamp: stampFigure },
-  cola: { labelKey: 'build.cola', builtToastKey: 'toast.built_cola', emoji: '🥤', reach: COLA_REACH, stamp: stampCola },
-  steve: { labelKey: 'build.steve', builtToastKey: 'toast.built_steve', emoji: '🧍', reach: DEFAULT_REACH, stamp: stampSteve },
+  bottle: { labelKey: 'build.bottle', builtToastKey: 'toast.built_bottle', emoji: '🍾', reach: BOTTLE_REACH, stamp: stampBottle },
+  hero: { labelKey: 'build.hero', builtToastKey: 'toast.built_hero', emoji: '🦸', reach: DEFAULT_REACH, stamp: stampHero },
 } satisfies Record<string, StructureDef>;
 
 export type StructureKind = keyof typeof STRUCTURE_DEFS;

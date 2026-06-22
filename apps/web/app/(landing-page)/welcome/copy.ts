@@ -23,7 +23,7 @@ export const COPY = {
     badge: '🔒 Pré-lançamento',
     headline: 'Seu filho brinca online com os amigos — e você sabe exatamente quem está do outro lado.',
     subhead:
-      'Mundo de blocos 3D estilo Minecraft, multiplayer: sem estranhos, sem chat tóxico, sem anúncio e sem compra escondida. Abre no navegador e você controla pelo seu celular.',
+      'Mundo de blocos 3D, multiplayer: sem estranhos, sem chat tóxico, sem anúncio e sem compra escondida. Abre no navegador e você controla pelo seu celular.',
     heroCta: 'Quero garantir minha vaga',
     demoCta: '🎮 Jogar a demo grátis (5 min)',
     demoNote: 'Sem cadastro. Abre no navegador e você sente o jogo na hora.',
@@ -68,6 +68,7 @@ export const COPY = {
     emailPlaceholder: 'voce@email.com',
     phoneLabel: 'WhatsApp (opcional)',
     phonePlaceholder: '(11) 90000-0000',
+    consentLabel: 'Sou o adulto responsável, concordo com a Política de Privacidade e os Termos de Uso, e assumo integralmente a responsabilidade de supervisionar, em todos os momentos, o uso e os dados da(s) criança(s) sob minha responsabilidade.',
     submit: 'Entrar na lista',
     submitting: 'Entrando…',
     success:
@@ -89,6 +90,7 @@ export const COPY = {
     founderSign: '— Dhyego Calota, pai e criador do Blockland',
     terms: 'Termos de Uso',
     privacy: 'Política de Privacidade',
+    disclaimer: 'Blockland é um produto independente, sem afiliação, associação ou endosso da Mojang Synergies AB ou da Microsoft. Minecraft é marca registrada da Mojang.',
     companyLine: 'Logic Bit · CNPJ 32.555.315/0001-91',
     addressLine: 'R. Rio Grande do Norte, 1435 — Sala 708, Savassi, Belo Horizonte/MG',
     credit: 'Feito com 🧡 por Dhyego Calota',
@@ -97,7 +99,7 @@ export const COPY = {
     badge: '🔒 Pre-launch',
     headline: 'Your kid plays online with friends — and you know exactly who is on the other side.',
     subhead:
-      'A Minecraft-style 3D voxel world, multiplayer: no strangers, no toxic chat, no ads and no hidden purchases. Runs in the browser and you control it from your phone.',
+      'A 3D voxel block-building world, multiplayer: no strangers, no toxic chat, no ads and no hidden purchases. Runs in the browser and you control it from your phone.',
     heroCta: 'Save my spot',
     demoCta: '🎮 Play the free demo (5 min)',
     demoNote: 'No signup. Opens in the browser and you feel the game right away.',
@@ -142,6 +144,7 @@ export const COPY = {
     emailPlaceholder: 'you@email.com',
     phoneLabel: 'WhatsApp (optional)',
     phonePlaceholder: '+1 555 000 0000',
+    consentLabel: 'I am the responsible adult, I agree to the Privacy Policy and Terms of Use, and I take full responsibility for supervising, at all times, the use and the data of the child(ren) under my care.',
     submit: 'Join the list',
     submitting: 'Joining…',
     success:
@@ -163,6 +166,7 @@ export const COPY = {
     founderSign: '— Dhyego Calota, dad and creator of Blockland',
     terms: 'Terms of Use',
     privacy: 'Privacy Policy',
+    disclaimer: 'Blockland is an independent product, not affiliated with, associated with, or endorsed by Mojang Synergies AB or Microsoft. Minecraft is a trademark of Mojang.',
     companyLine: 'Logic Bit · CNPJ 32.555.315/0001-91',
     addressLine: 'R. Rio Grande do Norte, 1435 — Sala 708, Savassi, Belo Horizonte/MG',
     credit: 'Built with 🧡 by Dhyego Calota',

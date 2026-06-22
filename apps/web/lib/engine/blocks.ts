@@ -22,7 +22,7 @@ function noise(x: number, y: number): number {
   return h - Math.floor(h);
 }
 
-// Fill the base tone then scatter darker/lighter single pixels, Minecraft-style grain.
+// Fill the base tone then scatter darker/lighter single pixels for a pixelated grain.
 export function paint(base: string, dark: string, light: string): TexturePainter {
   return (g) => {
     g.fillStyle = base;

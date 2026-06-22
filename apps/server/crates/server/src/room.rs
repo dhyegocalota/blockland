@@ -602,6 +602,11 @@ impl Room {
         {
             Ok(events) => {
                 for event in events {
+                    // Moderation reports are private to admins/moderators; never replay them to a player.
+                    let is_report = event.kind == "admin" && event.detail.starts_with("report|");
+                    if is_report && !(role.is_admin() || role.is_moderator()) {
+                        continue;
+                    }
                     let _ = conn.try_send(ServerMsg::Event {
                         kind: event.kind,
                         name: event.name,
@@ -713,6 +718,12 @@ impl Room {
         }
         if let ClientMsg::AdminUnban { ip } = msg {
             self.on_admin_unban(id, ip);
+            return;
+        }
+
+        // A report reads the reporter + target and notifies admins, so handle before the single borrow.
+        if let ClientMsg::AdminReport { id: target } = msg {
+            self.on_admin_report(id, target);
             return;
         }
 
@@ -863,6 +874,10 @@ impl Room {
                 if text.trim().is_empty() {
                     return;
                 }
+                if !crate::chat::is_allowed(&text) {
+                    tracing::debug!(%id, "chat message blocked by moderation filter");
+                    return;
+                }
                 chat_out = Some(ServerMsg::Chat {
                     from: id,
                     name: p.name.clone(),
@@ -908,6 +923,7 @@ impl Room {
             | ClientMsg::AdminApprove { .. }
             | ClientMsg::AdminReject { .. }
             | ClientMsg::AdminUnban { .. }
+            | ClientMsg::AdminReport { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
             | ClientMsg::Respawn
@@ -1090,6 +1106,51 @@ impl Room {
             detail: format!("{}|{}", if ban { "ban" } else { "kick" }, target_name),
         });
         tracing::info!(tenant = %self.key.0, %admin_id, %target_id, ban, "player removed by admin");
+    }
+
+    /// File a moderation report against a player: a soft note an admin or moderator records. It is
+    /// pushed live only to admins/moderators and persisted on the timeline so the panel can list it,
+    /// subject to the 30-day activity-log retention. Never trust the client: ignore unless authorised.
+    fn on_admin_report(&mut self, admin_id: PlayerId, target_id: PlayerId) {
+        let Some(admin) = self.players.get_mut(&admin_id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin && !admin.is_moderator {
+            tracing::debug!(%admin_id, "report ignored: insufficient authority");
+            return;
+        }
+        let admin_name = admin.name.clone();
+        let admin_account = admin.account_id.clone();
+        let Some(target) = self.players.get(&target_id) else {
+            return;
+        };
+        // An "admin" event with a "report|<target>" detail: the existing feed renders it as
+        // feed.admin_report, and it is the only persisted "admin" event, so replay can keep it private.
+        let detail = format!("report|{}", target.name);
+        let event = ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name.clone(),
+            detail: detail.clone(),
+        };
+        for staff in self
+            .players
+            .values()
+            .filter(|p| p.is_admin || p.is_moderator)
+        {
+            let _ = staff.conn.try_send(event.clone());
+        }
+        let db = self.hub.db.clone();
+        let tenant = self.key.0.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db
+                .record_event(&tenant, &admin_account, "admin", &admin_name, &detail)
+                .await
+            {
+                tracing::error!(error = %e, "failed to persist report event");
+            }
+        });
+        tracing::info!(tenant = %self.key.0, %admin_id, %target_id, "player reported");
     }
 
     /// Admin-gated world wipe: replace the world with a fresh one (clearing every edit), drop all
@@ -2008,7 +2069,7 @@ impl Room {
     }
 }
 
-// Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "steve").
+// Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "hero").
 const MAX_STRUCTURE_KIND_LEN: usize = 24;
 
 /// Bank one of a broken block into a player's inventory.
@@ -2695,6 +2756,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_with_a_blocked_word_is_dropped() {
+        let mut room = test_room().await;
+        let mut listener_rx = add_player(&mut room, 2, false);
+        let _sender_rx = add_player(&mut room, 1, false);
+
+        room.on_input(
+            1,
+            ClientMsg::Chat {
+                text: "you are a bitch".into(),
+            },
+        );
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+            .filter(|m| matches!(m, ServerMsg::Chat { .. }))
+            .collect();
+        assert!(
+            chats.is_empty(),
+            "a message with a blocked word must be dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_chat_is_broadcast() {
+        let mut room = test_room().await;
+        let mut listener_rx = add_player(&mut room, 2, false);
+        let _sender_rx = add_player(&mut room, 1, false);
+
+        room.on_input(
+            1,
+            ClientMsg::Chat {
+                text: "lets build together".into(),
+            },
+        );
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+            .filter(|m| matches!(m, ServerMsg::Chat { .. }))
+            .collect();
+        assert_eq!(chats.len(), 1, "a clean message must be broadcast");
+    }
+
+    #[tokio::test]
+    async fn admin_report_notifies_only_staff() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        let mut player_rx = add_player(&mut room, 2, false);
+
+        room.on_input(1, ClientMsg::AdminReport { id: 2 });
+
+        let admin_reports = std::iter::from_fn(|| admin_rx.try_recv().ok())
+            .filter_map(report_detail)
+            .count();
+        let player_reports = std::iter::from_fn(|| player_rx.try_recv().ok())
+            .filter_map(report_detail)
+            .count();
+        assert_eq!(admin_reports, 1, "the admin must receive the report event");
+        assert_eq!(
+            player_reports, 0,
+            "a non-admin must not receive a report event"
+        );
+    }
+
+    fn report_detail(msg: ServerMsg) -> Option<String> {
+        let ServerMsg::Event { kind, detail, .. } = msg else {
+            return None;
+        };
+        if kind == "admin" && detail.starts_with("report|") {
+            return Some(detail);
+        }
+        None
+    }
+
+    #[tokio::test]
     async fn admin_kick_removes_target_and_broadcasts_left() {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
@@ -3228,7 +3359,7 @@ mod tests {
     #[test]
     fn valid_structure_kind_accepts_slugs_and_rejects_junk() {
         assert_eq!(valid_structure_kind(" trophy "), Some("trophy".to_string()));
-        assert_eq!(valid_structure_kind("steve2"), Some("steve2".to_string()));
+        assert_eq!(valid_structure_kind("hero2"), Some("hero2".to_string()));
         assert!(valid_structure_kind("").is_none());
         assert!(valid_structure_kind("Trophy").is_none());
         assert!(valid_structure_kind("a b").is_none());
