@@ -16,6 +16,16 @@ game client, `/admin`, libSQL tenant store) and `apps/server` (Rust authoritativ
 - **Keep the game engine small and modular.** Pure logic (worldgen, world store, physics,
   raycast, blocks, structures, creatures) lives in small `apps/web/lib/engine/*.ts` modules with
   colocated tests; only thin Three.js/DOM glue stays untyped-by-necessity.
+- **Engine folder law (`apps/web/lib/engine/`):** three.js lives ONLY in `rendering/` — no other
+  engine module may `import ... from 'three'` (the sole exception is `vec3.test.ts`, which imports it
+  to golden-prove equivalence). Online-only logic (the coop connect + server callbacks/targeting/
+  snapshots) goes in `online/`; offline/single-player logic (creature AI, spawn, combat, simulation,
+  the offline-admin grant) goes in `offline/`; shared/pure modules stay at the engine root. Positions
+  and vector math use the pure `Vec3` (`lib/engine/vec3.ts`), NEVER `THREE.Vector3`, in logic; live
+  positions are owned by state (`Player.pos/vel`, `Creature.pos`), and `rendering/` syncs the meshes
+  from them. The runtime/context get three.js handle TYPES via `rendering/gfx.ts` (`import type`), not
+  from `'three'`. (Known debt: `apps/web/lib/coop.ts`, the network controller, still builds remote-
+  player/server-creature meshes — its rendering should migrate into `rendering/`.)
 - **TypeScript strict** in `apps/web`. No blanket `any` on public surfaces.
 - **No silent `?? default` fallbacks** that mask missing state (see global `~/.claude/CLAUDE.md`).
 - **CI must stay green:** web (`tsc --noEmit`, `npm run build`, `vitest`) and Rust
