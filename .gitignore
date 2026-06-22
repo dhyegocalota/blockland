@@ -16,6 +16,7 @@ target
 # Generated build artifact: the bundled offline tenant (see scripts/bundle-tenant.mjs)
 apps/web/public/tenant.json
 
-# Rust server runtime data (libSQL db, bans, world saves, uploads)
-apps/server/data/
+# Rust server runtime data (libSQL db, bans, world saves, uploads) — `data/` lands next to whatever
+# cwd the server runs from (apps/server or crates/server), so ignore it at any depth under apps/server.
+apps/server/**/data/
 .vercel
