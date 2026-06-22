@@ -22,7 +22,6 @@ interface UploadResponse { url: string; error?: string }
 interface OnlinePlayer { id: number; name: string; x: number; y: number; z: number; ping_ms: number }
 interface RoomSnapshot { tenant: string; players: OnlinePlayer[] }
 interface AdminStats { room_list: RoomSnapshot[] }
-interface OnlineRow { tenant: string; player: OnlinePlayer }
 interface Account { name: string; email: string; is_admin: boolean }
 
 const UPLOAD_FIELD: Partial<Record<keyof Tenant, 'image'>> = {
@@ -41,11 +40,10 @@ export default function Admin() {
   const [page, setPage] = useState(0);
   const [form, setForm] = useState<Tenant>(EMPTY);
   const [msg, setMsg] = useState('');
-  const [online, setOnline] = useState<OnlineRow[]>([]);
+  const [selected, setSelected] = useState<Tenant | null>(null);
+  const [online, setOnline] = useState<OnlinePlayer[]>([]);
   const [bans, setBans] = useState<string[]>([]);
-  const [boardTenant, setBoardTenant] = useState('');
   const [board, setBoard] = useState<ScoreEntry[]>([]);
-  const [accountsTenant, setAccountsTenant] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [grantEmail, setGrantEmail] = useState('');
 
@@ -72,19 +70,17 @@ export default function Admin() {
     setAuthed(true);
     setMsg('');
     localStorage.setItem('bl-admin-key', k);
-    loadOnline(k);
-    loadBans(k);
   }
 
-  async function loadOnline(k = key) {
-    const res = await fetch('/api/admin/online', { headers: { 'x-admin-key': k } });
+  async function loadOnline(tenant: string) {
+    const res = await fetch(`/api/admin/online?tenant=${encodeURIComponent(tenant)}`, { headers: { 'x-admin-key': key } });
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     const stats = (await res.json()) as AdminStats;
-    setOnline(stats.room_list.flatMap((room) => room.players.map((player) => ({ tenant: room.tenant, player }))));
+    setOnline(stats.room_list.flatMap((room) => room.players));
   }
 
-  async function loadBans(k = key) {
-    const res = await fetch('/api/admin/bans', { headers: { 'x-admin-key': k } });
+  async function loadBans() {
+    const res = await fetch('/api/admin/bans', { headers: { 'x-admin-key': key } });
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setBans((await res.json()) as string[]);
   }
@@ -104,26 +100,42 @@ export default function Admin() {
     if (ip) moderate('ban', ip.trim());
   }
 
-  async function loadBoard() {
-    if (boardTenant.trim() === '') return;
-    const res = await fetch(`/api/leaderboard/${boardTenant.trim()}`);
+  async function loadBoard(tenant: string) {
+    const res = await fetch(`/api/leaderboard/${tenant}`);
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setBoard((await res.json()) as ScoreEntry[]);
   }
 
-  async function loadAccounts() {
-    const tenant = accountsTenant.trim();
-    if (tenant === '') return;
+  async function loadAccounts(tenant: string) {
     const res = await fetch(`/api/admin/accounts/${tenant}`, { headers: { 'x-admin-key': key } });
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setAccounts((await res.json()) as Account[]);
   }
 
+  function selectTenant(tenant: Tenant) {
+    setSelected(tenant);
+    setMsg('');
+    setOnline([]);
+    setBoard([]);
+    setAccounts([]);
+    loadOnline(tenant.id);
+    loadBans();
+    loadAccounts(tenant.id);
+    loadBoard(tenant.id);
+  }
+
+  function deselectTenant() {
+    setSelected(null);
+    setGrantEmail('');
+    setMsg('');
+  }
+
   async function setAdmin(target: { name: string } | { email: string }, admin: boolean) {
+    if (!selected) return;
     const res = await fetch('/api/admin/set-admin', {
       method: 'POST',
       headers: { 'x-admin-key': key, 'content-type': 'application/json' },
-      body: JSON.stringify({ tenant: accountsTenant.trim(), admin, ...target }),
+      body: JSON.stringify({ tenant: selected.id, admin, ...target }),
     });
     if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
     setAccounts((await res.json()) as Account[]);
@@ -229,6 +241,127 @@ export default function Admin() {
     );
   }
 
+  if (selected) {
+    return (
+      <main style={S.wrap}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button style={S.small} onClick={deselectTenant}>{t('admin.back_to_tenants')}</button>
+          <img src={selected.image} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
+          <h1 style={{ ...S.h1, flex: 1, marginBottom: 0 }}>{t('admin.managing', { name: selected.name })}</h1>
+          <button style={S.small} onClick={() => startEdit(selected)}>{t('admin.edit')}</button>
+        </div>
+        {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
+
+        <h2 style={{ ...S.h1, fontSize: 18, marginTop: 24 }}>{t('mod.title')}</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <b style={{ flex: 1 }}>{t('mod.online_title')}</b>
+          <button style={S.small} onClick={() => loadOnline(selected.id)}>{t('mod.refresh')}</button>
+          <button style={{ ...S.small, color: '#ff7a7a' }} onClick={promptBan}>{t('mod.ban')}</button>
+        </div>
+        {online.length === 0
+          ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.online_empty')}</p>
+          : (
+            <table style={S.table}>
+              <thead><tr>
+                <th style={S.th}>{t('mod.col_name')}</th>
+                <th style={S.th}>{t('mod.col_position')}</th>
+                <th style={S.th}>{t('mod.col_ping')}</th>
+              </tr></thead>
+              <tbody>
+                {online.map((player) => (
+                  <tr key={player.id}>
+                    <td style={S.td}>{player.name}</td>
+                    <td style={S.td}>{Math.round(player.x)}, {Math.round(player.y)}, {Math.round(player.z)}</td>
+                    <td style={S.td}>{player.ping_ms}ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '28px 0 4px' }}>
+          <b style={{ flex: 1 }}>{t('mod.bans_title')}</b>
+          <button style={S.small} onClick={() => loadBans()}>{t('mod.refresh')}</button>
+        </div>
+        <p style={{ color: '#789', fontSize: 13, marginBottom: 10 }}>{t('mod.bans_note')}</p>
+        {bans.length === 0
+          ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.bans_empty')}</p>
+          : (
+            <div style={{ display: 'grid', gap: 8, marginBottom: 28 }}>
+              {bans.map((ip) => (
+                <div key={ip} style={S.row}>
+                  <code style={{ flex: 1, color: '#e8e8f0' }}>{ip}</code>
+                  <button style={S.small} onClick={() => moderate('unban', ip)}>{t('mod.unban')}</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px' }}>
+          <h2 style={{ ...S.h1, fontSize: 18, flex: 1, marginBottom: 0 }}>{t('accounts.title')}</h2>
+          <button style={S.small} onClick={() => loadAccounts(selected.id)}>{t('mod.refresh')}</button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
+          <input style={{ ...S.input, flex: 1 }} placeholder={t('accounts.grant_email_placeholder')}
+            value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && grantAdminByEmail()} />
+          <button style={S.btn} onClick={grantAdminByEmail}>{t('accounts.grant_email_button')}</button>
+        </div>
+        {accounts.length === 0
+          ? <p style={{ color: '#789', marginBottom: 28 }}>{t('accounts.empty')}</p>
+          : (
+            <table style={S.table}>
+              <thead><tr>
+                <th style={S.th}>{t('accounts.col_name')}</th>
+                <th style={S.th}>{t('accounts.col_email')}</th>
+                <th style={S.th}>{t('accounts.col_admin')}</th>
+                <th style={S.th}></th>
+              </tr></thead>
+              <tbody>
+                {accounts.map((account) => (
+                  <tr key={account.email}>
+                    <td style={S.td}>{account.name}</td>
+                    <td style={S.td}>{account.email}</td>
+                    <td style={S.td}>{account.is_admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
+                    <td style={S.td}>
+                      <button style={S.small} onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
+                        {account.is_admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px' }}>
+          <h2 style={{ ...S.h1, fontSize: 18, flex: 1, marginBottom: 0 }}>{t('leaderboard.title')}</h2>
+          <button style={S.small} onClick={() => loadBoard(selected.id)}>{t('mod.refresh')}</button>
+        </div>
+        {board.length === 0
+          ? <p style={{ color: '#789' }}>{t('leaderboard.empty')}</p>
+          : (
+            <table style={S.table}>
+              <thead><tr>
+                <th style={S.th}>{t('leaderboard.col_rank')}</th>
+                <th style={S.th}>{t('leaderboard.col_name')}</th>
+                <th style={S.th}>{t('leaderboard.col_score')}</th>
+              </tr></thead>
+              <tbody>
+                {board.map((entry, index) => (
+                  <tr key={`${entry.name}-${index}`}>
+                    <td style={S.td}>{index + 1}</td>
+                    <td style={S.td}>{entry.name}</td>
+                    <td style={S.td}>{entry.score}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+      </main>
+    );
+  }
+
   const pageCount = Math.max(1, Math.ceil(tenants.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const shown = tenants.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
@@ -239,19 +372,19 @@ export default function Admin() {
         <h1 style={{ ...S.h1, flex: 1, marginBottom: 0 }}>{t('admin.tenants_title')}</h1>
         <button style={S.btn} onClick={startNew}>{t('admin.new_tenant')}</button>
       </div>
+      <p style={{ color: '#9aa' }}>{t('admin.pick_tenant_hint')}</p>
       {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
 
       <div style={{ display: 'grid', gap: 8, margin: '16px 0 10px' }}>
         {shown.map((tenant) => (
-          <div key={tenant.id} style={S.row}>
+          <button key={tenant.id} style={S.tenantRow} onClick={() => selectTenant(tenant)}>
             <img src={tenant.image} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, textAlign: 'left' }}>
               <b style={{ color: DEFAULT_BRAND_COLOR }}>{tenant.name}</b>
               <span style={{ color: '#789', marginLeft: 8 }}>/{tenant.id}</span>
             </div>
-            <a style={S.link} href={`/?tenant=${tenant.id}`} target="_blank" rel="noreferrer">{t('admin.open')}</a>
-            <button style={S.small} onClick={() => startEdit(tenant)}>{t('admin.edit')}</button>
-          </div>
+            <span style={S.link}>{t('admin.manage')}</span>
+          </button>
         ))}
       </div>
 
@@ -262,120 +395,6 @@ export default function Admin() {
           <button style={S.small} disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>{t('admin.next')}</button>
         </div>
       )}
-
-      <h2 style={{ ...S.h1, fontSize: 18, marginTop: 20 }}>{t('mod.title')}</h2>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <b style={{ flex: 1 }}>{t('mod.online_title')}</b>
-        <button style={S.small} onClick={() => loadOnline()}>{t('mod.refresh')}</button>
-        <button style={{ ...S.small, color: '#ff7a7a' }} onClick={promptBan}>{t('mod.ban')}</button>
-      </div>
-      {online.length === 0
-        ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.online_empty')}</p>
-        : (
-          <table style={S.table}>
-            <thead><tr>
-              <th style={S.th}>{t('mod.col_tenant')}</th>
-              <th style={S.th}>{t('mod.col_name')}</th>
-              <th style={S.th}>{t('mod.col_position')}</th>
-              <th style={S.th}>{t('mod.col_ping')}</th>
-            </tr></thead>
-            <tbody>
-              {online.map(({ tenant, player }) => (
-                <tr key={`${tenant}-${player.id}`}>
-                  <td style={S.td}>{tenant}</td>
-                  <td style={S.td}>{player.name}</td>
-                  <td style={S.td}>{Math.round(player.x)}, {Math.round(player.y)}, {Math.round(player.z)}</td>
-                  <td style={S.td}>{player.ping_ms}ms</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '28px 0 10px' }}>
-        <b style={{ flex: 1 }}>{t('mod.bans_title')}</b>
-        <button style={S.small} onClick={() => loadBans()}>{t('mod.refresh')}</button>
-      </div>
-      {bans.length === 0
-        ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.bans_empty')}</p>
-        : (
-          <div style={{ display: 'grid', gap: 8, marginBottom: 28 }}>
-            {bans.map((ip) => (
-              <div key={ip} style={S.row}>
-                <code style={{ flex: 1, color: '#e8e8f0' }}>{ip}</code>
-                <button style={S.small} onClick={() => moderate('unban', ip)}>{t('mod.unban')}</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-      <h2 style={{ ...S.h1, fontSize: 18, marginTop: 8 }}>{t('accounts.title')}</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
-        <input style={{ ...S.input, flex: 1 }} placeholder={t('accounts.tenant_label')}
-          value={accountsTenant} onChange={(e) => setAccountsTenant(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && loadAccounts()} />
-        <button style={S.btn} onClick={loadAccounts}>{t('accounts.load')}</button>
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
-        <input style={{ ...S.input, flex: 1 }} placeholder={t('accounts.grant_email_placeholder')}
-          value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && grantAdminByEmail()} />
-        <button style={S.btn} onClick={grantAdminByEmail}>{t('accounts.grant_email_button')}</button>
-      </div>
-      {accounts.length === 0
-        ? <p style={{ color: '#789', marginBottom: 28 }}>{t('accounts.empty')}</p>
-        : (
-          <table style={S.table}>
-            <thead><tr>
-              <th style={S.th}>{t('accounts.col_name')}</th>
-              <th style={S.th}>{t('accounts.col_email')}</th>
-              <th style={S.th}>{t('accounts.col_admin')}</th>
-              <th style={S.th}></th>
-            </tr></thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.email}>
-                  <td style={S.td}>{account.name}</td>
-                  <td style={S.td}>{account.email}</td>
-                  <td style={S.td}>{account.is_admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
-                  <td style={S.td}>
-                    <button style={S.small} onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
-                      {account.is_admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-      <h2 style={{ ...S.h1, fontSize: 18, marginTop: 8 }}>{t('leaderboard.title')}</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
-        <input style={{ ...S.input, flex: 1 }} placeholder={t('leaderboard.tenant_label')}
-          value={boardTenant} onChange={(e) => setBoardTenant(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && loadBoard()} />
-        <button style={S.btn} onClick={loadBoard}>{t('leaderboard.load')}</button>
-      </div>
-      {board.length === 0
-        ? <p style={{ color: '#789' }}>{t('leaderboard.empty')}</p>
-        : (
-          <table style={S.table}>
-            <thead><tr>
-              <th style={S.th}>{t('leaderboard.col_rank')}</th>
-              <th style={S.th}>{t('leaderboard.col_name')}</th>
-              <th style={S.th}>{t('leaderboard.col_score')}</th>
-            </tr></thead>
-            <tbody>
-              {board.map((entry, index) => (
-                <tr key={`${entry.name}-${index}`}>
-                  <td style={S.td}>{index + 1}</td>
-                  <td style={S.td}>{entry.name}</td>
-                  <td style={S.td}>{entry.score}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
     </main>
   );
 }
@@ -389,6 +408,7 @@ const S: Record<string, CSSProperties> = {
   link: { color: '#9cf', textDecoration: 'none', padding: '6px 10px', fontSize: 14 },
   file: { color: '#9aa', fontSize: 12 },
   row: { display: 'flex', alignItems: 'center', gap: 10, background: '#15151f', border: '1px solid #262633', borderRadius: 10, padding: 10 },
+  tenantRow: { display: 'flex', alignItems: 'center', gap: 10, background: '#15151f', border: '1px solid #262633', borderRadius: 10, padding: 10, cursor: 'pointer', color: '#e8e8f0', font: 'inherit' },
   table: { width: '100%', maxWidth: 720, borderCollapse: 'collapse', marginBottom: 28, background: '#15151f', border: '1px solid #262633', borderRadius: 10, overflow: 'hidden' },
   th: { textAlign: 'left', color: '#9aa', fontSize: 13, padding: '10px 12px', borderBottom: '1px solid #262633' },
   td: { color: '#e8e8f0', fontSize: 14, padding: '8px 12px', borderBottom: '1px solid #1d1d28' },

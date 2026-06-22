@@ -13,9 +13,19 @@ import { fetchOnline, AdminUpstreamError } from '../../../../lib/admin-server';
 const fetchOnlineMock = vi.mocked(fetchOnline);
 const ADMIN_KEY = 'dev-admin-secret';
 
-function adminRequest(): Request {
-  return new Request('http://x/api/admin/online', { headers: { 'x-admin-key': ADMIN_KEY } });
+function adminRequest(query = ''): Request {
+  return new Request(`http://x/api/admin/online${query}`, { headers: { 'x-admin-key': ADMIN_KEY } });
 }
+
+const STATS = {
+  online: 3,
+  rooms: 2,
+  tenants: [],
+  room_list: [
+    { tenant: 'teo', players: [{ id: 1 }, { id: 2 }] },
+    { tenant: 'mia', players: [{ id: 3 }] },
+  ],
+};
 
 beforeEach(() => {
   process.env.ADMIN_KEY = ADMIN_KEY;
@@ -35,6 +45,29 @@ describe('GET /api/admin/online', () => {
     const res = await GET(adminRequest());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ online: 2, rooms: 1, tenants: [], room_list: [] });
+  });
+
+  it('scopes the room list to the requested tenant', async () => {
+    fetchOnlineMock.mockResolvedValue(STATS);
+    const res = await GET(adminRequest('?tenant=teo'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ...STATS,
+      room_list: [{ tenant: 'teo', players: [{ id: 1 }, { id: 2 }] }],
+    });
+  });
+
+  it('returns an empty room list for a tenant with nobody online', async () => {
+    fetchOnlineMock.mockResolvedValue(STATS);
+    const res = await GET(adminRequest('?tenant=nobody'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ...STATS, room_list: [] });
+  });
+
+  it('keeps every room when no tenant is given', async () => {
+    fetchOnlineMock.mockResolvedValue(STATS);
+    const res = await GET(adminRequest());
+    expect(await res.json()).toEqual(STATS);
   });
 
   it('maps an upstream failure to a generic 502', async () => {
