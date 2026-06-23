@@ -73,13 +73,34 @@ pub struct Appearance {
     pub hair: String,
 }
 
+/// What a connection's writer task receives. A fan-out message (snapshot, event, roster, …) is
+/// serialized to JSON ONCE by the room and shared as a `Frame` across every player, so the per-tick
+/// snapshot is encoded once for the whole room instead of once per connection. A per-player message
+/// (welcome, inventory, error, …) travels as `One` and is serialized by the writer task that owns it.
+pub enum Outbound {
+    One(ServerMsg),
+    Frame(Arc<str>),
+}
+
+/// Send one per-player message to a connection, dropping it if the channel is full or closed (a slow
+/// client never stalls the room tick). Mirrors the old `let _ = conn.try_send(msg)` at every call site.
+trait SendOne {
+    fn send_one(&self, msg: ServerMsg);
+}
+
+impl SendOne for mpsc::Sender<Outbound> {
+    fn send_one(&self, msg: ServerMsg) {
+        let _ = self.try_send(Outbound::One(msg));
+    }
+}
+
 pub enum RoomCmd {
     Join {
         name: String,
         claim: String,
         look: Appearance,
         ip: IpAddr,
-        conn: mpsc::Sender<ServerMsg>,
+        conn: mpsc::Sender<Outbound>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     },
     Input {
@@ -148,7 +169,7 @@ struct Player {
     pitch: f32,
     ping_ms: u32,
     score: u32,
-    conn: mpsc::Sender<ServerMsg>,
+    conn: mpsc::Sender<Outbound>,
     last_seen: Instant,
     last_move: Instant,
     // False until the player's first in-world move is accepted. That first move is taken verbatim as the
@@ -403,7 +424,7 @@ impl Room {
         claim: String,
         look: Appearance,
         ip: IpAddr,
-        conn: mpsc::Sender<ServerMsg>,
+        conn: mpsc::Sender<Outbound>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
         if self.hub.bans.is_banned(ip) {
@@ -480,7 +501,7 @@ impl Room {
         claim: String,
         look: Appearance,
         ip: IpAddr,
-        conn: mpsc::Sender<ServerMsg>,
+        conn: mpsc::Sender<Outbound>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
         // Refresh the per-tenant moderation flags + allowed modes from the db (this room is the single
@@ -642,7 +663,7 @@ impl Room {
             moderator: role.is_moderator(),
             version: server_version(),
         };
-        let _ = conn.try_send(welcome);
+        conn.send_one(welcome);
         // Hand the joining player the world that has already been built.
         let edits: Vec<EditCell> = self
             .world
@@ -651,7 +672,7 @@ impl Room {
             .map(|(x, y, z, block)| EditCell { x, y, z, id: block })
             .collect();
         for chunk in edits.chunks(BATCH_CHUNK_SIZE) {
-            let _ = conn.try_send(ServerMsg::EditBatch {
+            conn.send_one(ServerMsg::EditBatch {
                 edits: chunk.to_vec(),
                 by: 0,
             });
@@ -671,7 +692,7 @@ impl Room {
                     if is_report && !(role.is_admin() || role.is_moderator()) {
                         continue;
                     }
-                    let _ = conn.try_send(ServerMsg::Event {
+                    conn.send_one(ServerMsg::Event {
                         kind: event.kind,
                         name: event.name,
                         detail: event.detail,
@@ -683,11 +704,11 @@ impl Room {
             }
         }
         // Hand the joining connection the current room-wide settings, after Welcome + world + backlog.
-        let _ = conn.try_send(self.room_state());
+        conn.send_one(self.room_state());
         // An admin also gets the current pending-approval list + ban list so they can manage right away.
         if role.is_admin() {
             send_pending(&self.hub.db, &self.key.0, std::slice::from_ref(&conn)).await;
-            let _ = conn.try_send(self.bans_msg());
+            conn.send_one(self.bans_msg());
         }
         self.players.insert(id, player);
         // The fresh player's inventory (empty + infinite by default), sent after it is registered.
@@ -1066,7 +1087,7 @@ impl Room {
             .iter()
             .map(|(&block, &count)| InventoryItem { id: block, count })
             .collect();
-        let _ = p.conn.try_send(ServerMsg::Inventory {
+        p.conn.send_one(ServerMsg::Inventory {
             items,
             infinite: p.infinite,
         });
@@ -1194,7 +1215,7 @@ impl Room {
         } else {
             ("kicked", "You were removed from the room by an admin.")
         };
-        let _ = target.conn.try_send(ServerMsg::Error {
+        target.conn.send_one(ServerMsg::Error {
             code: code.into(),
             msg: message.into(),
         });
@@ -1242,7 +1263,7 @@ impl Room {
             .values()
             .filter(|p| p.is_admin || p.is_moderator)
         {
-            let _ = staff.conn.try_send(event.clone());
+            staff.conn.send_one(event.clone());
         }
         let db = self.hub.db.clone();
         let tenant = self.key.0.clone();
@@ -1344,7 +1365,7 @@ impl Room {
             let ids: Vec<PlayerId> = self.players.keys().copied().filter(|&p| p != id).collect();
             for pid in ids {
                 if let Some(p) = self.players.remove(&pid) {
-                    let _ = p.conn.try_send(ServerMsg::Error {
+                    p.conn.send_one(ServerMsg::Error {
                         code: "suspended".into(),
                         msg: "This world is paused by an admin.".into(),
                     });
@@ -1383,7 +1404,7 @@ impl Room {
         target.is_moderator = role.is_moderator();
         let target_account = target.account_id.clone();
         let target_name = target.name.clone();
-        let _ = target.conn.try_send(ServerMsg::Role {
+        target.conn.send_one(ServerMsg::Role {
             admin: role.is_admin(),
             moderator: role.is_moderator(),
         });
@@ -1474,7 +1495,7 @@ impl Room {
             },
         });
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1568,7 +1589,7 @@ impl Room {
             let ids: Vec<PlayerId> = self.players.keys().copied().filter(|&p| p != id).collect();
             for pid in ids {
                 if let Some(p) = self.players.remove(&pid) {
-                    let _ = p.conn.try_send(ServerMsg::Error {
+                    p.conn.send_one(ServerMsg::Error {
                         code: "online_blocked".into(),
                         msg: "Online play is turned off for this world.".into(),
                     });
@@ -1597,7 +1618,7 @@ impl Room {
             detail: format!("approve|{account_id}"),
         });
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1632,7 +1653,7 @@ impl Room {
             detail: format!("reject|{account_id}"),
         });
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1690,13 +1711,13 @@ impl Room {
     fn broadcast_bans_to_admins(&self) {
         let msg = self.bans_msg();
         for p in self.players.values().filter(|p| p.is_admin) {
-            let _ = p.conn.try_send(msg.clone());
+            p.conn.send_one(msg.clone());
         }
     }
 
     /// Push the current pending-approval list to every online admin (no-op if none are online).
     async fn broadcast_pending_to_admins(&self) {
-        let admin_conns: Vec<mpsc::Sender<ServerMsg>> = self
+        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1752,7 +1773,7 @@ impl Room {
         target.hp = target.hp.saturating_sub(1);
         target.hurt_at = Instant::now();
         let died = target.hp == 0;
-        let _ = target.conn.try_send(ServerMsg::Hurt { by: attacker_name });
+        target.conn.send_one(ServerMsg::Hurt { by: attacker_name });
         // Everyone but the attacker sees the same hit effect on the target.
         self.broadcast_except(
             attacker_id,
@@ -1836,7 +1857,7 @@ impl Room {
             let mut kicked: Vec<PlayerId> = Vec::new();
             for p in self.players.values() {
                 if self.hub.bans.is_banned(p.ip) {
-                    let _ = p.conn.try_send(ServerMsg::Error {
+                    p.conn.send_one(ServerMsg::Error {
                         code: "banned".into(),
                         msg: "Your access has been revoked.".into(),
                     });
@@ -1849,7 +1870,7 @@ impl Room {
                 let still_holds =
                     self.hub.claims.get(&p.account_id).as_deref() == Some(p.claim.as_str());
                 if !p.account_id.is_empty() && !still_holds {
-                    let _ = p.conn.try_send(ServerMsg::Error {
+                    p.conn.send_one(ServerMsg::Error {
                         code: "reclaimed".into(),
                         msg: "Your username was taken over from another device.".into(),
                     });
@@ -1858,7 +1879,7 @@ impl Room {
                     continue;
                 }
                 if now.duration_since(p.last_seen) > idle {
-                    let _ = p.conn.try_send(ServerMsg::Error {
+                    p.conn.send_one(ServerMsg::Error {
                         code: "idle_timeout".into(),
                         msg: "You were idle for too long.".into(),
                     });
@@ -1901,7 +1922,7 @@ impl Room {
                 }
                 for id in time_up {
                     if let Some(p) = self.players.remove(&id) {
-                        let _ = p.conn.try_send(ServerMsg::Error {
+                        p.conn.send_one(ServerMsg::Error {
                             code: "time_up".into(),
                             msg: "You've used your play time for now.".into(),
                         });
@@ -1916,7 +1937,7 @@ impl Room {
             for p in self.players.values_mut() {
                 p.ping_nonce = p.ping_nonce.wrapping_add(1);
                 p.ping_sent_at = now;
-                let _ = p.conn.try_send(ServerMsg::Ping {
+                p.conn.send_one(ServerMsg::Ping {
                     nonce: p.ping_nonce,
                 });
             }
@@ -2008,20 +2029,31 @@ impl Room {
         true
     }
 
+    /// Fan a message out to every player. The message is serialized to JSON ONCE here and the resulting
+    /// frame is shared (an `Arc<str>`) across all connections, so the hot per-tick snapshot is encoded a
+    /// single time for the whole room instead of once per writer task — the dominant cost as the
+    /// creature + player counts grow. A serialization error drops the frame (it never happens for our
+    /// wire types). `try_send` is non-blocking, so a slow client's full channel never stalls the tick.
     fn broadcast(&self, msg: &ServerMsg) {
+        let Some(frame) = serialize_frame(msg) else {
+            return;
+        };
         for p in self.players.values() {
-            let _ = p.conn.try_send(msg.clone());
+            let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
         }
     }
 
     /// Broadcast to everyone except one player (e.g. the attacker, who already played the hit effect
-    /// locally for instant feedback — the others see it via this).
+    /// locally for instant feedback — the others see it via this). Single-serialized like `broadcast`.
     fn broadcast_except(&self, except: PlayerId, msg: &ServerMsg) {
+        let Some(frame) = serialize_frame(msg) else {
+            return;
+        };
         for p in self.players.values() {
             if p.id == except {
                 continue;
             }
-            let _ = p.conn.try_send(msg.clone());
+            let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
         }
     }
 
@@ -2035,6 +2067,12 @@ impl Room {
         }
         self.creatures
             .retain(|c| nearest_horizontal(c.pos, &player_xz) <= DESPAWN_RADIUS);
+        // Hard ceiling on the live population, enforced every tick so the O(n²) separation pass and the
+        // per-player bite check stay cheap: with many players the union of their despawn radii can keep
+        // more than MAX_CREATURES alive, so any excess is trimmed, dropping the ones farthest from every
+        // player first. Without this cap a crowded room accumulated creatures until the tick fell behind
+        // and ping spiralled.
+        cap_creatures(&mut self.creatures, &player_xz, MAX_CREATURES);
         // Maintain a per-player target population so a crowded area keeps more creatures, refilling the
         // deficit a few at a time so kills are replaced quickly without a spawn burst.
         let target = (player_xz.len() * CREATURES_PER_PLAYER).clamp(MIN_CREATURES, MAX_CREATURES);
@@ -2087,7 +2125,7 @@ impl Room {
             }
             p.hp = p.hp.saturating_sub(1);
             p.hurt_at = now;
-            let _ = p.conn.try_send(ServerMsg::Hurt { by: String::new() });
+            p.conn.send_one(ServerMsg::Hurt { by: String::new() });
             if p.hp == 0 {
                 dead.push(p.id);
             }
@@ -2110,7 +2148,7 @@ impl Room {
         p.hp = MAX_HP;
         p.hurt_at = Instant::now();
         p.move_synced = false;
-        let _ = p.conn.try_send(ServerMsg::Respawn {
+        p.conn.send_one(ServerMsg::Respawn {
             x: spawn[0],
             y: spawn[1],
             z: spawn[2],
@@ -2150,7 +2188,7 @@ impl Room {
             };
             p.y = y;
             p.move_synced = false;
-            let _ = p.conn.try_send(ServerMsg::Respawn {
+            p.conn.send_one(ServerMsg::Respawn {
                 x: p.x,
                 y,
                 z: p.z,
@@ -2422,6 +2460,19 @@ fn sanitize_color(raw: &str, default: &str) -> String {
     }
 }
 
+/// Serialize a fan-out message to a shared JSON frame for the whole room (one encode, sent verbatim to
+/// every connection). Returns `None` only if serialization fails, which never happens for our wire
+/// types; the caller then drops the frame rather than sending malformed bytes.
+fn serialize_frame(msg: &ServerMsg) -> Option<Arc<str>> {
+    match serde_json::to_string(msg) {
+        Ok(json) => Some(Arc::from(json.as_str())),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to serialize broadcast frame");
+            None
+        }
+    }
+}
+
 /// Round a snapshot coordinate to centimeter precision so the wire number stays short.
 fn round_snapshot(value: f32) -> f32 {
     (value * SNAPSHOT_DECIMALS).round() / SNAPSHOT_DECIMALS
@@ -2430,6 +2481,20 @@ fn round_snapshot(value: f32) -> f32 {
 /// 3D distance from a point to a position, used to test whether a player reaches a heart drop.
 fn distance(x: f32, y: f32, z: f32, pos: [f32; 3]) -> f32 {
     ((x - pos[0]).powi(2) + (y - pos[1]).powi(2) + (z - pos[2]).powi(2)).sqrt()
+}
+
+/// Trim the creature population down to `max`, dropping the creatures farthest from every player first
+/// so the ones near players (the gameplay-relevant ones) are kept. A no-op when already within the cap.
+/// This is the hard ceiling the spawn target also respects; enforcing it on the live vector guarantees
+/// the count can never exceed `max` regardless of how many players' despawn radii overlap.
+fn cap_creatures(creatures: &mut Vec<Creature>, players: &[[f32; 2]], max: usize) {
+    if creatures.len() <= max {
+        return;
+    }
+    creatures.sort_by(|a, b| {
+        nearest_horizontal(a.pos, players).total_cmp(&nearest_horizontal(b.pos, players))
+    });
+    creatures.truncate(max);
 }
 
 /// Horizontal distance from a creature position to its nearest player; `f32::MAX` when none exist.
@@ -2457,7 +2522,7 @@ fn playtime_key(account_id: &str, ip: IpAddr) -> String {
 }
 
 /// Load the tenant's pending-approval list and send it to each given (admin) connection.
-async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<ServerMsg>]) {
+async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<Outbound>]) {
     if conns.is_empty() {
         return;
     }
@@ -2477,7 +2542,7 @@ async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<Se
         })
         .collect();
     for conn in conns {
-        let _ = conn.try_send(ServerMsg::PendingApprovals {
+        conn.send_one(ServerMsg::PendingApprovals {
             pending: wire.clone(),
         });
     }
@@ -2520,9 +2585,31 @@ mod tests {
         Room::new(hub, &tcfg, "main".into(), rx)
     }
 
+    /// Decode whatever a connection received back into a `ServerMsg`: a per-player `One` is unwrapped
+    /// directly; a fan-out `Frame` is parsed back from the single JSON the room serialized once, so the
+    /// assertions below test the exact bytes that reach a real client.
+    fn unwrap_msg(out: Outbound) -> ServerMsg {
+        match out {
+            Outbound::One(msg) => msg,
+            Outbound::Frame(frame) => serde_json::from_str(&frame).expect("valid broadcast frame"),
+        }
+    }
+
+    /// Receive the next message off a test connection as a decoded `ServerMsg` (see `unwrap_msg`), so the
+    /// existing assertions keep matching on `ServerMsg` after the single-serialize broadcast change.
+    trait RecvMsg {
+        fn try_recv_msg(&mut self) -> Result<ServerMsg, mpsc::error::TryRecvError>;
+    }
+
+    impl RecvMsg for mpsc::Receiver<Outbound> {
+        fn try_recv_msg(&mut self) -> Result<ServerMsg, mpsc::error::TryRecvError> {
+            self.try_recv().map(unwrap_msg)
+        }
+    }
+
     /// Insert a minimal player into the room and return the channel that captures messages sent to it.
-    fn add_player(room: &mut Room, id: PlayerId, is_admin: bool) -> mpsc::Receiver<ServerMsg> {
-        let (conn, conn_rx) = mpsc::channel::<ServerMsg>(64);
+    fn add_player(room: &mut Room, id: PlayerId, is_admin: bool) -> mpsc::Receiver<Outbound> {
+        let (conn, conn_rx) = mpsc::channel::<Outbound>(64);
         let now = Instant::now();
         let player = Player {
             id,
@@ -2567,9 +2654,9 @@ mod tests {
         conn_rx
     }
 
-    fn drain_room_state(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(bool, Vec<String>)> {
+    fn drain_room_state(rx: &mut mpsc::Receiver<Outbound>) -> Option<(bool, Vec<String>)> {
         let mut latest = None;
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::RoomState {
                 peace,
                 blocked_structures,
@@ -2583,9 +2670,9 @@ mod tests {
     }
 
     /// The latest broadcast (pvp, chat_enabled) pair, ignoring peace/structure fields.
-    fn drain_pvp_chat(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(bool, bool)> {
+    fn drain_pvp_chat(rx: &mut mpsc::Receiver<Outbound>) -> Option<(bool, bool)> {
         let mut latest = None;
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::RoomState {
                 pvp, chat_enabled, ..
             } = msg
@@ -2596,9 +2683,9 @@ mod tests {
         latest
     }
 
-    fn drain_left(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<PlayerId> {
+    fn drain_left(rx: &mut mpsc::Receiver<Outbound>) -> Vec<PlayerId> {
         let mut out = Vec::new();
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::Left { id } = msg {
                 out.push(id);
             }
@@ -2606,9 +2693,9 @@ mod tests {
         out
     }
 
-    fn drain_hurt(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<String> {
+    fn drain_hurt(rx: &mut mpsc::Receiver<Outbound>) -> Option<String> {
         let mut latest = None;
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::Hurt { by } = msg {
                 latest = Some(by);
             }
@@ -2658,7 +2745,7 @@ mod tests {
         );
         assert!(!room.players.contains_key(&3));
         // The ejected player is told why, so the client drops to the lobby instead of reconnecting.
-        let suspended = std::iter::from_fn(|| player_rx.try_recv().ok())
+        let suspended = std::iter::from_fn(|| player_rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Error { code, .. } if code == "suspended"));
         assert!(suspended, "ejected player receives the suspended error");
     }
@@ -2813,8 +2900,8 @@ mod tests {
             hp < start,
             "a creature spawned at SPAWN_RADIUS must chase in and bite (hp {start} -> {hp})"
         );
-        let hurt =
-            std::iter::from_fn(|| rx.try_recv().ok()).any(|m| matches!(m, ServerMsg::Hurt { .. }));
+        let hurt = std::iter::from_fn(|| rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Hurt { .. }));
         assert!(hurt, "the bitten player gets a Hurt cue");
     }
 
@@ -2831,7 +2918,7 @@ mod tests {
         assert_eq!(p.x, spawn[0]);
         assert!(
             (0..50)
-                .filter_map(|_| rx.try_recv().ok())
+                .filter_map(|_| rx.try_recv_msg().ok())
                 .any(|m| matches!(m, ServerMsg::Respawn { .. })),
             "the player is told it respawned",
         );
@@ -2857,7 +2944,7 @@ mod tests {
             "the anti-cheat baseline resets so the snap is accepted"
         );
         assert!((0..50)
-            .filter_map(|_| rx.try_recv().ok())
+            .filter_map(|_| rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Respawn { .. })),);
     }
 
@@ -2910,7 +2997,7 @@ mod tests {
             !p.move_synced,
             "the anti-cheat baseline resets so the lift snap is accepted"
         );
-        let lifted = std::iter::from_fn(|| rx.try_recv().ok())
+        let lifted = std::iter::from_fn(|| rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Respawn { y, .. } if y == p.y));
         assert!(lifted, "the player is told to reposition at the lifted y");
     }
@@ -2965,7 +3052,7 @@ mod tests {
         assert!(!room.world.is_solid(10, 20, 10), "the final tap breaks it");
         assert!(
             (0..50)
-                .filter_map(|_| rx.try_recv().ok())
+                .filter_map(|_| rx.try_recv_msg().ok())
                 .any(|m| matches!(m, ServerMsg::Edit { id: 0, .. })),
             "the break is broadcast",
         );
@@ -3017,7 +3104,7 @@ mod tests {
 
         // Applied live (session-only, no account to persist) and pushed to the guest + the roster.
         assert!(room.players.get(&2).unwrap().is_moderator);
-        let got_role = std::iter::from_fn(|| guest_rx.try_recv().ok()).any(|m| {
+        let got_role = std::iter::from_fn(|| guest_rx.try_recv_msg().ok()).any(|m| {
             matches!(
                 m,
                 ServerMsg::Role {
@@ -3067,7 +3154,7 @@ mod tests {
         assert_eq!(room.players.get(&2).unwrap().score, 0);
         assert!(
             (0..50)
-                .filter_map(|_| admin_rx.try_recv().ok())
+                .filter_map(|_| admin_rx.try_recv_msg().ok())
                 .any(|m| matches!(m, ServerMsg::Event { kind, .. } if kind == "reset_scores")),
             "the reset is announced in the feed",
         );
@@ -3214,7 +3301,7 @@ mod tests {
         room.chat_enabled = false;
 
         room.on_input(1, ClientMsg::Chat { text: "hi".into() });
-        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv_msg().ok())
             .filter(|m| matches!(m, ServerMsg::Chat { .. }))
             .collect();
         assert!(chats.is_empty(), "a disabled room must drop chat");
@@ -3232,7 +3319,7 @@ mod tests {
                 text: "you are a bitch".into(),
             },
         );
-        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv_msg().ok())
             .filter(|m| matches!(m, ServerMsg::Chat { .. }))
             .collect();
         assert!(
@@ -3253,7 +3340,7 @@ mod tests {
                 text: "lets build together".into(),
             },
         );
-        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv().ok())
+        let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv_msg().ok())
             .filter(|m| matches!(m, ServerMsg::Chat { .. }))
             .collect();
         assert_eq!(chats.len(), 1, "a clean message must be broadcast");
@@ -3267,10 +3354,10 @@ mod tests {
 
         room.on_input(1, ClientMsg::AdminReport { id: 2 });
 
-        let admin_reports = std::iter::from_fn(|| admin_rx.try_recv().ok())
+        let admin_reports = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
             .filter_map(report_detail)
             .count();
-        let player_reports = std::iter::from_fn(|| player_rx.try_recv().ok())
+        let player_reports = std::iter::from_fn(|| player_rx.try_recv_msg().ok())
             .filter_map(report_detail)
             .count();
         assert_eq!(admin_reports, 1, "the admin must receive the report event");
@@ -3304,7 +3391,7 @@ mod tests {
         assert!(room.players.contains_key(&1));
         assert!(drain_left(&mut admin_rx).contains(&2));
         let target_msgs: Vec<ServerMsg> =
-            std::iter::from_fn(|| target_rx.try_recv().ok()).collect();
+            std::iter::from_fn(|| target_rx.try_recv_msg().ok()).collect();
         assert!(target_msgs
             .iter()
             .any(|m| matches!(m, ServerMsg::Error { code, .. } if code == "kicked")));
@@ -3366,9 +3453,9 @@ mod tests {
         assert_eq!(drain_hurt(&mut target_rx), None);
     }
 
-    fn drain_kill_event(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(String, String)> {
+    fn drain_kill_event(rx: &mut mpsc::Receiver<Outbound>) -> Option<(String, String)> {
         let mut latest = None;
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::Event { kind, name, detail } = msg {
                 if kind == "kill" {
                     latest = Some((name, detail));
@@ -3565,9 +3652,97 @@ mod tests {
         assert!(room.creatures.is_empty(), "no players means no creatures");
     }
 
-    fn drain_reset_event(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<String> {
+    #[tokio::test]
+    async fn broadcast_serializes_once_and_sends_identical_bytes_to_every_player() {
+        // The single-serialize win: the room must encode a fan-out message ONCE and send the same frame
+        // to every connection, and those bytes must be byte-for-byte what the old per-connection
+        // `serde_json::to_string(&msg)` produced — same wire format, just encoded one time for the room.
+        let mut room = test_room().await;
+        let mut rx_a = add_player(&mut room, 1, false);
+        let mut rx_b = add_player(&mut room, 2, false);
+        let snap = ServerMsg::Snapshot {
+            tick: 7,
+            players: vec![PlayerState(1, 1.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)],
+            creatures: vec![CreatureState(50, 4, -3.0, 63.5, 8.0, 0.2, 2, 2)],
+            hearts: vec![HeartDropState(200, -5.0, 63.5, 0.0)],
+        };
+        let expected = serde_json::to_string(&snap).unwrap();
+        room.broadcast(&snap);
+
+        let Outbound::Frame(frame_a) = rx_a.try_recv().unwrap() else {
+            panic!("a fan-out message must arrive as a pre-serialized Frame");
+        };
+        let Outbound::Frame(frame_b) = rx_b.try_recv().unwrap() else {
+            panic!("a fan-out message must arrive as a pre-serialized Frame");
+        };
+        assert_eq!(
+            &*frame_a,
+            expected.as_str(),
+            "frame must equal the old per-connection JSON"
+        );
+        assert_eq!(frame_a, frame_b, "every player gets the SAME bytes");
+        assert!(
+            Arc::ptr_eq(&frame_a, &frame_b),
+            "the frame is shared, not re-serialized per player"
+        );
+    }
+
+    #[tokio::test]
+    async fn creature_population_never_exceeds_the_hard_cap_with_many_players() {
+        // The production death spiral: with several players near each other, the union of their despawn
+        // radii kept ever more creatures and the spawn refill compounded it. Simulate many players + a
+        // pre-flooded population and tick for a while; the count must stay at/under MAX_CREATURES every
+        // tick (so the O(n²) separation + bite passes stay cheap) — never accumulating.
+        let mut room = test_room().await;
+        room.peace = false;
+        for id in 1..=6 {
+            add_player(&mut room, id, false);
+            let p = room.players.get_mut(&id).unwrap();
+            p.x = id as f32 * 6.0;
+            p.z = id as f32 * 6.0;
+            p.move_synced = true;
+        }
+        // Pre-flood far past the cap so we prove the trim, not just the bounded spawn.
+        for seed in 0..(MAX_CREATURES * 3) {
+            let x = (seed % 11) as f32 * 5.0;
+            let z = (seed / 11) as f32 * 5.0;
+            room.creatures.push(Creature::spawn(
+                900 + seed as u32,
+                CreatureKind::Slime,
+                x,
+                z,
+                sim::height_at,
+            ));
+        }
+        for _ in 0..400 {
+            room.simulate_creatures(0.05);
+            assert!(
+                room.creatures.len() <= MAX_CREATURES,
+                "population exceeded the cap: {} > {MAX_CREATURES}",
+                room.creatures.len()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cap_creatures_keeps_the_nearest_and_drops_the_farthest() {
+        // Three creatures at increasing distance from a lone player; capping to two must keep the two
+        // closest (ids 1 and 2) and drop the farthest (id 3).
+        let players = [[0.0_f32, 0.0_f32]];
+        let mut creatures = vec![
+            Creature::spawn(1, CreatureKind::Pig, 1.0, 0.0, sim::height_at),
+            Creature::spawn(2, CreatureKind::Pig, 5.0, 0.0, sim::height_at),
+            Creature::spawn(3, CreatureKind::Pig, 50.0, 0.0, sim::height_at),
+        ];
+        cap_creatures(&mut creatures, &players, 2);
+        let mut kept: Vec<u32> = creatures.iter().map(|c| c.id).collect();
+        kept.sort_unstable();
+        assert_eq!(kept, vec![1, 2], "the two nearest creatures are kept");
+    }
+
+    fn drain_reset_event(rx: &mut mpsc::Receiver<Outbound>) -> Option<String> {
         let mut latest = None;
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::Event { kind, name, .. } = msg {
                 if kind == "reset" {
                     latest = Some(name);
@@ -3699,7 +3874,7 @@ mod tests {
     #[tokio::test]
     async fn guest_joins_without_a_claim_and_gets_a_unique_name() {
         let mut room = test_room().await;
-        let (conn, _conn_rx) = mpsc::channel::<ServerMsg>(64);
+        let (conn, _conn_rx) = mpsc::channel::<Outbound>(64);
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -3731,8 +3906,8 @@ mod tests {
         account_id: &str,
         name: &str,
         role: Role,
-    ) -> (Result<PlayerId, String>, mpsc::Receiver<ServerMsg>) {
-        let (conn, conn_rx) = mpsc::channel::<ServerMsg>(64);
+    ) -> (Result<PlayerId, String>, mpsc::Receiver<Outbound>) {
+        let (conn, conn_rx) = mpsc::channel::<Outbound>(64);
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -3849,7 +4024,7 @@ mod tests {
 
         room.on_input(1, ClientMsg::AdminSetApproval { on: true });
         assert!(room.approval_required);
-        let required = std::iter::from_fn(|| admin_rx.try_recv().ok()).find_map(|m| match m {
+        let required = std::iter::from_fn(|| admin_rx.try_recv_msg().ok()).find_map(|m| match m {
             ServerMsg::RoomState {
                 approval_required, ..
             } => Some(approval_required),
@@ -3904,8 +4079,8 @@ mod tests {
         name: &str,
         role: Role,
         ip: &str,
-    ) -> (Result<PlayerId, String>, mpsc::Receiver<ServerMsg>) {
-        let (conn, conn_rx) = mpsc::channel::<ServerMsg>(64);
+    ) -> (Result<PlayerId, String>, mpsc::Receiver<Outbound>) {
+        let (conn, conn_rx) = mpsc::channel::<Outbound>(64);
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -3926,8 +4101,8 @@ mod tests {
         (reply_rx.await.unwrap(), conn_rx)
     }
 
-    fn first_error_code(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<String> {
-        std::iter::from_fn(|| rx.try_recv().ok()).find_map(|m| match m {
+    fn first_error_code(rx: &mut mpsc::Receiver<Outbound>) -> Option<String> {
+        std::iter::from_fn(|| rx.try_recv_msg().ok()).find_map(|m| match m {
             ServerMsg::Error { code, .. } => Some(code),
             _ => None,
         })
@@ -4050,7 +4225,7 @@ mod tests {
         );
         assert_eq!(room.playtime_limit_ms, 5 * 60_000);
         assert_eq!(room.playtime_window_ms, 24 * 3_600_000);
-        let limits = std::iter::from_fn(|| admin_rx.try_recv().ok()).find_map(|m| match m {
+        let limits = std::iter::from_fn(|| admin_rx.try_recv_msg().ok()).find_map(|m| match m {
             ServerMsg::RoomState {
                 playtime_limit_min,
                 playtime_window_h,
@@ -4122,9 +4297,9 @@ mod tests {
     }
 
     /// The latest inventory message's (count for a block, infinite flag), or None if none was sent.
-    fn drain_inventory(rx: &mut mpsc::Receiver<ServerMsg>, block: u8) -> Option<(u32, bool)> {
+    fn drain_inventory(rx: &mut mpsc::Receiver<Outbound>, block: u8) -> Option<(u32, bool)> {
         let mut latest = None;
-        while let Ok(msg) = rx.try_recv() {
+        while let Ok(msg) = rx.try_recv_msg() {
             if let ServerMsg::Inventory { items, infinite } = msg {
                 let count = items.iter().find(|i| i.id == block).map(|i| i.count);
                 latest = Some((count.unwrap_or(0), infinite));
@@ -4190,10 +4365,10 @@ mod tests {
             sim::AIR,
             "the place was rejected"
         );
-        let placed = std::iter::from_fn(|| other_rx.try_recv().ok())
+        let placed = std::iter::from_fn(|| other_rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Edit { .. }));
         assert!(!placed, "a rejected place is never broadcast");
-        let _ = rx.try_recv();
+        let _ = rx.try_recv_msg();
     }
 
     #[tokio::test]
