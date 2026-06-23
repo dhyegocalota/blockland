@@ -4315,6 +4315,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn holding_a_guest_broadcasts_pending_approvals_to_in_game_admins() {
+        let mut room = test_room().await;
+        room.hub
+            .db
+            .set_tenant_approval_required(&room.key.0, true)
+            .await
+            .unwrap();
+        // An admin is already in the room (the in-game admin who must get the live notification).
+        let mut admin_rx = add_player(&mut room, 1, true);
+        // A guest joins and is held for approval.
+        let (held, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.60").await;
+        assert_eq!(held, Err("needs_approval".into()));
+        // The held guest's persist + broadcast is awaited inline by hold_for_approval, so the admin's
+        // connection already carries the refreshed pending list with the waiting guest.
+        let pending = std::iter::from_fn(|| admin_rx.try_recv_msg().ok()).find_map(|m| match m {
+            ServerMsg::PendingApprovals { pending } => Some(pending),
+            _ => None,
+        });
+        let pending = pending.expect("the in-game admin is notified with the pending list");
+        assert_eq!(
+            pending.len(),
+            1,
+            "the held guest appears in the pending list"
+        );
+    }
+
+    #[tokio::test]
     async fn reject_is_one_shot_then_a_fresh_join_is_held_again() {
         let mut room = test_room().await;
         room.hub

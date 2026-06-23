@@ -62,13 +62,13 @@ describe('lobbyModeGates', () => {
     expect(gates.online.reason).toBe(ModeBlockReason.Unreachable);
   });
 
-  it('lets an admin pick online even when online is admin-disabled (so they can re-enable it)', () => {
+  it('blocks an admin from picking online when online is admin-disabled (re-enable via the panel, not by playing)', () => {
     const gates = lobbyModeGates({
       tenant: { online_allowed: false, offline_allowed: true },
       serverUnreachable: false,
       isAdmin: true,
     });
-    expect(gates.online).toEqual({ disabled: false, reason: ModeBlockReason.Allowed });
+    expect(gates.online).toEqual({ disabled: true, reason: ModeBlockReason.AdminDisabled });
   });
 
   it('lets an admin pick offline even when offline is admin-disabled', () => {
@@ -87,6 +87,17 @@ describe('lobbyModeGates', () => {
       isAdmin: true,
     });
     expect(gates.online).toEqual({ disabled: true, reason: ModeBlockReason.Unreachable });
+  });
+
+  it('keeps the panel up and does not push an admin to solo when online is admin-disabled', () => {
+    const gates = lobbyModeGates({
+      tenant: { online_allowed: false, offline_allowed: true },
+      serverUnreachable: false,
+      isAdmin: true,
+    });
+    expect(gates.online.disabled).toBe(true);
+    expect(lobbyAdminPanelActive({ isLobbyAdmin: true, started: false })).toBe(true);
+    expect(shouldPushToSolo({ gates, alreadySolo: false, isLobbyAdmin: true })).toBe(false);
   });
 });
 

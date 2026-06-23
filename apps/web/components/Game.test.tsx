@@ -81,6 +81,41 @@ describe('Game', () => {
     expect(document.getElementById('mode')?.textContent).toContain('Offline');
   });
 
+  it('shows the live feed approval notification with approve/reject/ban for an in-game admin', () => {
+    const approvePlayer = vi.fn();
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        isAdmin: true,
+        feed: [{ id: 1, at: 0, kind: 'approval', name: 'Guest', detail: 'ip:1.2.3.4' }],
+        pendingApprovals: [{ accountId: 'ip:1.2.3.4', name: 'Guest', email: '' }],
+        approvePlayer,
+      }),
+    );
+    render(<Game />);
+    const feed = document.getElementById('feed')!;
+    expect(within(feed).getByText('Guest quer entrar')).toBeInTheDocument();
+    fireEvent.click(within(feed).getByText('Aprovar'));
+    expect(approvePlayer).toHaveBeenCalledWith('ip:1.2.3.4');
+  });
+
+  it('hides the feed approval actions once the player is no longer pending', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        isAdmin: true,
+        feed: [{ id: 1, at: 0, kind: 'approval', name: 'Guest', detail: 'ip:1.2.3.4' }],
+        pendingApprovals: [],
+      }),
+    );
+    render(<Game />);
+    const feed = document.getElementById('feed')!;
+    expect(within(feed).getByText('Guest quer entrar')).toBeInTheDocument();
+    expect(within(feed).queryByText('Aprovar')).toBeNull();
+  });
+
   it('bans a pending player from the admin approval list', () => {
     const banPending = vi.fn();
     useGame.mockReturnValue(
