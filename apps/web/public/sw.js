@@ -64,6 +64,9 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // Dynamic API routes (presence, admin, auth, uploads) must always hit the network — caching them
+  // served stale data, and a cacheFirst miss/error broke the lobby's reachability check.
+  if (url.pathname.startsWith('/api/')) return;
   if (request.mode === 'navigate') {
     event.respondWith(networkFirstNavigation(request));
     return;
