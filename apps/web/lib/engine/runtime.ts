@@ -21,6 +21,8 @@ import type { BlockInventory } from './inventory';
 import type { EngineState } from './engine-state';
 import type { ChunkMesher } from './rendering/chunk-mesher';
 import type { PoofRuntime } from './rendering/poofs-runtime';
+import type { HeartDropRuntime } from './rendering/heart-drop-runtime';
+import type { HeartDrop } from './heart-drop';
 import type { ViewRenderer } from './rendering/renderers';
 import type { DebugSnapshot } from './debug-snapshot';
 import type { CoopController, CoopCreature, CoopPlayer, CoopView, RoomState } from '../coop';
@@ -70,6 +72,7 @@ export interface GameRuntime {
   // ---- Runtimes ----
   mesher: ChunkMesher;
   poofRuntime: PoofRuntime;
+  heartDropRuntime: HeartDropRuntime;
   view: ViewRenderer;
 
   // ---- State ----
@@ -77,6 +80,9 @@ export interface GameRuntime {
   inventory: BlockInventory;
   blockedStructures: Set<string>;
   creatures: Creature[];
+  // Offline-only hearts dropped by defeated creatures, awaiting pickup or TTL expiry. Co-op heart drops
+  // are server-owned and live in coop.ts; these are the single-player mirror.
+  heartDrops: HeartDrop[];
   creatureGroup: GfxGroup;
   coop: CoopController | null;
   // The data-only rendering hooks for co-op entities, implemented by rendering/coop-view and handed to
@@ -143,6 +149,9 @@ export interface GameRuntime {
   raycastCreature(): { creature: Creature; t: number } | null;
   hitCreature(cr: Creature): void;
   defeatCreature(cr: Creature): void;
+  // Advance the offline heart drops: bob their meshes, let a damaged player walking over one collect it
+  // for +1 heart, and drop any past its TTL. `now` is the rAF clock in ms (bob phase + TTL reference).
+  updateHeartDrops(now: number): void;
 
   // ---- Co-op targeting (filled by online/creature-targeting) ----
   raycastServerCreature(): { creature: CoopCreature; t: number } | null;

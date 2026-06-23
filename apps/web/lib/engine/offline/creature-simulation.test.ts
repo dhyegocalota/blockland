@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCreatureSimulation } from './creature-simulation';
 import { CREATURE_DEFS } from './creatures';
 import { Vec3 } from '../vec3';
+import { HEART_DROP_TTL_MS } from '../constants';
 import { t } from '../../i18n';
 import type { Creature, GameRuntime } from '../runtime';
 
@@ -15,10 +16,13 @@ function makeRuntime() {
   const knockbackCreatureMesh = vi.fn();
   const disposeCreatureMesh = vi.fn();
   const onEvent = vi.fn();
+  const heartDropRuntime = { spawn: vi.fn(), move: vi.fn(), update: vi.fn(), remove: vi.fn(), clear: vi.fn() };
   const runtime = {
     camera: { position: { x: 0, y: 0, z: 0 }, getWorldDirection: vi.fn() },
     creatures: [] as Creature[],
-    state: { peaceful: false, disposed: false, player: { pos: { x: 0, y: 2, z: 0 }, hurtCooldown: 0, stars: 0, bag: 0 } },
+    heartDrops: [],
+    heartDropRuntime,
+    state: { peaceful: false, disposed: false, player: { pos: new Vec3(0, 2, 0), hearts: 3, hurtCooldown: 0, stars: 0, bag: 0 } },
     groundHeight: () => 0,
     buildCreatureBody,
     syncCreatureMesh,
@@ -32,7 +36,7 @@ function makeRuntime() {
     bridge: { resolveName: () => 'Maria', hud: { onEvent } },
   } as unknown as GameRuntime;
   createCreatureSimulation(runtime);
-  return { runtime, buildCreatureBody, syncCreatureMesh, onEvent };
+  return { runtime, buildCreatureBody, syncCreatureMesh, onEvent, heartDropRuntime };
 }
 
 function fakeCreature(typeKey: string): Creature {
@@ -68,5 +72,55 @@ describe('createCreatureSimulation', () => {
       x: expect.any(Number), y: expect.any(Number), z: expect.any(Number),
       rotationY: expect.any(Number), flashing: expect.any(Boolean),
     }));
+  });
+
+  it('defeatCreature drops a heart at the creature and spawns its mesh', () => {
+    const { runtime, heartDropRuntime } = makeRuntime();
+    const creature = fakeCreature('spider');
+    runtime.creatures.push(creature);
+    runtime.defeatCreature(creature);
+    expect(runtime.heartDrops).toHaveLength(1);
+    expect(runtime.heartDrops[0].pos).toEqual(new Vec3(0, 0, 0));
+    expect(heartDropRuntime.spawn).toHaveBeenCalledOnce();
+  });
+
+  it('updateHeartDrops heals a damaged player who walks over a drop and consumes it', () => {
+    const { runtime, heartDropRuntime } = makeRuntime();
+    runtime.state.player.hearts = 1;
+    const creature = fakeCreature('spider');
+    runtime.creatures.push(creature);
+    runtime.defeatCreature(creature);
+    const dropId = runtime.heartDrops[0].id;
+    runtime.updateHeartDrops(performance.now());
+    expect(runtime.state.player.hearts).toBe(2);
+    expect(runtime.heartDrops).toHaveLength(0);
+    expect(heartDropRuntime.remove).toHaveBeenCalledWith(dropId);
+  });
+
+  it('updateHeartDrops leaves the heart for a full-hearted player', () => {
+    const { runtime } = makeRuntime();
+    runtime.state.player.hearts = 3;
+    const creature = fakeCreature('spider');
+    runtime.creatures.push(creature);
+    runtime.defeatCreature(creature);
+    runtime.updateHeartDrops(performance.now());
+    expect(runtime.state.player.hearts).toBe(3);
+    expect(runtime.heartDrops).toHaveLength(1);
+  });
+
+  it('updateHeartDrops drops an out-of-radius heart only once its TTL expires', () => {
+    const { runtime, heartDropRuntime } = makeRuntime();
+    runtime.state.player.hearts = 1;
+    const creature = fakeCreature('spider');
+    creature.pos = new Vec3(50, 0, 50);
+    runtime.creatures.push(creature);
+    const spawnedAt = performance.now();
+    runtime.defeatCreature(creature);
+    runtime.heartDrops[0].spawnedAt = spawnedAt;
+    runtime.updateHeartDrops(spawnedAt + 1000);
+    expect(runtime.heartDrops).toHaveLength(1);
+    runtime.updateHeartDrops(spawnedAt + HEART_DROP_TTL_MS + 1);
+    expect(runtime.heartDrops).toHaveLength(0);
+    expect(heartDropRuntime.remove).toHaveBeenCalledOnce();
   });
 });

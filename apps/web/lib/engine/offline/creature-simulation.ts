@@ -15,10 +15,12 @@ import { sphereCastClosest } from '../sphere-cast';
 import { STARTING_ROSTER, spawnPosition } from './creature-spawn';
 import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './creature-combat';
 import { offlineKillFeed } from './feed-events';
+import { canCollectHeart, heartDropExpired } from '../heart-drop';
 import type { Creature, GameRuntime } from '../runtime';
 
 export function createCreatureSimulation(runtime: GameRuntime): void {
   const { camera } = runtime;
+  let nextHeartDropId = 1;
 
   runtime.spawnCreature = function spawnCreature(typeKey: string): void {
     const def = CREATURE_DEFS[typeKey];
@@ -111,6 +113,10 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
     const bridge = runtime.bridge;
     if (bridge) bridge.hud.onEvent(offlineKillFeed({ name: bridge.resolveName(), creatureName: t(cr.def.nameKey) }));
     runtime.spawnPoof(cr.pos, cr.def.color);
+    const dropId = nextHeartDropId++;
+    const dropPos = cr.pos.clone();
+    runtime.heartDrops.push({ id: dropId, pos: dropPos, spawnedAt: performance.now() });
+    runtime.heartDropRuntime.spawn({ id: dropId, x: dropPos.x, y: dropPos.y, z: dropPos.z });
     player.stars += cr.def.reward;
     player.bag += 1;
     runtime.toast(t('toast.reward', { emoji: cr.def.emoji, reward: cr.def.reward }));
@@ -119,5 +125,26 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
     runtime.disposeCreatureMesh(cr);
     runtime.creatures.splice(runtime.creatures.indexOf(cr), 1);
     setTimeout(() => { if (!runtime.state.disposed) runtime.spawnCreature(cr.typeKey); }, RESPAWN_DELAY_MS);
+  };
+
+  runtime.updateHeartDrops = function updateHeartDrops(now: number): void {
+    runtime.heartDropRuntime.update(now / 1000);
+    const { player } = runtime.state;
+    const playerPos = new Vec3(player.pos.x, player.pos.y - EYE_HEIGHT, player.pos.z);
+    for (let i = runtime.heartDrops.length - 1; i >= 0; i--) {
+      const drop = runtime.heartDrops[i];
+      if (canCollectHeart({ drop, playerPos, hearts: player.hearts })) {
+        player.hearts += 1;
+        runtime.heartDrops.splice(i, 1);
+        runtime.heartDropRuntime.remove(drop.id);
+        runtime.blip(990, 0.1);
+        runtime.updateStats();
+        debug('engine', 'heart collected', { id: drop.id, hearts: player.hearts });
+        continue;
+      }
+      if (!heartDropExpired({ drop, now })) continue;
+      runtime.heartDrops.splice(i, 1);
+      runtime.heartDropRuntime.remove(drop.id);
+    }
   };
 }

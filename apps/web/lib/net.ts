@@ -88,11 +88,19 @@ export interface SnapshotCreature {
   max_hp: number;
 }
 
+export interface SnapshotHeart {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface SnapshotMsg {
   t: 'snapshot';
   tick: number;
   players: SnapshotPlayer[];
   creatures: SnapshotCreature[];
+  hearts: SnapshotHeart[];
 }
 
 function decodeSnapshot(msg: Extract<ServerMsg, { t: 'snapshot' }>): SnapshotMsg {
@@ -104,7 +112,8 @@ function decodeSnapshot(msg: Extract<ServerMsg, { t: 'snapshot' }>): SnapshotMsg
     if (!kind) throw new Error(`unknown creature kind index ${kindIndex}`);
     return { id, kind, x, y, z, yaw, hp, max_hp };
   });
-  return { t: 'snapshot', tick: msg.k, players, creatures };
+  const hearts: SnapshotHeart[] = msg.h.map(([id, x, y, z]) => ({ id, x, y, z }));
+  return { t: 'snapshot', tick: msg.k, players, creatures, hearts };
 }
 
 type WelcomeMsg = Extract<ServerMsg, { t: 'welcome' }>;

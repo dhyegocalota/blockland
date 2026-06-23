@@ -127,8 +127,8 @@ export function createGameLoop(runtime: GameRuntime): void {
     runtime.last = frame.last;
     const dt = frame.dt;
     state.fps = smoothFps({ fps: state.fps, dt });
-    if (state.started && !state.paused) { runtime.update(dt); runtime.updateChunks(); runtime.processMeshQueue(isTouch ? 1 : 2); if (!runtime.coop) runtime.updateCreatures(dt); runtime.updatePoofs(dt); }
-    if (runtime.coop) { runtime.coop.sendMove(runtime.localPose(), now); runtime.coop.update(now); }
+    if (state.started && !state.paused) { runtime.update(dt); runtime.updateChunks(); runtime.processMeshQueue(isTouch ? 1 : 2); if (!runtime.coop) { runtime.updateCreatures(dt); runtime.updateHeartDrops(now); } runtime.updatePoofs(dt); }
+    if (runtime.coop) { runtime.coop.sendMove(runtime.localPose(), now); runtime.coop.update(now); runtime.heartDropRuntime.update(now / 1000); }
     if (state.started && now - runtime.lastPosSave > POS_SAVE_MS) { runtime.savePos(); runtime.lastPosSave = now; }
     runtime.view.present();
   };

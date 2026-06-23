@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import type { Appearance, CoopView } from '../../coop';
 import type { CreatureDef } from '../online/creature-snapshot';
 import type { GfxScene } from './gfx';
+import type { HeartDropRuntime } from './heart-drop-runtime';
 
 const AVATAR_HEIGHT = 1.7;
 const MODEL_HEIGHT = 1.8; // natural height of the humanoid before scaling to AVATAR_HEIGHT
@@ -32,7 +33,7 @@ interface CreatureMesh {
   body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
 }
 
-export function createCoopView({ scene }: { scene: GfxScene }): CoopView {
+export function createCoopView({ scene, heartDropRuntime }: { scene: GfxScene; heartDropRuntime: HeartDropRuntime }): CoopView {
   const avatars = new Map<number, AvatarMesh>();
   const creatures = new Map<number, CreatureMesh>();
 
@@ -259,5 +260,8 @@ export function createCoopView({ scene }: { scene: GfxScene }): CoopView {
     },
     onCreatureFlash: (id) => flashCreature(id),
     onCreatureDespawn: (id) => removeCreature(id),
+    onHeartDropSpawn: (id, x, y, z) => heartDropRuntime.spawn({ id, x, y, z }),
+    onHeartDropMove: (id, x, y, z) => heartDropRuntime.move({ id, x, y, z }),
+    onHeartDropDespawn: (id) => heartDropRuntime.remove(id),
   };
 }

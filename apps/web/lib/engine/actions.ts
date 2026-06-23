@@ -22,6 +22,8 @@ export function createActions(runtime: GameRuntime): void {
     runtime.updateChunks(true);
     runtime.processMeshQueue(runtime.isTouch ? 24 : 60);
     runtime.poofRuntime.clear();
+    runtime.heartDropRuntime.clear();
+    runtime.heartDrops.length = 0;
     player.pos.copy(runtime.spawnPoint());
     player.vel.set(0, 0, 0);
     runtime.savePos();

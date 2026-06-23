@@ -189,9 +189,10 @@ pub enum ServerMsg {
         /// Server build identifier (GIT_SHA when deployed, else the crate version), shown in the debug panel.
         version: String,
     },
-    /// The hot per-tick message, encoded as compactly as possible: single-letter keys and each player
-    /// and creature is a fixed-order number array (see `PlayerState`/`CreatureState`) instead of named
-    /// fields. `k` = tick, `p` = players, `c` = creatures. The client decodes it at the net boundary.
+    /// The hot per-tick message, encoded as compactly as possible: single-letter keys and each player,
+    /// creature and heart drop is a fixed-order number array (see `PlayerState`/`CreatureState`/
+    /// `HeartDropState`) instead of named fields. `k` = tick, `p` = players, `c` = creatures, `h` = heart
+    /// drops. The client decodes it at the net boundary.
     Snapshot {
         #[serde(rename = "k")]
         #[ts(type = "number")]
@@ -200,6 +201,8 @@ pub enum ServerMsg {
         players: Vec<PlayerState>,
         #[serde(rename = "c")]
         creatures: Vec<CreatureState>,
+        #[serde(rename = "h")]
+        hearts: Vec<HeartDropState>,
     },
     Edit {
         x: i32,
@@ -348,6 +351,12 @@ pub struct CreatureState(
     pub u8,
 );
 
+/// One heart pickup dropped by a defeated creature, as a fixed-order number array (no field names, to
+/// keep the hot Snapshot tiny): `[id, x, y, z]`. A player who walks over it while below MAX_HP collects
+/// it for +1 heart; the server removes it on pickup or once its TTL expires, so it stops appearing here.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct HeartDropState(pub u32, pub f32, pub f32, pub f32);
+
 /// One account awaiting an admin's approval before it can join (name + email for the admin to recognize).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct PendingApproval {
@@ -412,10 +421,21 @@ mod snapshot_size {
                 )
             })
             .collect();
+        let hearts = (0..3)
+            .map(|i| {
+                HeartDropState(
+                    200 + i,
+                    round(i as f32 * 2.0 - 5.0),
+                    round(63.5),
+                    round(i as f32 * 1.1),
+                )
+            })
+            .collect();
         ServerMsg::Snapshot {
             tick: 1_234,
             players,
             creatures,
+            hearts,
         }
     }
 
@@ -431,6 +451,7 @@ mod snapshot_size {
             tick,
             players,
             creatures,
+            hearts,
         } = msg
         else {
             unreachable!()
@@ -453,8 +474,12 @@ mod snapshot_size {
                 })
             })
             .collect();
+        let hearts: Vec<_> = hearts
+            .iter()
+            .map(|h| serde_json::json!({ "id": h.0, "x": h.1, "y": h.2, "z": h.3 }))
+            .collect();
         let named = serde_json::json!({
-            "t": "snapshot", "tick": tick, "players": players, "creatures": creatures,
+            "t": "snapshot", "tick": tick, "players": players, "creatures": creatures, "hearts": hearts,
         });
         serde_json::to_string(&named).unwrap().len()
     }
@@ -501,6 +526,7 @@ mod export {
             PlayerMeta::decl(),
             PlayerState::decl(),
             CreatureState::decl(),
+            HeartDropState::decl(),
             PendingApproval::decl(),
             BanEntry::decl(),
             ClientMsg::decl(),

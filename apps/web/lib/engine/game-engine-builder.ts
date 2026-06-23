@@ -25,6 +25,7 @@ import { createViewRenderer } from './rendering/renderers';
 import { createScene } from './rendering/scene-setup';
 import { createChunkMesher } from './rendering/chunk-mesher';
 import { createPoofRuntime } from './rendering/poofs-runtime';
+import { createHeartDropRuntime } from './rendering/heart-drop-runtime';
 import { createCreatureGroup, loadFaceTexture } from './rendering/face-texture';
 import { resolveCoopPlan, type EngineMode } from './builder-plan';
 import { createActions } from './actions';
@@ -105,6 +106,7 @@ export class GameEngineBuilder {
     const ctx: EngineContext = { isTouch, scene, worldGroup, world, materials, chunkMeshes, chunksX, chunksZ };
     const mesher = createChunkMesher(ctx);
     const poofRuntime = createPoofRuntime({ scene });
+    const heartDropRuntime = createHeartDropRuntime({ scene });
     const view = createViewRenderer({ camera, highlight, renderer, scene });
 
     // ---------- Player state ----------
@@ -126,9 +128,9 @@ export class GameEngineBuilder {
       isTouch, signal, bootStart, coopEnabled: plan.coopEnabled, serverUrl,
       scene, camera, renderer, canvas,
       world, chunkMeshes, materials,
-      mesher, poofRuntime, view,
+      mesher, poofRuntime, heartDropRuntime, view,
       state, inventory: new BlockInventory(),
-      blockedStructures: new Set<string>(), creatures: [], creatureGroup, coop: null,
+      blockedStructures: new Set<string>(), creatures: [], heartDrops: [], creatureGroup, coop: null,
       last: 0, lastPosSave: 0, audio: undefined,
     } as unknown as GameRuntime;
 
@@ -157,7 +159,7 @@ export class GameEngineBuilder {
     runtime.processMeshQueue = (budget: number): void => mesher.processMeshQueue(budget);
     runtime.remeshRegion = (minX, maxX, minZ, maxZ): void => mesher.remeshRegion(minX, maxX, minZ, maxZ);
 
-    runtime.coopView = createCoopView({ scene });
+    runtime.coopView = createCoopView({ scene, heartDropRuntime });
 
     createHud(runtime);
     createActions(runtime);

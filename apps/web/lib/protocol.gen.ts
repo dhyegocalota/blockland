@@ -17,6 +17,8 @@ export type PlayerState = [number, number, number, number, number, number, numbe
 
 export type CreatureState = [number, number, number, number, number, number, number, number];
 
+export type HeartDropState = [number, number, number, number];
+
 export type PendingApproval = { account_id: string, name: string, email: string, };
 
 export type BanEntry = { ip: string, name: string, };
@@ -27,7 +29,7 @@ export type ServerMsg = { "t": "welcome", you: number, tenant: string, world: st
 /**
  * Server build identifier (GIT_SHA when deployed, else the crate version), shown in the debug panel.
  */
-version: string, } | { "t": "snapshot", k: number, p: Array<PlayerState>, c: Array<CreatureState>, } | { "t": "edit", x: number, y: number, z: number, id: number, by: number, } | { "t": "edit_batch", edits: Array<EditCell>, by: number, } | { "t": "ping", nonce: number, } | { "t": "chat", from: number, name: string, text: string, } | { "t": "left", id: number, } | { "t": "error", code: string, msg: string, } | { "t": "event", kind: string, name: string, detail: string, } | { "t": "room_state", peace: boolean, blocked_structures: Array<string>, pvp: boolean, chat_enabled: boolean, suspended: boolean, approval_required: boolean, 
+version: string, } | { "t": "snapshot", k: number, p: Array<PlayerState>, c: Array<CreatureState>, h: Array<HeartDropState>, } | { "t": "edit", x: number, y: number, z: number, id: number, by: number, } | { "t": "edit_batch", edits: Array<EditCell>, by: number, } | { "t": "ping", nonce: number, } | { "t": "chat", from: number, name: string, text: string, } | { "t": "left", id: number, } | { "t": "error", code: string, msg: string, } | { "t": "event", kind: string, name: string, detail: string, } | { "t": "room_state", peace: boolean, blocked_structures: Array<string>, pvp: boolean, chat_enabled: boolean, suspended: boolean, approval_required: boolean, 
 /**
  * Per-tenant play-time budget: minutes allowed within a rolling window of hours (0 minutes =
  * unlimited). Surfaced so the admin panels show + edit the live values without a rejoin.
