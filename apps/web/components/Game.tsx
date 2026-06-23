@@ -118,6 +118,9 @@ export default function Game() {
         <div id="topbar">
           <img src={brand.image} alt={brand.name} />
           <span className="title">{brand.name}</span>
+          <span className={`stat mode ${solo ? 'mode-offline' : 'mode-online'}`} id="mode">
+            {solo ? t('hud.offline') : t('hud.online')}
+          </span>
           <span className="stat" id="hearts">❤️❤️❤️</span>
           <span className="stat" id="stars">⭐ 0</span>
           <span className="stat record" id="record">🏆 0</span>

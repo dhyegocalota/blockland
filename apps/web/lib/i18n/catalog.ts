@@ -13,6 +13,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.spawn': '🏠 Início',
     'hud.chat': '💬 Chat',
     'hud.exit': '🚪 Sair',
+    'hud.online': '🟢 Online',
+    'hud.offline': '🔵 Offline',
 
     // Controls modal
     'controls.title': '🎮 Controles',
@@ -436,6 +438,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.spawn': '🏠 Spawn',
     'hud.chat': '💬 Chat',
     'hud.exit': '🚪 Leave',
+    'hud.online': '🟢 Online',
+    'hud.offline': '🔵 Offline',
 
     // Controls modal
     'controls.title': '🎮 Controls',

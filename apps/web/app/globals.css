@@ -79,6 +79,8 @@ input, textarea, select { font-size: max(16px, 1em); }
   padding: 4px 12px; border-radius: 14px; border: 2px solid rgba(255,255,255,.5); white-space: nowrap;
 }
 #topbar .stat.record { border-color: var(--gold); color: var(--gold); }
+#topbar .stat.mode-online { border-color: #4ade80; color: #4ade80; }
+#topbar .stat.mode-offline { border-color: #9ca3af; color: #d8def0; }
 #topbar .stat.hit { animation: shake .3s; }
 @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }
 

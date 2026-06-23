@@ -69,6 +69,18 @@ describe('Game', () => {
     expect(document.getElementById('approvalOverlay')).toBeInTheDocument();
   });
 
+  it('shows the Online mode badge when playing online', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, solo: false }));
+    render(<Game />);
+    expect(document.getElementById('mode')?.textContent).toContain('Online');
+  });
+
+  it('shows the Offline mode badge when playing solo', () => {
+    useGame.mockReturnValue(gameState({ solo: true }));
+    render(<Game />);
+    expect(document.getElementById('mode')?.textContent).toContain('Offline');
+  });
+
   it('bans a pending player from the admin approval list', () => {
     const banPending = vi.fn();
     useGame.mockReturnValue(
