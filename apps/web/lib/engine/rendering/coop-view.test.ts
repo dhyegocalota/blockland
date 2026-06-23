@@ -50,6 +50,35 @@ describe('createCoopView', () => {
     expect(group.rotation.y).toBe(1.2);
   });
 
+  it('swings the avatar arm after a primary action and rests it otherwise', () => {
+    const view = createCoopView({ scene, heartDropRuntime: createHeartDropRuntime({ scene }) });
+    const nowSpy = vi.spyOn(performance, 'now');
+    nowSpy.mockReturnValue(0);
+    view.onPlayerJoin(1, 'Maria', LOOK);
+    const armPivot = scene.children[0].getObjectByName('armPivot');
+    if (!armPivot) throw new Error('arm pivot missing');
+
+    // No swing yet: the arm hangs at rest.
+    view.onPlayerPose(1, 0, 0, 0, 0);
+    expect(armPivot.rotation.x).toBe(0);
+
+    // A swing then a pose mid-swing rotates the arm forward.
+    view.onPlayerSwing(1);
+    nowSpy.mockReturnValue(110);
+    view.onPlayerPose(1, 0, 0, 0, 0);
+    expect(armPivot.rotation.x).toBeGreaterThan(0);
+
+    // Once the swing window passes, the arm eases back to rest.
+    nowSpy.mockReturnValue(1000);
+    view.onPlayerPose(1, 0, 0, 0, 0);
+    expect(armPivot.rotation.x).toBe(0);
+  });
+
+  it('ignores a swing for an unknown player id', () => {
+    const view = createCoopView({ scene, heartDropRuntime: createHeartDropRuntime({ scene }) });
+    expect(() => view.onPlayerSwing(99)).not.toThrow();
+  });
+
   it('renames only the live avatar without changing the scene count', () => {
     const view = createCoopView({ scene, heartDropRuntime: createHeartDropRuntime({ scene }) });
     view.onPlayerJoin(1, 'Maria', LOOK);

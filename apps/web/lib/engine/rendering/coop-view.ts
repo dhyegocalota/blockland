@@ -6,6 +6,8 @@
 // lifecycle moved here verbatim from coop.ts.
 import * as THREE from 'three';
 import type { Appearance, CoopView } from '../../coop';
+import { SWING_DURATION_MS, SWING_PEAK_RAD } from '../constants';
+import { swingPose } from '../swing';
 import type { CreatureDef } from '../online/creature-snapshot';
 import type { GfxScene } from './gfx';
 import type { HeartDropRuntime } from './heart-drop-runtime';
@@ -26,6 +28,10 @@ interface AvatarMesh {
   label: THREE.Sprite;
   bubble: THREE.Sprite | null;
   bubbleTimer: number;
+  // The right-arm pivot (at the shoulder) and the timestamp of the last attack swing, so the arm swings
+  // forward then eases back on every primary action this player performs (mirrors the first-person swing).
+  armPivot: THREE.Group;
+  swingStart: number;
 }
 
 interface CreatureMesh {
@@ -94,7 +100,14 @@ export function createCoopView({ scene, heartDropRuntime }: { scene: GfxScene; h
     model.add(box(0.22, 0.7, 0.24, PANTS, 0.13, 0.35));
     model.add(box(0.5, 0.6, 0.26, look.shirt, 0, 1.0));
     model.add(box(0.18, 0.6, 0.2, look.skin, -0.34, 1.0));
-    model.add(box(0.18, 0.6, 0.2, look.skin, 0.34, 1.0));
+    // The right arm hangs off a shoulder pivot so a swing rotates it forward; the arm box sits below the
+    // pivot, its top at the shoulder, matching the static left arm's placement at rest.
+    const armPivot = new THREE.Group();
+    armPivot.name = 'armPivot';
+    armPivot.position.set(0.34, 1.3, 0);
+    const rightArm = box(0.18, 0.6, 0.2, look.skin, 0, -0.3);
+    armPivot.add(rightArm);
+    model.add(armPivot);
     const skin = new THREE.MeshLambertMaterial({ color: look.skin });
     const faceMat = new THREE.MeshLambertMaterial({ map: makeFaceTexture(look.skin) });
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), [skin, skin, skin, skin, faceMat, skin]);
@@ -108,7 +121,7 @@ export function createCoopView({ scene, heartDropRuntime }: { scene: GfxScene; h
     label.position.y = AVATAR_HEIGHT + LABEL_LIFT;
     group.add(label);
     scene.add(group);
-    avatars.set(id, { group, label, bubble: null, bubbleTimer: 0 });
+    avatars.set(id, { group, label, bubble: null, bubbleTimer: 0, armPivot, swingStart: -Infinity });
   }
 
   function makeBubble(text: string): THREE.Sprite {
@@ -247,6 +260,12 @@ export function createCoopView({ scene, heartDropRuntime }: { scene: GfxScene; h
       if (!avatar) return;
       avatar.group.position.set(x, y, z);
       avatar.group.rotation.y = yaw;
+      avatar.armPivot.rotation.x = swingPose({ tSinceStart: performance.now() - avatar.swingStart, durationMs: SWING_DURATION_MS, peakRad: SWING_PEAK_RAD });
+    },
+    onPlayerSwing: (id) => {
+      const avatar = avatars.get(id);
+      if (!avatar) return;
+      avatar.swingStart = performance.now();
     },
     onPlayerChat: (id, text) => showBubble(id, text),
     onPlayerRename: (id, name) => renameAvatar(id, name),

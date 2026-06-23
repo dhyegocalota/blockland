@@ -39,5 +39,5 @@ playtime_limit_min: number, playtime_window_h: number,
  * Which game modes the tenant allows. The lobby also learns these before joining (via the
  * tenant HTTP fetch); online-blocking is enforced server-side, offline-blocking client-side.
  */
-online_allowed: boolean, offline_allowed: boolean, } | { "t": "pending_approvals", pending: Array<PendingApproval>, } | { "t": "bans", bans: Array<BanEntry>, } | { "t": "hurt", by: string, } | { "t": "role", admin: boolean, moderator: boolean, } | { "t": "attack", kind: string, id: number, } | { "t": "respawn", x: number, y: number, z: number, hp: number, } | { "t": "inventory", items: Array<InventoryItem>, infinite: boolean, } | { "t": "roster", players: Array<PlayerMeta>, };
+online_allowed: boolean, offline_allowed: boolean, } | { "t": "pending_approvals", pending: Array<PendingApproval>, } | { "t": "bans", bans: Array<BanEntry>, } | { "t": "hurt", by: string, } | { "t": "role", admin: boolean, moderator: boolean, } | { "t": "attack", kind: string, id: number, } | { "t": "swing", id: number, } | { "t": "respawn", x: number, y: number, z: number, hp: number, } | { "t": "inventory", items: Array<InventoryItem>, infinite: boolean, } | { "t": "roster", players: Array<PlayerMeta>, };
 

@@ -284,6 +284,12 @@ pub enum ServerMsg {
         kind: String,
         id: u32,
     },
+    /// A player performed a primary action (dig tap / creature hit / pvp attack), so every other client
+    /// swings that player's avatar arm. `id` is the acting player's id. Purely cosmetic (no damage);
+    /// broadcast to everyone but the actor (who already swung their own first-person view locally).
+    Swing {
+        id: u32,
+    },
     /// The server moved this player to spawn (on request or death) with full health; the client snaps
     /// its position onto it (re-baselining the anti-cheat) and refills its hearts.
     Respawn {

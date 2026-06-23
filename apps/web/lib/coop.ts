@@ -83,6 +83,8 @@ export interface Report {
 export interface CoopView {
   onPlayerJoin(id: number, name: string, look: Appearance): void;
   onPlayerPose(id: number, x: number, y: number, z: number, yaw: number): void;
+  // A remote player performed a primary action: swing that avatar's arm (purely cosmetic).
+  onPlayerSwing(id: number): void;
   onPlayerChat(id: number, text: string): void;
   onPlayerRename(id: number, name: string): void;
   onPlayerLeave(id: number): void;
@@ -505,6 +507,11 @@ export function createCoop(opts: CoopOptions): CoopController {
         const avatar = avatars.get(msg.id);
         if (!avatar) return;
         opts.onCreaturePoof({ x: avatar.x, y: avatar.y + PLAYER_HEIGHT / 2, z: avatar.z, color: PLAYER_HIT_COLOR });
+      },
+      // Another player performed a primary action: swing their avatar's arm so everyone sees the attack.
+      onSwing: (msg) => {
+        if (!avatars.has(msg.id)) return;
+        view.onPlayerSwing(msg.id);
       },
       onRespawn: (msg) => {
         debugReportRing.push({ dir: DebugEventDir.Recv, kind: DebugEventKind.Respawn, cell: { x: msg.x, y: msg.y, z: msg.z }, id: msg.hp });

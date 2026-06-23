@@ -396,6 +396,18 @@ describe('net client', () => {
     expect(hits).toEqual([{ t: 'hurt', by: 'Maria' }]);
   });
 
+  it('routes swing to onSwing', () => {
+    const swings: unknown[] = [];
+    const { client } = makeClient({ handlers: { onSwing: (m) => swings.push(m) } });
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'swing', id: 7 });
+    expect(swings).toEqual([{ t: 'swing', id: 7 }]);
+  });
+
   it('routes inventory to onInventory and serializes sendAdminSetInfinite', () => {
     const inventories: unknown[] = [];
     const { client } = makeClient({ handlers: { onInventory: (m) => inventories.push(m) } });
