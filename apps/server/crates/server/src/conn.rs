@@ -138,6 +138,10 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     });
 
     // Reader loop: forward validated client messages to the room.
+    // A WebSocket Close frame means the client left on purpose (page reload / tab close); the stream just
+    // ending with no Close is an abrupt drop. The room holds the slot for reconnect only on a drop, and
+    // removes the player immediately on a clean leave.
+    let mut clean_close = false;
     while let Some(Ok(msg)) = stream.next().await {
         match msg {
             Message::Text(t) => {
@@ -154,16 +158,20 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
                     }
                 }
             }
-            Message::Close(_) => break,
+            Message::Close(_) => {
+                clean_close = true;
+                break;
+            }
             _ => {}
         }
     }
 
-    tracing::debug!(id = %pid, "player leaving");
+    tracing::debug!(id = %pid, clean_close, "player leaving");
     let _ = room_tx
         .send(RoomCmd::Leave {
             id: pid,
             conn: leave_conn,
+            clean: clean_close,
         })
         .await;
     writer.abort();

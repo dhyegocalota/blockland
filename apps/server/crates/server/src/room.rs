@@ -121,6 +121,9 @@ pub enum RoomCmd {
         /// player's CURRENT connection (`same_channel`) and ignore a stale one from a socket already
         /// replaced by a reconnect — without it, a late Leave would freeze a live, resumed player.
         conn: mpsc::Sender<Outbound>,
+        /// True when the client closed cleanly (a WebSocket Close frame — page reload / leave). A clean
+        /// leave removes the player at once; an abrupt drop (no Close frame) holds the slot for reconnect.
+        clean: bool,
     },
     /// A logged-in account renamed itself: update the live player and broadcast the timeline event.
     Rename {
@@ -423,7 +426,7 @@ impl Room {
                 reply,
             } => self.on_join(name, claim, look, ip, conn, reply).await,
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
-            RoomCmd::Leave { id, conn } => self.on_leave(id, &conn),
+            RoomCmd::Leave { id, conn, clean } => self.on_leave(id, &conn, clean),
             RoomCmd::Rename {
                 account_id,
                 new_name,
@@ -770,8 +773,8 @@ impl Room {
     /// slot (avatar held in place) and start the reconnect grace, so a quick rejoin RESUMES them. The
     /// tick prunes the slot (with a single `Left`) only if the grace expires. Ignores a stale Leave from
     /// a socket the player has already reconnected over (`same_channel` no longer matches the live conn).
-    fn on_leave(&mut self, id: PlayerId, conn: &mpsc::Sender<Outbound>) {
-        let Some(player) = self.players.get_mut(&id) else {
+    fn on_leave(&mut self, id: PlayerId, conn: &mpsc::Sender<Outbound>, clean: bool) {
+        let Some(player) = self.players.get(&id) else {
             return;
         };
         if !player.conn.same_channel(conn) {
@@ -780,8 +783,20 @@ impl Room {
         if player.disconnected_at.is_some() {
             return;
         }
-        player.disconnected_at = Some(Instant::now());
-        tracing::debug!(tenant = %self.key.0, %id, "player disconnected, holding slot for reconnect");
+        // A clean close (page reload / leaving the tab) removes the player at once, so their avatar
+        // vanishes for everyone immediately. Only an abrupt drop (no Close frame — lost internet) holds
+        // the slot for RECONNECT_GRACE so a reconnect can resume it.
+        if clean {
+            self.players.remove(&id);
+            self.broadcast(&ServerMsg::Left { id });
+            tracing::debug!(tenant = %self.key.0, %id, "player left cleanly, removed immediately");
+            return;
+        }
+        self.players
+            .get_mut(&id)
+            .expect("player present")
+            .disconnected_at = Some(Instant::now());
+        tracing::debug!(tenant = %self.key.0, %id, "player dropped, holding slot for reconnect");
     }
 
     /// Find a slot currently within its reconnect grace whose identity matches this rejoin, and resume
@@ -4846,7 +4861,7 @@ mod tests {
         let mut peer_rx = add_player(&mut room, 1, false);
         let _dropped_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(2, &conn2);
+        room.on_leave(2, &conn2, false);
         // The slot is held (avatar frozen), not removed, and no Left went out within the grace.
         assert!(
             room.players.contains_key(&2),
@@ -4860,6 +4875,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_clean_close_removes_the_player_immediately_without_grace() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _leaver_rx = add_player(&mut room, 2, false);
+        let conn2 = room.players.get(&2).unwrap().conn.clone();
+        // A page reload / tab close sends a clean Close frame: the player is removed at once (no grace),
+        // so their avatar vanishes for everyone immediately.
+        room.on_leave(2, &conn2, true);
+        assert!(
+            !room.players.contains_key(&2),
+            "a clean leave removes the slot at once"
+        );
+        assert!(
+            saw_left(&mut peer_rx, 2),
+            "a clean leave broadcasts Left immediately"
+        );
+    }
+
+    #[tokio::test]
     async fn a_stale_leave_from_a_replaced_socket_is_ignored() {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 2, false);
@@ -4867,7 +4901,7 @@ mod tests {
         let (stale_conn, _stale_rx) = mpsc::channel::<Outbound>(64);
         let (live_conn, _live_rx) = mpsc::channel::<Outbound>(64);
         room.players.get_mut(&2).unwrap().conn = live_conn;
-        room.on_leave(2, &stale_conn);
+        room.on_leave(2, &stale_conn, false);
         assert!(
             room.players.get(&2).unwrap().disconnected_at.is_none(),
             "a Leave from a replaced socket never freezes the live slot"
@@ -4891,7 +4925,7 @@ mod tests {
             p.inventory.insert(3, 9);
         }
         let dropped_conn = room.players.get(&id).unwrap().conn.clone();
-        room.on_leave(id, &dropped_conn);
+        room.on_leave(id, &dropped_conn, false);
         assert!(room.players.get(&id).unwrap().disconnected_at.is_some());
 
         // The same guest rejoins (same IP) within the grace.
@@ -4919,7 +4953,7 @@ mod tests {
         let mut peer_rx = add_player(&mut room, 1, false);
         let _dropped_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(2, &conn2);
+        room.on_leave(2, &conn2, false);
         // Backdate the disconnect beyond the grace so the next status sweep prunes it.
         room.players.get_mut(&2).unwrap().disconnected_at =
             Some(Instant::now() - RECONNECT_GRACE - Duration::from_secs(1));
@@ -4940,7 +4974,7 @@ mod tests {
             admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "198.51.100.1").await;
         let id = admitted.expect("authed player admitted");
         let dropped_conn = room.players.get(&id).unwrap().conn.clone();
-        room.on_leave(id, &dropped_conn);
+        room.on_leave(id, &dropped_conn, false);
         let (resumed, _second_rx) =
             admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "203.0.113.9").await;
         assert_eq!(

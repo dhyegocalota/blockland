@@ -259,6 +259,7 @@ export function createNet(opts: NetOptions): NetClient {
   const reconnect = opts.reconnect ?? true;
   const connectivity = opts.connectivity ?? windowConnectivity();
   let connectivityUnsub: (() => void) | null = null;
+  let pageHideHandler: (() => void) | null = null;
 
   let socket: WebSocketLike | null = null;
   let state: NetState = 'offline';
@@ -534,6 +535,13 @@ export function createNet(opts: NetOptions): NetClient {
         () => dropForReconnect('browser offline'),
         () => reconnectNow(),
       );
+      // On page reload / tab close, close the socket cleanly so the server gets a Close frame and removes
+      // the avatar immediately (instead of holding the slot for the reconnect grace). Belt-and-suspenders
+      // over the browser's own 1001 close, which a fast reload can skip.
+      if (typeof window !== 'undefined') {
+        pageHideHandler = () => { closedByUser = true; socket?.close(); };
+        window.addEventListener('pagehide', pageHideHandler);
+      }
       setState('connecting');
       open();
     },
@@ -541,6 +549,10 @@ export function createNet(opts: NetOptions): NetClient {
       closedByUser = true;
       connectivityUnsub?.();
       connectivityUnsub = null;
+      if (pageHideHandler && typeof window !== 'undefined') {
+        window.removeEventListener('pagehide', pageHideHandler);
+        pageHideHandler = null;
+      }
       clearReconnectTimer();
       clearLivenessTimer();
       socket?.close();
