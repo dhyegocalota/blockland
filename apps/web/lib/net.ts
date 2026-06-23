@@ -112,7 +112,9 @@ function decodeSnapshot(msg: Extract<ServerMsg, { t: 'snapshot' }>): SnapshotMsg
     if (!kind) throw new Error(`unknown creature kind index ${kindIndex}`);
     return { id, kind, x, y, z, yaw, hp, max_hp };
   });
-  const hearts: SnapshotHeart[] = msg.h.map(([id, x, y, z]) => ({ id, x, y, z }));
+  // `h` (heart drops) is a newer snapshot field; a server one deploy behind omits it. Normalize the
+  // absent wire field to an empty list at this protocol boundary so an old server can't crash the client.
+  const hearts: SnapshotHeart[] = (msg.h ?? []).map(([id, x, y, z]) => ({ id, x, y, z }));
   return { t: 'snapshot', tick: msg.k, players, creatures, hearts };
 }
 

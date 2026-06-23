@@ -132,6 +132,17 @@ describe('net client', () => {
     ]);
   });
 
+  it('tolerates a snapshot from an older server with no heart-drop field', () => {
+    const { client, snapshots } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    socket.receive({ t: 'snapshot', k: 6, p: [], c: [] });
+    expect(snapshots).toEqual([{ t: 'snapshot', tick: 6, players: [], creatures: [], hearts: [] }]);
+  });
+
   it('routes edit_batch to onEditBatch and serializes sendEditBatch', () => {
     const batches: unknown[] = [];
     const { client } = makeClient({ handlers: { onEditBatch: (m) => batches.push(m) } });
