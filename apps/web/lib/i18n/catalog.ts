@@ -109,7 +109,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.suspend': '⏸️ Suspender sala',
     'game_admin.resume': '▶️ Retomar sala',
     'game_admin.playtime': 'Tempo de jogo',
-    'game_admin.playtime_minutes': 'Minutos (0 = sem limite)',
+    'game_admin.playtime_limit_toggle': 'Limitar tempo de jogo',
+    'game_admin.playtime_minutes': 'Minutos',
     'game_admin.playtime_window': 'A cada (horas)',
     'game_admin.playtime_save': 'Salvar tempo',
     'game_admin.modes': 'Modos de jogo',
@@ -246,6 +247,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.admin_role_admin': '{name} tornou {target} admin',
     'feed.admin_role_moderator': '{name} tornou {target} moderador',
     'feed.admin_role_player': '{name} tornou {target} jogador comum',
+    'feed.admin_limits': '⏱️ {name} ajustou o tempo de jogo',
+    'feed.admin_modes': '🎮 {name} mudou os modos de jogo',
+    'feed.admin_approve': '✅ {name} aprovou um jogador',
+    'feed.admin_reject': '🚫 {name} recusou um jogador',
+    'feed.admin_unban': '{name} desbaniu alguém',
 
     // Change name (logged-in rename)
 
@@ -505,7 +511,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'game_admin.suspend': '⏸️ Suspend world',
     'game_admin.resume': '▶️ Resume world',
     'game_admin.playtime': 'Play time',
-    'game_admin.playtime_minutes': 'Minutes (0 = unlimited)',
+    'game_admin.playtime_limit_toggle': 'Limit play time',
+    'game_admin.playtime_minutes': 'Minutes',
     'game_admin.playtime_window': 'Every (hours)',
     'game_admin.playtime_save': 'Save play time',
     'game_admin.modes': 'Game modes',
@@ -642,6 +649,11 @@ export const messages: Record<Locale, Record<string, string>> = {
     'feed.admin_role_admin': '{name} made {target} an admin',
     'feed.admin_role_moderator': '{name} made {target} a moderator',
     'feed.admin_role_player': '{name} made {target} a player',
+    'feed.admin_limits': '⏱️ {name} adjusted the play-time limit',
+    'feed.admin_modes': '🎮 {name} changed the game modes',
+    'feed.admin_approve': '✅ {name} approved a player',
+    'feed.admin_reject': '🚫 {name} rejected a player',
+    'feed.admin_unban': '{name} unbanned someone',
 
     // Change name (logged-in rename)
 

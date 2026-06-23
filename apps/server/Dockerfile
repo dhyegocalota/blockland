@@ -20,6 +20,12 @@ RUN mkdir -p crates/protocol/src crates/sim/src crates/server/src \
 
 # Real sources.
 COPY crates ./crates
+# Bake the deploy's short git SHA into the binary so the debug panel's backend version matches the
+# frontend's type (a commit SHA, not the crate version). The .git dir isn't in this build context, so
+# build.rs can't run git here — pass it as a build arg (Dokploy: set build arg GIT_SHA=<short sha>).
+# Absent, server_version() falls back to the crate version.
+ARG GIT_SHA=""
+ENV BUILD_GIT_SHA=${GIT_SHA}
 RUN touch crates/*/src/*.rs && cargo build --release -p server
 
 # --- runtime stage ---

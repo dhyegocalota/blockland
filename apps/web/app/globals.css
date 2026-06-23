@@ -554,6 +554,7 @@ input, textarea, select { font-size: max(16px, 1em); }
   background: rgba(255,255,255,.06); border: 2px solid rgba(255,255,255,.35); border-radius: 9px; padding: 4px 8px;
 }
 #adminPlaytime input:focus { outline: none; border-color: var(--gold); }
+#adminPlaytime .playtimeToggle input { width: auto; margin-left: 0; }
 #adminPlaytime button {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,93,46,.35); border: 2px solid rgba(255,255,255,.35); border-radius: 10px;

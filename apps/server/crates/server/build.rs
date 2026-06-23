@@ -4,6 +4,10 @@
 use std::process::Command;
 
 fn main() {
+    // Recompile when the deploy SHA changes (the Dockerfile sets BUILD_GIT_SHA from the GIT_SHA build
+    // arg; when git is unavailable at build, option_env!("BUILD_GIT_SHA") reads that ambient value).
+    println!("cargo:rerun-if-env-changed=BUILD_GIT_SHA");
+    println!("cargo:rerun-if-env-changed=GIT_SHA");
     let Ok(output) = Command::new("git").args(["rev-parse", "--short", "HEAD"]).output() else {
         return;
     };
