@@ -3,7 +3,7 @@
 import { t } from '../lib/i18n';
 import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { type FeedEntry, type FeedEventKind } from '../lib/feed';
-import { ModeBlockReason } from '../lib/lobby-modes';
+import { LobbyBlockKind, ModeBlockReason, lobbyBlockBanner } from '../lib/lobby-modes';
 import type { NetState } from '../lib/net';
 import Leaderboard from './Leaderboard';
 import LobbyPresence from './LobbyPresence';
@@ -96,6 +96,9 @@ export default function Game() {
 
   const bannerKey = netState ? BANNER_KEYS[netState] : null;
   const severe = netState ? SEVERE_STATES.includes(netState) : false;
+  // The big start-screen block banner: server `time_up`/`room_closed` (suspend) on a rejected join,
+  // plus the live lobby-admin `room.suspended` so an admin/moderator sees a paused world proactively.
+  const lobbyBlock = lobbyBlockBanner({ netState, suspended: (lobbyAdmin || lobbyModerator) && lobby.room.suspended });
   const showPing = netState === 'online';
   const self = roster.find((player) => player.self);
   const myKills = self ? self.pvpKills : 0;
@@ -543,6 +546,14 @@ export default function Game() {
           <span className="cloud cloud-b">☁️</span>
           <span className="cloud cloud-c">☁️</span>
         </div>
+
+        {lobbyBlock && (
+          <div id="lobbyBlock" className={lobbyBlock.kind} role="alert">
+            {lobbyBlock.kind === LobbyBlockKind.TimeUp && (lobbyAdmin || lobbyModerator)
+              ? t('lobby.block_time_up_limit', { minutes: lobby.room.playtimeLimitMin, hours: lobby.room.playtimeWindowH })
+              : t(lobbyBlock.key)}
+          </div>
+        )}
 
         <div className="startHero">
           <img className="avatar" src={brand.image} alt={brand.name} />

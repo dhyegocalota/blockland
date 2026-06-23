@@ -23,7 +23,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     loginStep: null, loginEmail: '', setLoginEmail: () => {}, loginCode: '', setLoginCode: () => {}, loginBusy: false, loginError: null,
     authToast: null, loggedIn: false, lobbyAdmin: false, lobbyModerator: false, isTouch: false,
     infiniteResources: true, setInfiniteResources: () => {},
-    lobby: { roster: [] },
+    lobby: { roster: [], room: { suspended: false, playtimeLimitMin: 0, playtimeWindowH: 0 } },
     gameApiRef: { current: null },
     feed: [], room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: false, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
     isAdmin: false, isModerator: false, adminOpen: false, setAdminOpen: () => {}, resetArmed: false, resetWorld: () => {}, resetScoresArmed: false, resetScores: () => {},
@@ -204,6 +204,42 @@ describe('Game', () => {
     const items = within(document.getElementById('presenceList')!).getAllByRole('listitem');
     expect(items.map((item) => item.textContent)).toEqual(['Ana', 'Bia']);
     expect(document.getElementById('presenceList')!.textContent).not.toContain('⚔️');
+  });
+
+  it('shows the big time-up lobby banner when the join was rejected for spent play time', () => {
+    useGame.mockReturnValue(gameState({ netState: 'time_up', connectKey: null }));
+    render(<Game />);
+    const banner = document.getElementById('lobbyBlock')!;
+    expect(banner).toBeInTheDocument();
+    expect(banner.className).toBe('time_up');
+    expect(banner.textContent).toContain('tempo de hoje');
+  });
+
+  it('shows the big paused lobby banner when the world is suspended (room_closed join)', () => {
+    useGame.mockReturnValue(gameState({ netState: 'room_closed', connectKey: null }));
+    render(<Game />);
+    const banner = document.getElementById('lobbyBlock')!;
+    expect(banner).toBeInTheDocument();
+    expect(banner.className).toBe('paused');
+    expect(banner.textContent).toContain('pausou o mundo');
+  });
+
+  it('shows the paused lobby banner proactively from the live lobby-admin suspended flag', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: null,
+        lobbyAdmin: true,
+        lobby: { roster: [], room: { suspended: true, playtimeLimitMin: 0, playtimeWindowH: 0 } },
+      }),
+    );
+    render(<Game />);
+    expect(document.getElementById('lobbyBlock')?.className).toBe('paused');
+  });
+
+  it('has no lobby block banner on a normal lobby', () => {
+    useGame.mockReturnValue(gameState({ netState: null, connectKey: null }));
+    render(<Game />);
+    expect(document.getElementById('lobbyBlock')).toBeNull();
   });
 
   it('bans a pending player from the admin approval list', () => {

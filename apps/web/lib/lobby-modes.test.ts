@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  lobbyAdminPanelActive, lobbyModeGates, ModeBlockReason, shouldPushToOnline, shouldPushToSolo,
-  type LobbyModeGates,
+  lobbyAdminPanelActive, lobbyBlockBanner, lobbyModeGates, LobbyBlockKind, ModeBlockReason,
+  shouldPushToOnline, shouldPushToSolo, type LobbyModeGates,
 } from './lobby-modes';
 
 const ALLOWED = { disabled: false, reason: ModeBlockReason.Allowed };
@@ -141,5 +141,33 @@ describe('shouldPushToOnline', () => {
   it('never moves a lobby admin', () => {
     const gates = gatesWith({ online: false, offline: true });
     expect(shouldPushToOnline({ gates, alreadySolo: true, isLobbyAdmin: true })).toBe(false);
+  });
+});
+
+describe('lobbyBlockBanner', () => {
+  it('flags the time-up banner when the join was rejected for spent play time', () => {
+    expect(lobbyBlockBanner({ netState: 'time_up', suspended: false })).toEqual({
+      kind: LobbyBlockKind.TimeUp,
+      key: 'lobby.block_time_up',
+    });
+  });
+
+  it('flags the paused banner when a join hits a suspended world (room_closed)', () => {
+    expect(lobbyBlockBanner({ netState: 'room_closed', suspended: false })).toEqual({
+      kind: LobbyBlockKind.Paused,
+      key: 'lobby.block_paused',
+    });
+  });
+
+  it('flags the paused banner from the live lobby-admin suspended flag', () => {
+    expect(lobbyBlockBanner({ netState: null, suspended: true })).toEqual({
+      kind: LobbyBlockKind.Paused,
+      key: 'lobby.block_paused',
+    });
+  });
+
+  it('returns null on a normal lobby with nothing blocking', () => {
+    expect(lobbyBlockBanner({ netState: null, suspended: false })).toBeNull();
+    expect(lobbyBlockBanner({ netState: 'online', suspended: false })).toBeNull();
   });
 });
