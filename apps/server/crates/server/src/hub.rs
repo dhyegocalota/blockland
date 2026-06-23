@@ -219,6 +219,11 @@ impl Hub {
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to purge stale playtime"),
         }
+        match db.purge_stale_chat(crate::db::CHAT_RETENTION_MS).await {
+            Ok(n) if n > 0 => tracing::info!(count = n, "purged stale chat"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to purge stale chat"),
+        }
 
         Self {
             tenants: map,

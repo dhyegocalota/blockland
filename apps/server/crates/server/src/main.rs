@@ -16,6 +16,8 @@
 //!   POST   /internal/tenants              upsert (body = Tenant JSON), returns it
 //!   DELETE /internal/tenants/:id          delete tenant
 //!   GET    /internal/leaderboard/:tenant  top scores JSON
+//!   GET    /internal/chatlog/:tenant?claim   recent chat JSON (tenant admin proven by claim)
+//!   GET    /internal/playtime/:tenant?claim  hours-played report JSON (tenant admin proven by claim)
 //!   POST   /internal/uploads?key&content_type  upload a tenant asset, returns { "url" }
 //!   GET    /internal/uploads?key                read a tenant asset back (bytes); used by the web proxy
 //!   POST   /internal/auth/request        start a login: { tenant, name, email } -> { ok, token, code, name, email }
@@ -110,6 +112,8 @@ async fn main() {
             get(internal_get_tenant).delete(internal_delete_tenant),
         )
         .route("/internal/leaderboard/{tenant}", get(internal_leaderboard))
+        .route("/internal/chatlog/{tenant}", get(internal_chatlog))
+        .route("/internal/playtime/{tenant}", get(internal_playtime))
         .route("/internal/auth/request", post(internal_auth_request))
         .route("/internal/auth/verify", post(internal_auth_verify))
         .route("/internal/auth/logout", post(internal_auth_logout))
@@ -529,6 +533,84 @@ async fn internal_leaderboard(
     };
     match result {
         Ok(scores) => Json(scores).into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// Resolve the `?claim=` query param to its account and require it to be an admin of `tenant`. Returns
+/// a 401/403 response on a missing/unknown/non-admin claim, else `None` so the caller proceeds. The
+/// HMAC signature is already verified by the time this runs; this is the per-tenant authority check.
+async fn require_tenant_admin(
+    hub: &Hub,
+    tenant: &str,
+    uri: &axum::http::Uri,
+) -> Result<(), axum::response::Response> {
+    let claim = uri
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("claim=")));
+    let Some(claim) = claim else {
+        return Err((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+    };
+    let resolved = hub
+        .db
+        .claim_to_account(tenant, claim)
+        .await
+        .map_err(internal_error)?;
+    let Some((account_id, _)) = resolved else {
+        return Err((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+    };
+    let is_admin = hub.db.is_admin(&account_id).await.map_err(internal_error)?;
+    if !is_admin {
+        return Err((StatusCode::FORBIDDEN, "forbidden").into_response());
+    }
+    Ok(())
+}
+
+/// Recent chat for the tenant's admin chat-log report. Authorized by an admin claim, not the global
+/// admin token (the lobby admin proves authority with the same claim it uses everywhere else).
+async fn internal_chatlog(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    Path(tenant): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "GET", &original_uri.0, &headers, b"") {
+        return resp;
+    }
+    if let Err(resp) = require_tenant_admin(&state.hub, &tenant, &original_uri.0).await {
+        return resp;
+    }
+    match state
+        .hub
+        .db
+        .recent_chat(&tenant, db::default_chat_backlog())
+        .await
+    {
+        Ok(chat) => Json(chat).into_response(),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// The hours-played report for the tenant. Authorized by an admin claim (see `internal_chatlog`).
+async fn internal_playtime(
+    State(state): State<AppState>,
+    original_uri: axum::extract::OriginalUri,
+    headers: HeaderMap,
+    Path(tenant): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = verify_internal(&state.auth, "GET", &original_uri.0, &headers, b"") {
+        return resp;
+    }
+    if let Err(resp) = require_tenant_admin(&state.hub, &tenant, &original_uri.0).await {
+        return resp;
+    }
+    match state
+        .hub
+        .db
+        .playtime_report(&tenant, db::default_report_rows())
+        .await
+    {
+        Ok(report) => Json(report).into_response(),
         Err(e) => internal_error(e),
     }
 }

@@ -8,9 +8,12 @@ import { t } from '../lib/i18n';
 import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
 import { roleBadge } from '../lib/roster-roles';
 import AdminLimits from './AdminLimits';
+import LobbyReports from './LobbyReports';
+import { useLobbyReports } from '../hooks/use-lobby-reports';
 import type { useLobbyAdmin } from '../hooks/use-lobby-admin';
 
 export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobbyAdmin> }) {
+  const reportViewer = useLobbyReports();
   const {
     state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
@@ -124,6 +127,19 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
               ))}
             </ul>
           </>
+        )}
+        {isAdmin && (
+          <button id="adminPlaytimeReport" onClick={() => reportViewer.open('playtime')}>
+            {t('report.playtime_button')}
+          </button>
+        )}
+        {isAdmin && (
+          <button id="adminChatReport" onClick={() => reportViewer.open('chat')}>
+            {t('report.chat_button')}
+          </button>
+        )}
+        {isAdmin && reportViewer.report && (
+          <LobbyReports report={reportViewer.report} close={reportViewer.close} />
         )}
         {isAdmin && (
           <AdminLimits
