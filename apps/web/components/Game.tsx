@@ -74,7 +74,7 @@ export default function Game() {
   const {
     brand, failed, offline, offlineDismissed, setOfflineDismissed,
     name, look, solo, setSolo, soloRef, modeGates,
-    netState, ping, online,
+    netState, ping, online, connectKey,
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData,
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
@@ -306,6 +306,17 @@ export default function Game() {
           <div className="panel">
             <h2>{t(bannerKey)}</h2>
             <button onClick={() => window.location.reload()}>{t('coop.back_to_lobby')}</button>
+          </div>
+        </div>
+      )}
+
+      {connectKey && netState !== 'needs_approval' && (
+        <div id="connectingOverlay" role="status" aria-live="polite">
+          <div className="panel">
+            <div className="connectingSpinner" aria-hidden="true">🧩</div>
+            <h2>{t('coop.connect_title')}</h2>
+            <p className="connectingState">{t(connectKey)}</p>
+            <p>{t('coop.connect_hint')}</p>
           </div>
         </div>
       )}

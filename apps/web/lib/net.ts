@@ -215,6 +215,9 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 10_000;
 // How often a player held for approval silently retries the join while they wait on the frozen screen.
 const APPROVAL_RETRY_MS = 3_000;
+// Snapshot logging is throttled: the first one (proves the world is live) plus one every N after, so
+// the debug console shows cadence without drowning in 30Hz spam.
+const SNAPSHOT_LOG_EVERY = 150;
 
 const defaultSocketFactory = (url: string): WebSocketLike =>
   new WebSocket(url) as unknown as WebSocketLike;
@@ -232,6 +235,7 @@ export function createNet(opts: NetOptions): NetClient {
   let terminalReason: NetState | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let lastPingAt: number | null = null;
+  let snapshotCount = 0;
   // While held for admin approval we keep the player on a frozen "waiting" screen and silently re-join
   // every few seconds; the moment an admin approves, the next join returns a Welcome and they drop in.
   let waitingApproval = false;
@@ -265,10 +269,15 @@ export function createNet(opts: NetOptions): NetClient {
       attempt = 0;
       waitingApproval = false;
       setState('online');
+      debug('net', 'welcome', { you: msg.you, world: msg.world, version: msg.version });
       opts.handlers.onWelcome?.(msg);
       return;
     }
     if (msg.t === 'snapshot') {
+      snapshotCount += 1;
+      if (snapshotCount === 1 || snapshotCount % SNAPSHOT_LOG_EVERY === 0) {
+        debug('net', 'snapshot', { count: snapshotCount, tick: msg.k, players: msg.p.length, creatures: msg.c.length });
+      }
       opts.handlers.onSnapshot?.(decodeSnapshot(msg));
       return;
     }
@@ -391,9 +400,12 @@ export function createNet(opts: NetOptions): NetClient {
 
   function open(): void {
     clearReconnectTimer();
+    snapshotCount = 0;
+    debug('net', 'opening socket', { url: opts.url, tenant: opts.tenant, attempt, waitingApproval });
     const next = socketFactory(opts.url);
     socket = next;
     next.onopen = () => {
+      debug('net', 'socket open, joining', { name: opts.name, world: opts.world });
       rawSend(encodeClientMsg(join({
         tenant: opts.tenant,
         world: opts.world,
