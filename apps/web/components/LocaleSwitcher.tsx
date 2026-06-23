@@ -42,12 +42,12 @@ export default function LocaleSwitcher() {
         <button
           key={locale}
           type="button"
+          aria-label={LABELS[locale]}
           aria-pressed={locale === active}
           onClick={() => switchTo(locale)}
           style={locale === active ? STYLES.optionActive : STYLES.option}
         >
           <span aria-hidden>{FLAGS[locale]}</span>
-          {LABELS[locale]}
         </button>
       ))}
     </div>
@@ -57,39 +57,33 @@ export default function LocaleSwitcher() {
 const STYLES: Record<string, CSSProperties> = {
   wrap: {
     display: 'inline-flex',
-    gap: 4,
-    padding: 4,
+    gap: 3,
+    padding: 3,
     background: 'rgba(42, 26, 74, 0.85)',
     borderRadius: 999,
-    border: '3px solid var(--gold)',
+    border: '2px solid var(--gold)',
     pointerEvents: 'auto',
   },
   option: {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 5,
-    fontFamily: 'inherit',
-    fontWeight: 900,
-    fontSize: 14,
-    color: '#fff',
+    fontSize: 15,
+    lineHeight: 1,
     background: 'transparent',
     border: 'none',
     borderRadius: 999,
-    padding: '5px 12px',
+    padding: '3px 7px',
     cursor: 'pointer',
   },
   optionActive: {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 5,
-    fontFamily: 'inherit',
-    fontWeight: 900,
-    fontSize: 14,
-    color: 'var(--ink)',
+    fontSize: 15,
+    lineHeight: 1,
     background: 'var(--gold)',
     border: 'none',
     borderRadius: 999,
-    padding: '5px 12px',
+    padding: '3px 7px',
     cursor: 'default',
   },
 };

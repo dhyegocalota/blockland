@@ -26,35 +26,35 @@ describe('LocaleSwitcher', () => {
   it('marks the URL-prefixed locale as the active option', () => {
     setLocation('/en-us/admin');
     render(<LocaleSwitcher />);
-    expect(screen.getByText('EN').closest('button')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('PT').closest('button')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'EN' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'PT' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('navigates to the same path under the other prefix and keeps the query string', () => {
     setLocation('/pt-br/admin', '?tab=bans');
     render(<LocaleSwitcher />);
-    fireEvent.click(screen.getByText('EN'));
+    fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(assign).toHaveBeenCalledWith('/en-us/admin?tab=bans');
   });
 
   it('maps the localized root cleanly (no double slash)', () => {
     setLocation('/pt-br');
     render(<LocaleSwitcher />);
-    fireEvent.click(screen.getByText('EN'));
+    fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(assign).toHaveBeenCalledWith('/en-us');
   });
 
   it('persists the chosen locale in the bl-locale cookie', () => {
     setLocation('/pt-br/welcome');
     render(<LocaleSwitcher />);
-    fireEvent.click(screen.getByText('EN'));
+    fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(document.cookie).toContain('bl-locale=en-US');
   });
 
   it('does nothing when clicking the already-active locale', () => {
     setLocation('/pt-br/welcome');
     render(<LocaleSwitcher />);
-    fireEvent.click(screen.getByText('PT'));
+    fireEvent.click(screen.getByRole('button', { name: 'PT' }));
     expect(assign).not.toHaveBeenCalled();
   });
 });
