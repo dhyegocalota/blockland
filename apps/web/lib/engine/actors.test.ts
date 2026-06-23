@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { SIZE_Y } from './constants';
-import { blockVelocityIntoActors, cellOverlapsActor, clearFeetAbove } from './actors';
+import { blockVelocityIntoActors, cellOverlapsActor, clearFeetAbove, collisionActors } from './actors';
+
+describe('collisionActors', () => {
+  const coopColliders = [{ x: 1, y: 0, z: 0 }];
+  const coopCreatures = [{ x: 2, y: 0, z: 0 }];
+  const localCreatures = [{ x: 3, y: 0, z: 0 }];
+
+  it('online blocks against remote players + server creatures (not the local list)', () => {
+    expect(collisionActors({ online: true, coopColliders, coopCreatures, localCreatures }))
+      .toEqual([{ x: 1, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }]);
+  });
+
+  it('offline blocks against the local creature list', () => {
+    expect(collisionActors({ online: false, coopColliders: [], coopCreatures: [], localCreatures }))
+      .toEqual([{ x: 3, y: 0, z: 0 }]);
+  });
+});
 
 const base = { radius: 0.3, height: 1.7, actorRadius: 0.3 };
 // Player at origin, a peer just ahead on +x (within the 0.6 combined radius).

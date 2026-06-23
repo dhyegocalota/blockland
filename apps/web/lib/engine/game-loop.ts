@@ -10,7 +10,7 @@ import {
 import { clampToWorld } from './world-bounds';
 import { debug } from '../log';
 import { type Axis, moveAxis } from './physics';
-import { blockVelocityIntoActors } from './actors';
+import { blockVelocityIntoActors, collisionActors } from './actors';
 import { moveVector } from './movement';
 import { nextFrame, smoothFps } from './frame-cap';
 import { attackTick } from './attack';
@@ -31,10 +31,12 @@ export function createGameLoop(runtime: GameRuntime): void {
   // Stop the local player from walking through remote players AND server creatures (velocity-only,
   // never adds motion) — monsters and animals are solid bodies you bump into, not ghosts.
   runtime.blockIntoActors = function blockIntoActors(): void {
-    if (!runtime.coop) return;
-    const players = runtime.coop.getColliders();
-    const creatures = runtime.coop.getCreatures().map((c) => ({ x: c.x, y: c.y, z: c.z }));
-    const actors = [...players, ...creatures];
+    const actors = collisionActors({
+      online: !!runtime.coop,
+      coopColliders: runtime.coop ? runtime.coop.getColliders() : [],
+      coopCreatures: runtime.coop ? runtime.coop.getCreatures().map((c) => ({ x: c.x, y: c.y, z: c.z })) : [],
+      localCreatures: runtime.creatures.map((cr) => ({ x: cr.pos.x, y: cr.pos.y, z: cr.pos.z })),
+    });
     if (actors.length === 0) return;
     const blocked = blockVelocityIntoActors({
       x: player.pos.x,

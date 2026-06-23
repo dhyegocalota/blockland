@@ -89,3 +89,18 @@ export function clearFeetAbove({ feet, isSolid }: { feet: number; isSolid: (y: n
   while (clear < SIZE_Y - 2 && (isSolid(clear) || isSolid(clear + 1))) clear++;
   return clear;
 }
+
+// Which actors block the player this frame: online it is the remote players + server creatures; offline
+// (no coop socket) it is the local creature list — so the player collides with monsters and other
+// players in BOTH modes. Pure so the source-selection is unit-tested apart from the loop glue.
+export function collisionActors({
+  online, coopColliders, coopCreatures, localCreatures,
+}: {
+  online: boolean;
+  coopColliders: ActorPos[];
+  coopCreatures: ActorPos[];
+  localCreatures: ActorPos[];
+}): ActorPos[] {
+  if (online) return [...coopColliders, ...coopCreatures];
+  return localCreatures;
+}
