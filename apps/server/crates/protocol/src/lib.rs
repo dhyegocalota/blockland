@@ -324,6 +324,7 @@ pub struct PlayerMeta {
     pub hair: String,
     pub admin: bool,
     pub moderator: bool,
+    pub pvp_kills: u32,
 }
 
 /// One player's per-tick dynamics as a fixed-order number array (no field names, to keep the hot

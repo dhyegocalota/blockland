@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RosterEntry } from './coop';
-import { ADMIN_BADGE, MODERATOR_BADGE, badgedNames, roleBadge } from './roster-roles';
+import { ADMIN_BADGE, MODERATOR_BADGE, badgedNames, pvpRanked, roleBadge } from './roster-roles';
 
 function entry(over: Partial<RosterEntry>): RosterEntry {
-  return { id: 1, name: 'Maria', self: false, admin: false, moderator: false, ...over };
+  return { id: 1, name: 'Maria', self: false, admin: false, moderator: false, pvpKills: 0, ...over };
 }
 
 describe('roleBadge', () => {
@@ -39,5 +39,30 @@ describe('badgedNames', () => {
 
   it('is empty when nobody holds a role', () => {
     expect(badgedNames([entry({ name: 'Caio' })]).size).toBe(0);
+  });
+});
+
+describe('pvpRanked', () => {
+  it('orders players by pvp kills, highest first', () => {
+    const ranked = pvpRanked([
+      entry({ id: 1, name: 'Ana', pvpKills: 2 }),
+      entry({ id: 2, name: 'Bia', pvpKills: 5 }),
+      entry({ id: 3, name: 'Caio', pvpKills: 0 }),
+    ]);
+    expect(ranked.map((player) => player.name)).toEqual(['Bia', 'Ana', 'Caio']);
+  });
+
+  it('breaks ties by name so the order is stable', () => {
+    const ranked = pvpRanked([
+      entry({ id: 1, name: 'Bia', pvpKills: 3 }),
+      entry({ id: 2, name: 'Ana', pvpKills: 3 }),
+    ]);
+    expect(ranked.map((player) => player.name)).toEqual(['Ana', 'Bia']);
+  });
+
+  it('does not mutate the input roster', () => {
+    const roster = [entry({ id: 1, name: 'Ana', pvpKills: 1 }), entry({ id: 2, name: 'Bia', pvpKills: 9 })];
+    pvpRanked(roster);
+    expect(roster.map((player) => player.name)).toEqual(['Ana', 'Bia']);
   });
 });

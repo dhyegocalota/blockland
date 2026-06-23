@@ -83,3 +83,27 @@ describe('resetLocalWorld', () => {
     expect(runtime.savePos).toHaveBeenCalled();
   });
 });
+
+describe('resetLocalScores', () => {
+  it('zeros the stars and the record but keeps the inventory and the world', () => {
+    const runtime = makeRuntime();
+    createActions(runtime);
+    const refreshStats = vi.spyOn(runtime, 'updateStats');
+    const { player } = runtime.state;
+    player.stars = 12;
+    player.bag = 5;
+    player.hearts = 1;
+    runtime.inventory.bank(1);
+    store.set(BEST_KEY, '99');
+
+    runtime.resetLocalScores();
+
+    expect(player.stars).toBe(0);
+    expect(store.get(BEST_KEY)).toBeUndefined();
+    expect(player.bag).toBe(5);
+    expect(player.hearts).toBe(1);
+    expect(runtime.inventory.count(1)).toBe(1);
+    expect(runtime.world.reset).not.toHaveBeenCalled();
+    expect(refreshStats).toHaveBeenCalled();
+  });
+});

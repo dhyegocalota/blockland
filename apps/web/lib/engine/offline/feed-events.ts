@@ -19,6 +19,10 @@ export function offlineResetFeed(args: { name: string }): FeedEvent {
   return { kind: 'reset', name: selfName(args.name) };
 }
 
+export function offlineResetScoresFeed(args: { name: string }): FeedEvent {
+  return { kind: 'reset_scores', name: selfName(args.name) };
+}
+
 // An admin config toggle offline. `action` mirrors the string the server emits online (peace_on,
 // peace_off, structure_allowed, structure_blocked, pvp_on, ...) so feedText renders the same
 // feed.admin_<action> line in both modes.

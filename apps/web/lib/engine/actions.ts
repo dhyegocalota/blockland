@@ -38,4 +38,14 @@ export function createActions(runtime: GameRuntime): void {
     runtime.updateHotbarCounts();
     runtime.updateStats();
   };
+
+  // The admin reset only the scores (not the world): OFFLINE this zeros every progress metric — the
+  // live stars and the persisted record — while the banked inventory and the world are untouched, then
+  // repaints the HUD. (Single-player has no pvp-kill metric, so stars + record cover it.)
+  runtime.resetLocalScores = function resetLocalScores(): void {
+    const { player } = runtime.state;
+    player.stars = 0;
+    localStorage.removeItem(runtime.bestKey);
+    runtime.updateStats();
+  };
 }

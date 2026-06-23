@@ -11,7 +11,7 @@ import LobbyAdmin from './LobbyAdmin';
 import AdminLimits from './AdminLimits';
 import LocaleSwitcher from './LocaleSwitcher';
 import { useGame } from '../hooks/use-game';
-import { roleBadge } from '../lib/roster-roles';
+import { PVP_KILL_BADGE, pvpRanked, roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
 
 const AUTHOR_URL = 'https://dhyegocalota.com.br';
@@ -143,9 +143,10 @@ export default function Game() {
         </button>
         {rosterOpen && (
           <ul id="presenceList">
-            {roster.map((player) => (
+            {(room.pvp ? pvpRanked(roster) : roster).map((player) => (
               <li key={player.id} className={player.self ? 'self' : undefined}>
                 {player.self ? t('presence.you', { name: player.name }) : player.name}
+                {room.pvp && ` ${PVP_KILL_BADGE} ${player.pvpKills}`}
               </li>
             ))}
           </ul>
