@@ -10,7 +10,10 @@
 import { EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS } from './engine/constants';
 import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
-import { debug } from './log';
+import { debug, warn } from './log';
+import {
+  DebugEventDir, DebugEventKind, DivergenceTracker, debugReportRing, positionDivergence, type Vec3Like,
+} from './engine/debug-report';
 import { createNet, type NetClient, type NetState } from './net';
 import type { EditCell, EditOp, Role } from './protocol';
 import type { FeedEvent, RosterMember } from './feed';
@@ -227,6 +230,9 @@ export interface CoopController {
   readonly onlineCount: number;
   readonly isAdmin: boolean;
   readonly backendVersion: string;
+  // The latest server-acked position for this player from the snapshot (null before the first one). The
+  // debug report compares it to the client position to expose a stale server-side pose.
+  readonly serverPos: Vec3Like | null;
   close(): void;
 }
 
@@ -243,6 +249,12 @@ export function createCoop(opts: CoopOptions): CoopController {
   let selfId: number | null = null;
   let backendVersion = '';
   let lastMoveSentAt = 0;
+  // The last local pose handed to sendMove and the latest server-acked position for this player from the
+  // snapshot. Their delta is the stale-position signal the debug report prints and the divergence tracker
+  // watches; the report reads selfServerPos directly.
+  let lastLocalPose: Vec3Like = { x: 0, y: 0, z: 0 };
+  let selfServerPos: Vec3Like | null = null;
+  const divergence = new DivergenceTracker();
   let onlineCount = 0;
   let selfPing = 0;
   let selfScore = 0;
@@ -251,6 +263,25 @@ export function createCoop(opts: CoopOptions): CoopController {
   // The server pushes them; the engine reads them through inventoryCount/infinite to paint the hotbar.
   const inventory = new Map<number, number>();
   let infinite = true;
+  // Health only enters the diagnostics ring on change (it rides every 30Hz snapshot otherwise).
+  let lastRecordedHp: number | null = null;
+
+  // Warns once when the server-acked position drifts past the threshold from the client position (the
+  // dig/hit reach checks aim from the server pose, so this is the smoking gun for the "can't break/hit"
+  // bug) and once when it recovers. The snapshot already feeds selfServerPos for the report itself.
+  function trackDivergence(serverPos: Vec3Like): void {
+    const distance = positionDivergence({ client: lastLocalPose, server: serverPos });
+    const transition = divergence.update(distance);
+    if (!transition) return;
+    if (transition === 'diverged') { warn('action', 'position diverged', { distance, client: lastLocalPose, server: serverPos }); return; }
+    debug('action', 'position recovered', { distance });
+  }
+
+  function recordHealth(hp: number): void {
+    if (hp === lastRecordedHp) return;
+    lastRecordedHp = hp;
+    debugReportRing.push({ dir: DebugEventDir.Recv, kind: DebugEventKind.Health, id: hp });
+  }
 
   function spawnAvatar(id: number, name: string, look: Appearance): Avatar {
     view.onPlayerJoin(id, name, look);
@@ -319,6 +350,9 @@ export function createCoop(opts: CoopOptions): CoopController {
           if (p.id === selfId) {
             selfPing = p.ping_ms;
             selfScore = p.score;
+            selfServerPos = { x: p.x, y: p.y, z: p.z };
+            trackDivergence(selfServerPos);
+            recordHealth(p.hp);
             opts.onHealth(p.hp);
             continue;
           }
@@ -378,7 +412,12 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.hud.onPing(selfPing);
         opts.hud.onScore(selfScore);
       },
-      onEdit: (msg) => opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id, mine: msg.by === selfId }),
+      onEdit: (msg) => {
+        const mine = msg.by === selfId;
+        debugReportRing.push({ dir: DebugEventDir.Recv, kind: DebugEventKind.EditRecv, cell: { x: msg.x, y: msg.y, z: msg.z }, id: msg.id, text: mine ? 'mine' : undefined });
+        debug('action', 'edit recv', { x: msg.x, y: msg.y, z: msg.z, id: msg.id, mine });
+        opts.applyRemoteEdit({ x: msg.x, y: msg.y, z: msg.z, id: msg.id, mine });
+      },
       onEditBatch: (msg) => opts.applyRemoteEditBatch(msg.edits),
       onChat: (msg) => {
         if (avatars.has(msg.from)) view.onPlayerChat(msg.from, msg.text);
@@ -458,6 +497,7 @@ export function createCoop(opts: CoopOptions): CoopController {
         opts.onCreaturePoof({ x: avatar.x, y: avatar.y + PLAYER_HEIGHT / 2, z: avatar.z, color: PLAYER_HIT_COLOR });
       },
       onRespawn: (msg) => {
+        debugReportRing.push({ dir: DebugEventDir.Recv, kind: DebugEventKind.Respawn, cell: { x: msg.x, y: msg.y, z: msg.z }, id: msg.hp });
         opts.onRespawn(msg.x, msg.y, msg.z, msg.hp);
         debug('coop', 'respawn', { x: msg.x, y: msg.y, z: msg.z, hp: msg.hp });
       },
@@ -474,7 +514,8 @@ export function createCoop(opts: CoopOptions): CoopController {
         debug('coop', 'roster', { players: msg.players.length });
       },
       onError: (code, message) => {
-        debug('coop', 'server error', { code, msg: message });
+        debugReportRing.push({ dir: DebugEventDir.Recv, kind: DebugEventKind.Error, text: code });
+        debug('action', 'server error', { code, msg: message });
         opts.hud.onError(code);
       },
     },
@@ -483,6 +524,7 @@ export function createCoop(opts: CoopOptions): CoopController {
 
   return {
     sendMove(pose, now): void {
+      lastLocalPose = { x: pose.x, y: pose.y, z: pose.z };
       if (now - lastMoveSentAt < MOVE_SEND_INTERVAL_MS) return;
       lastMoveSentAt = now;
       net.sendMove(pose.x, pose.y, pose.z, pose.yaw, pose.pitch);
@@ -630,6 +672,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     get infinite(): boolean {
       return infinite;
+    },
+    get serverPos(): Vec3Like | null {
+      return selfServerPos;
     },
     close(): void {
       for (const id of [...avatars.keys()]) removeAvatar(id);

@@ -4,6 +4,7 @@
 // later phase. The socket and clock are injectable so tests can run deterministically.
 
 import { debug } from './log';
+import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from './engine/debug-report';
 import {
   adminApprove,
   adminReject,
@@ -237,6 +238,9 @@ export function createNet(opts: NetOptions): NetClient {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let lastPingAt: number | null = null;
   let snapshotCount = 0;
+  // The freshest client player position the engine has thrown out as a Move; we stamp every recorded
+  // Dig/Hit/Edit with it so the diagnostics ring shows where the client believed it was aiming from.
+  let lastMovePos: Vec3Like = { x: 0, y: 0, z: 0 };
   // While held for admin approval we keep the player on a frozen "waiting" screen and silently re-join
   // every few seconds; the moment an admin approves, the next join returns a Welcome and they drop in.
   let waitingApproval = false;
@@ -244,6 +248,7 @@ export function createNet(opts: NetOptions): NetClient {
   function setState(next: NetState): void {
     if (state === next) return;
     state = next;
+    debugReportRing.push({ dir: DebugEventDir.State, kind: DebugEventKind.NetState, text: next });
     debug('net', 'state', { state: next });
     opts.handlers.onState?.(next);
   }
@@ -262,6 +267,19 @@ export function createNet(opts: NetOptions): NetClient {
     if (socket === null) return;
     if (socket.readyState !== WS_OPEN) return;
     socket.send(data);
+  }
+
+  function recordSend(kind: DebugEventKind, fields: { cell?: Vec3Like; id?: number }): void {
+    debugReportRing.push({ dir: DebugEventDir.Send, kind, pos: { ...lastMovePos }, cell: fields.cell, id: fields.id });
+  }
+
+  // Reach estimate the server would measure: distance from the last Move position to the target cell's
+  // center. When this stays small but the server keeps rejecting the dig/hit, its tracked pose is stale.
+  function reachTo(cell: Vec3Like): number {
+    const dx = lastMovePos.x - (cell.x + 0.5);
+    const dy = lastMovePos.y - (cell.y + 0.5);
+    const dz = lastMovePos.z - (cell.z + 0.5);
+    return Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz) * 100) / 100;
   }
 
   function handleMessage(data: string): void {
@@ -437,9 +455,13 @@ export function createNet(opts: NetOptions): NetClient {
       if (socket === null) setState('offline');
     },
     sendMove(x, y, z, yaw, pitch): void {
+      lastMovePos = { x, y, z };
+      debugReportRing.push({ dir: DebugEventDir.Send, kind: DebugEventKind.Move, pos: { x, y, z } });
       rawSend(encodeClientMsg(move(x, y, z, yaw, pitch)));
     },
     sendEdit(op, x, y, z, id): void {
+      recordSend(DebugEventKind.Edit, { cell: { x, y, z }, id });
+      debug('action', 'edit send', { op, x, y, z, id, px: lastMovePos.x, py: lastMovePos.y, pz: lastMovePos.z, reach: reachTo({ x, y, z }) });
       rawSend(encodeClientMsg(edit(op, x, y, z, id)));
     },
     sendEditBatch(edits): void {
@@ -451,12 +473,16 @@ export function createNet(opts: NetOptions): NetClient {
       rawSend(encodeClientMsg(chat(text)));
     },
     sendHit(id): void {
+      recordSend(DebugEventKind.Hit, { id });
+      debug('action', 'hit send', { id, px: lastMovePos.x, py: lastMovePos.y, pz: lastMovePos.z });
       rawSend(encodeClientMsg(hit(id)));
     },
     sendRespawn(): void {
       rawSend(encodeClientMsg(respawn()));
     },
     sendDig(x, y, z): void {
+      recordSend(DebugEventKind.Dig, { cell: { x, y, z } });
+      debug('action', 'dig send', { x, y, z, px: lastMovePos.x, py: lastMovePos.y, pz: lastMovePos.z, reach: reachTo({ x, y, z }) });
       rawSend(encodeClientMsg(dig(x, y, z)));
     },
     sendAdminSetPeace(on): void {

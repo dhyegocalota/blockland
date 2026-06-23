@@ -37,6 +37,9 @@ export interface GameApi extends RoomAdminApi {
   returnToSpawn(): void;
   chime(): void;
   debugSnapshot(): DebugSnapshot;
+  // Assembles the pasteable plain-text diagnostics report (live connection state + the recent-events
+  // ring) for the "copy debug report" button.
+  debugReport(): string;
 }
 
 export interface CoopBridge {

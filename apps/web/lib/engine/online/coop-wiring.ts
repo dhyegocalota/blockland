@@ -9,6 +9,7 @@ import { debug } from '../../log';
 import { AIR, EYE_HEIGHT } from '../constants';
 import { clearFeetAbove } from '../actors';
 import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
+import { debugReportRing, formatDebugReport } from '../debug-report';
 import { createCoop, MAIN_WORLD, type CoopHud, type RoomState } from '../../coop';
 import { offlineResetFeed } from '../offline/feed-events';
 import type { EditCell, EditOp } from '../../protocol';
@@ -106,6 +107,26 @@ export function createCoopWiring(runtime: GameRuntime): void {
     });
   };
 
+  // Plain-text diagnostics the owner pastes when the online "can't break/hit but can build" bug strikes.
+  // Live connection state + this player's client-vs-server position delta + the recent-events ring.
+  runtime.debugReport = function debugReport(): string {
+    const { coop } = runtime;
+    const snapshot = runtime.debugSnapshot();
+    return formatDebugReport({
+      at: Date.now(),
+      tenant: snapshot.tenant,
+      frontVersion: snapshot.frontVersion,
+      backendVersion: snapshot.backendVersion,
+      netState: snapshot.state,
+      ping: snapshot.ping,
+      online: snapshot.online,
+      clientPos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+      serverPos: coop ? coop.serverPos : null,
+      hp: player.hearts,
+      events: debugReportRing.list(),
+    });
+  };
+
   runtime.bindApi = function bindApi(): void {
     runtime.bridge?.bind({
       sendChat: (text) => {
@@ -150,6 +171,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
         player.pos.copy(runtime.spawnPoint()); player.vel.set(0, 0, 0); runtime.savePos();
       },
       debugSnapshot: runtime.debugSnapshot,
+      debugReport: runtime.debugReport,
     });
   };
 

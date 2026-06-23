@@ -27,7 +27,8 @@ export function createCreatureTargeting(runtime: GameRuntime): void {
     runtime.spawnPoof(new Vec3(cr.x, cr.y, cr.z), creatureDefFor(cr.kind).color);
     const def = creatureDefFor(cr.kind);
     runtime.blip(def.kind === 'monster' ? 300 : 880, 0.08);
-    debug('engine', 'hit request', { id: cr.id, kind: cr.kind });
+    const reach = new Vec3(cr.x, cr.y, cr.z).distanceTo(runtime.state.player.pos);
+    debug('action', 'hit request', { id: cr.id, kind: cr.kind, reach });
   };
 
   // Co-op pvp: when the room has pvp on we aim the crosshair at a remote player (same sphere test as

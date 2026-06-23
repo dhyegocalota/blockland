@@ -77,7 +77,7 @@ export default function Game() {
     name, look, solo, setSolo, soloRef, modeGates,
     netState, ping, online, connectKey,
     roster, rosterOpen, setRosterOpen,
-    debugOpen, setDebugOpen, debugData,
+    debugOpen, setDebugOpen, debugData, debugCopied, copyDebugReport,
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
@@ -458,6 +458,9 @@ export default function Game() {
           <div><span>{t('debug.tenant')}</span><b>{debugData.tenant}</b></div>
           <div><span>{t('debug.front_version')}</span><b>{debugData.frontVersion}</b></div>
           <div><span>{t('debug.back_version')}</span><b>{debugData.backendVersion}</b></div>
+          <button id="debugCopy" onClick={copyDebugReport}>
+            {debugCopied ? t('debug.copied') : t('debug.copy_report')}
+          </button>
         </div>
       )}
 

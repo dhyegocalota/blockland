@@ -664,6 +664,14 @@ input, textarea, select { font-size: max(16px, 1em); }
 #debugPanel div { display: flex; justify-content: space-between; gap: 16px; padding: 1px 0; }
 #debugPanel span { opacity: .7; }
 #debugPanel b { font-weight: 700; }
+#debugCopy {
+  pointer-events: auto; width: 100%; margin-top: 8px; padding: 6px 10px;
+  border-radius: 9px; border: 1px solid rgba(255,255,255,.4);
+  background: rgba(60,40,110,.72); color: #fff; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  transition: background .15s ease, border-color .15s ease;
+}
+#debugCopy:hover { background: rgba(80,55,140,.85); border-color: var(--gold); }
 
 /* Always-visible but discreet debug toggle (same as pressing F3). */
 #debugToggle {
