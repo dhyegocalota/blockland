@@ -30,6 +30,8 @@ import type { CoopBridge } from './api';
 import type { EditCell, EditOp } from '../protocol';
 
 export interface Creature {
+  // Stable per-creature id; seeds the deterministic orbit direction when it circles the player.
+  id: number;
   typeKey: string;
   def: CreatureDef;
   // The authoritative position the offline AI reads/writes; rendering syncs cr.mesh from it each tick.

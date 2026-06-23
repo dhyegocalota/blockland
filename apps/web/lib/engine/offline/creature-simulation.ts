@@ -8,7 +8,8 @@ import { Vec3 } from '../vec3';
 import { t } from '../../i18n';
 import { debug } from '../../log';
 import {
-  EYE_HEIGHT, HURT_COOLDOWN, MAX_HEARTS, REACH, RESPAWN_DELAY_MS, SIZE_X, SIZE_Z,
+  CREATURE_ORBIT_SPEED, CREATURE_STOP_DISTANCE, EYE_HEIGHT, HURT_COOLDOWN, MAX_HEARTS, REACH,
+  RESPAWN_DELAY_MS, SIZE_X, SIZE_Z,
 } from '../constants';
 import { CREATURE_DEFS, stepCreatureDirection } from './creatures';
 import { sphereCastClosest } from '../sphere-cast';
@@ -22,6 +23,8 @@ import type { Creature, GameRuntime } from '../runtime';
 export function createCreatureSimulation(runtime: GameRuntime): void {
   const { camera } = runtime;
   let nextHeartDropId = 1;
+  let nextCreatureId = 1;
+  let tick = 0;
 
   runtime.spawnCreature = function spawnCreature(typeKey: string): void {
     const def = CREATURE_DEFS[typeKey];
@@ -30,7 +33,7 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
     const y = runtime.groundHeight(x, z) + def.size[1] / 2;
     const { mesh, body } = runtime.buildCreatureBody(def, x, y, z);
     runtime.creatures.push({
-      typeKey, def, pos: new Vec3(x, y, z), mesh, body,
+      id: nextCreatureId++, typeKey, def, pos: new Vec3(x, y, z), mesh, body,
       hp: def.hp,
       dir: Math.random() * Math.PI * 2,
       timer: 0, bob: Math.random() * Math.PI * 2, flash: 0,
@@ -43,6 +46,7 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
 
   runtime.updateCreatures = function updateCreatures(dt: number): void {
     const { player } = runtime.state;
+    tick += 1;
     player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
     for (const cr of runtime.creatures) {
       cr.timer -= dt;
@@ -55,12 +59,14 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
 
       const motion = stepCreatureDirection({
         toPlayerX, toPlayerZ, dist, isMonster, peaceful: runtime.state.peaceful,
-        dir: cr.dir, timer: cr.timer, random: Math.random,
+        dir: cr.dir, timer: cr.timer, random: Math.random, id: cr.id, tick,
       });
       cr.dir = motion.dir; cr.timer = motion.timer;
 
+      const orbiting = isMonster && !runtime.state.peaceful && dist < CREATURE_STOP_DISTANCE;
+      const speed = orbiting ? CREATURE_ORBIT_SPEED : cr.def.speed;
       const stepped = stepCreaturePosition({
-        x: cr.pos.x, z: cr.pos.z, dir: cr.dir, speed: cr.def.speed, dt, sizeX: SIZE_X, sizeZ: SIZE_Z,
+        x: cr.pos.x, z: cr.pos.z, dir: cr.dir, speed, dt, sizeX: SIZE_X, sizeZ: SIZE_Z,
       });
       cr.pos.set(stepped.x, cr.pos.y, stepped.z);
     }

@@ -1,6 +1,8 @@
 // Creature definitions as data plus pure AI helpers (wander/chase, hit reward).
 // No three.js, no DOM: names are resolved by the glue from `nameKey`.
 
+import { CREATURE_ORBIT_FLIP_TICKS, CREATURE_STOP_DISTANCE } from '../constants';
+
 export type CreatureKind = 'animal' | 'monster';
 
 export interface CreatureDef {
@@ -34,9 +36,11 @@ const CHASE_RADIUS = 30;
 const FLEE_RADIUS = 4;
 
 // Decides facing + wander timer for one creature tick, matching the original AI:
-// hostile monsters home in, animals flee, otherwise random wander on timer expiry.
+// hostile monsters home in, animals flee, otherwise random wander on timer expiry. A hostile that has
+// closed to within CREATURE_STOP_DISTANCE strafes tangentially around the player (a menacing circle)
+// instead of standing still; its circle direction is deterministic per `id` and flips on a slow cadence.
 export function stepCreatureDirection({
-  toPlayerX, toPlayerZ, dist, isMonster, peaceful, dir, timer, random,
+  toPlayerX, toPlayerZ, dist, isMonster, peaceful, dir, timer, random, id, tick,
 }: {
   toPlayerX: number;
   toPlayerZ: number;
@@ -46,12 +50,33 @@ export function stepCreatureDirection({
   dir: number;
   timer: number;
   random: () => number;
+  id: number;
+  tick: number;
 }): CreatureMotion {
   const hostile = isMonster && !peaceful;
+  if (hostile && dist < CREATURE_STOP_DISTANCE) return { dir: orbitYaw({ toPlayerX, toPlayerZ, id, tick }), timer };
   if (hostile && dist < CHASE_RADIUS) return { dir: Math.atan2(toPlayerX, toPlayerZ), timer };
   if (!isMonster && dist < FLEE_RADIUS) return { dir: Math.atan2(-toPlayerX, -toPlayerZ), timer };
   if (timer <= 0) return { dir: random() * Math.PI * 2, timer: 1.5 + random() * 2 };
   return { dir, timer };
+}
+
+// A heading perpendicular to the player so the creature orbits at its current radius. Even-id creatures
+// circle one way, odd-id the other, and every CREATURE_ORBIT_FLIP_TICKS the whole orbit reverses — all
+// pure functions of (id, tick), so the circle is reproducible on server and client with no RNG.
+function orbitYaw({
+  toPlayerX, toPlayerZ, id, tick,
+}: {
+  toPlayerX: number;
+  toPlayerZ: number;
+  id: number;
+  tick: number;
+}): number {
+  const towardPlayer = Math.atan2(toPlayerX, toPlayerZ);
+  const clockwise = id % 2 === 0;
+  const flipped = Math.floor(tick / CREATURE_ORBIT_FLIP_TICKS) % 2 === 1;
+  const sign = clockwise === flipped ? 1 : -1;
+  return towardPlayer + sign * (Math.PI / 2);
 }
 
 export function hitReward(def: CreatureDef): number {

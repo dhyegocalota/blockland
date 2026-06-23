@@ -2,8 +2,14 @@
 // hostile creature is close enough to bite the player, and the knockback shove a hit gives it. The
 // three.js meshes and audio stay in the glue; these are numbers only, unit-tested.
 
-export const HIT_RANGE = 1.0;
-export const HIT_VERTICAL_GAP = 1.6;
+// Horizontal bite reach: only a creature essentially touching the player bites. Kept just above the
+// stop/orbit distance (CREATURE_STOP_DISTANCE) so a creature pressed up against — or circling — the
+// player still lands the bite. Mirrors the Rust server's HURT_RANGE.
+export const HIT_RANGE = 0.9;
+// How far above/below the player's feet a creature can be and still bite: generous so a ground creature
+// whose center sits a block below the feet of a player standing on a surface block is still hit. Mirrors
+// the Rust server's HURT_VERTICAL_GAP.
+export const HIT_VERTICAL_GAP = 1.3;
 export const KNOCKBACK_DISTANCE = 1.2;
 export const FLASH_TIME = 0.18;
 const BOB_HEIGHT = 0.12;
