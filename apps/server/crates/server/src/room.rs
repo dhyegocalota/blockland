@@ -516,18 +516,16 @@ impl Room {
             let _ = reply.send(Err("suspended".into()));
             return;
         }
-        // Approval gate (per-tenant, off by default): while on, admins always get in (to manage),
-        // but a guest must log in first and a logged-in player must be approved. A held-out player is
-        // recorded as pending and the admins are notified; they approve in-game (and by email).
+        // Approval gate (per-tenant, off by default): while on, admins always get in (to manage), and
+        // everyone else — including anonymous guests, who do NOT have to log in — is held for approval.
+        // The held player is keyed by account id, or by IP for a guest (same as playtime), recorded as
+        // pending so the admins are notified; they approve in-game (and by email when there is one).
         if self.approval_required && !role.is_admin() {
-            if account_id.is_empty() {
-                let _ = reply.send(Err("needs_login".into()));
-                return;
-            }
+            let approval_key = playtime_key(&account_id, ip);
             if self
                 .hub
                 .db
-                .is_rejected(&self.key.0, &account_id)
+                .is_rejected(&self.key.0, &approval_key)
                 .await
                 .unwrap_or(false)
             {
@@ -537,12 +535,16 @@ impl Room {
             if !self
                 .hub
                 .db
-                .is_approved(&self.key.0, &account_id)
+                .is_approved(&self.key.0, &approval_key)
                 .await
                 .unwrap_or(false)
             {
-                self.hold_for_approval(&account_id, &authoritative_name)
-                    .await;
+                let display_name = if authoritative_name.is_empty() {
+                    "Guest"
+                } else {
+                    &authoritative_name
+                };
+                self.hold_for_approval(&approval_key, display_name).await;
                 let _ = reply.send(Err("needs_approval".into()));
                 return;
             }
@@ -1412,15 +1414,14 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %actor_id, %target_id, ?role, "role changed in-game");
     }
 
-    /// Record a held-out account as pending, email the tenant's admins, and refresh the in-game
-    /// pending list for any online admin so they can approve immediately.
+    /// Record a held-out player (a logged-in account, or a guest keyed by IP) as pending, email the
+    /// tenant's admins, and refresh the in-game pending list for any online admin so they can approve
+    /// immediately. A guest has no account, so the request carries an empty email (admins are still
+    /// notified in-game + by the tenant-admin email).
     async fn hold_for_approval(&mut self, account_id: &str, name: &str) {
         let email = match self.hub.db.get_account_by_id(account_id).await {
             Ok(Some(account)) => account.email,
-            Ok(None) => {
-                tracing::warn!(%account_id, "approval hold skipped: account vanished");
-                return;
-            }
+            Ok(None) => String::new(),
             Err(e) => {
                 tracing::error!(error = %e, "approval hold: account lookup failed");
                 return;
@@ -3824,15 +3825,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approval_required_refuses_a_guest_with_needs_login() {
+    async fn approval_required_holds_an_anonymous_guest_then_admits_after_approve() {
         let mut room = test_room().await;
         room.hub
             .db
             .set_tenant_approval_required(&room.key.0, true)
             .await
             .unwrap();
-        let (refused, _rx) = admit_account(&mut room, "", "", Role::Player).await;
-        assert_eq!(refused, Err("needs_login".into()));
+        // An anonymous guest (no account, no login) is HELD for approval — never told to log in.
+        let (held, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.50").await;
+        assert_eq!(
+            held,
+            Err("needs_approval".into()),
+            "a guest waits for approval instead of being asked to log in"
+        );
+        // Recorded as pending, keyed by IP so the admin can approve it.
+        let pending = room.hub.db.pending_approvals(&room.key.0).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        // After the admin approves that IP key, the same guest is admitted on retry.
+        room.hub
+            .db
+            .approve_account(&room.key.0, "ip:203.0.113.50")
+            .await
+            .unwrap();
+        let (allowed, _rx2) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.50").await;
+        assert!(allowed.is_ok(), "an approved guest is admitted");
     }
 
     #[tokio::test]
