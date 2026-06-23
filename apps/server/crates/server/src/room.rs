@@ -239,7 +239,11 @@ fn server_version() -> String {
     )
 }
 
-fn resolve_server_version(git_sha_env: Option<&str>, build_sha: Option<&str>, crate_version: &str) -> String {
+fn resolve_server_version(
+    git_sha_env: Option<&str>,
+    build_sha: Option<&str>,
+    crate_version: &str,
+) -> String {
     if let Some(sha) = git_sha_env.filter(|s| !s.is_empty()) {
         return sha.to_string();
     }
@@ -2490,9 +2494,18 @@ mod tests {
 
     #[test]
     fn server_version_prefers_env_then_baked_sha_then_crate() {
-        assert_eq!(resolve_server_version(Some("abc1234"), Some("def5678"), "0.1.0"), "abc1234");
-        assert_eq!(resolve_server_version(None, Some("def5678"), "0.1.0"), "def5678");
-        assert_eq!(resolve_server_version(Some(""), Some("def5678"), "0.1.0"), "def5678");
+        assert_eq!(
+            resolve_server_version(Some("abc1234"), Some("def5678"), "0.1.0"),
+            "abc1234"
+        );
+        assert_eq!(
+            resolve_server_version(None, Some("def5678"), "0.1.0"),
+            "def5678"
+        );
+        assert_eq!(
+            resolve_server_version(Some(""), Some("def5678"), "0.1.0"),
+            "def5678"
+        );
         assert_eq!(resolve_server_version(None, None, "0.1.0"), "0.1.0");
         assert_eq!(resolve_server_version(None, Some(""), "0.1.0"), "0.1.0");
     }

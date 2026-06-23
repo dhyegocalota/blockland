@@ -8,7 +8,10 @@ fn main() {
     // arg; when git is unavailable at build, option_env!("BUILD_GIT_SHA") reads that ambient value).
     println!("cargo:rerun-if-env-changed=BUILD_GIT_SHA");
     println!("cargo:rerun-if-env-changed=GIT_SHA");
-    let Ok(output) = Command::new("git").args(["rev-parse", "--short", "HEAD"]).output() else {
+    let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+    else {
         return;
     };
     if !output.status.success() {
