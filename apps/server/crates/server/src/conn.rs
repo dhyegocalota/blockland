@@ -18,18 +18,11 @@ const MAX_TEXT_BYTES: usize = 32 * 1024;
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
-    if hub.bans.is_banned(ip) {
-        let mut s = socket;
-        let _ = s
-            .send(text_msg(err_json(
-                "banned",
-                "Your access has been revoked.",
-            )))
-            .await;
-        let _ = s.send(Message::Close(None)).await;
-        tracing::debug!(%ip, "banned connection rejected");
-        return;
-    }
+    // The ban is enforced role-aware in the room's `admit` (where the claim has resolved to a role), so
+    // a banned IP whose account is an admin/moderator — e.g. a parent sharing a banned home IP — still
+    // gets in (to the in-game room and the headless lobby-admin connection alike). Here, before any Join
+    // is parsed, the role is unknown, so the ban cannot be checked; the only cost is that a banned
+    // ordinary player now reaches `admit` before being refused. The per-IP cap below still applies.
     if !hub.try_add_ip(ip) {
         let mut s = socket;
         let _ = s

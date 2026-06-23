@@ -55,6 +55,7 @@ export default function LobbyReports({ report, close }: { report: ReportView; cl
   return (
     <>
       <span className="adminLabel">{t(titleKey)}</span>
+      <span className="reportBy">{t('report.window')}</span>
       {report.loading && <span className="reportBy">{t('report.loading')}</span>}
       {report.failed && <span className="reportBy">{t('report.failed')}</span>}
       {!report.loading && !report.failed && rows.length === 0 && (

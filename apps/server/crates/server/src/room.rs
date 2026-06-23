@@ -430,10 +430,8 @@ impl Room {
         conn: mpsc::Sender<Outbound>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
-        if self.hub.bans.is_banned(ip) {
-            let _ = reply.send(Err("banned".into()));
-            return;
-        }
+        // The ban is enforced in `admit`, after the claim resolves to a role, so a banned admin/moderator
+        // is still admitted; only the role is unknown here.
         if self.players.len() >= self.max_players {
             let _ = reply.send(Err("room_full".into()));
             return;
@@ -507,6 +505,13 @@ impl Room {
         conn: mpsc::Sender<Outbound>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
+        // Role-aware ban gate: a banned IP is turned away here (the claim has resolved to a role) UNLESS
+        // the account is an admin or moderator — they must still get in to moderate, even from a shared
+        // home IP that someone got banned on. A banned guest/ordinary player stays refused.
+        if self.hub.bans.is_banned(ip) && !role.is_admin() && !role.is_moderator() {
+            let _ = reply.send(Err("banned".into()));
+            return;
+        }
         // Refresh the per-tenant moderation flags + allowed modes from the db (this room is the single
         // writer, so the cache stays authoritative between joins).
         let (suspended, approval_required) = self
@@ -702,9 +707,11 @@ impl Room {
         {
             Ok(events) => {
                 for event in events {
-                    // Moderation reports are private to admins/moderators; never replay them to a player.
-                    let is_report = event.kind == "admin" && event.detail.starts_with("report|");
-                    if is_report && !(role.is_admin() || role.is_moderator()) {
+                    // The player-report feature was removed; skip any legacy `report|` rows still on the
+                    // timeline so they never replay (their feed string no longer exists).
+                    let is_legacy_report =
+                        event.kind == "admin" && event.detail.starts_with("report|");
+                    if is_legacy_report {
                         continue;
                     }
                     conn.send_one(ServerMsg::Event {
@@ -840,12 +847,6 @@ impl Room {
         } = msg
         {
             self.on_admin_set_modes(id, online_allowed, offline_allowed);
-            return;
-        }
-
-        // A report reads the reporter + target and notifies admins, so handle before the single borrow.
-        if let ClientMsg::AdminReport { id: target } = msg {
-            self.on_admin_report(id, target);
             return;
         }
 
@@ -1070,12 +1071,13 @@ impl Room {
             | ClientMsg::AdminUnban { .. }
             | ClientMsg::AdminSetLimits { .. }
             | ClientMsg::AdminSetModes { .. }
-            | ClientMsg::AdminReport { .. }
             | ClientMsg::AttackPlayer { .. }
             | ClientMsg::Hit { .. }
             | ClientMsg::Respawn
             | ClientMsg::Dig { .. } => { /* handled before the per-player borrow above */ }
-            ClientMsg::Join { .. } => { /* already joined; ignore */ }
+            // The player-report feature was removed; the wire variant is kept for protocol compatibility
+            // but the server no longer acts on it.
+            ClientMsg::AdminReport { .. } | ClientMsg::Join { .. } => { /* ignored */ }
         }
 
         if let Some(ServerMsg::Edit {
@@ -1252,6 +1254,12 @@ impl Room {
         let Some(target) = self.players.get(&target_id) else {
             return;
         };
+        // An admin or moderator can never be banned (a kick still works): banning staff is refused so a
+        // ban can't lock a fellow grown-up/helper out of the world.
+        if ban && (target.is_admin || target.is_moderator) {
+            tracing::debug!(%admin_id, %target_id, "ban ignored: target is an admin/moderator");
+            return;
+        }
         let target_ip = target.ip;
         let target_name = target.name.clone();
         let (code, message) = if ban {
@@ -1275,51 +1283,6 @@ impl Room {
             detail: format!("{}|{}", if ban { "ban" } else { "kick" }, target_name),
         });
         tracing::info!(tenant = %self.key.0, %admin_id, %target_id, ban, "player removed by admin");
-    }
-
-    /// File a moderation report against a player: a soft note an admin or moderator records. It is
-    /// pushed live only to admins/moderators and persisted on the timeline so the panel can list it,
-    /// subject to the 30-day activity-log retention. Never trust the client: ignore unless authorised.
-    fn on_admin_report(&mut self, admin_id: PlayerId, target_id: PlayerId) {
-        let Some(admin) = self.players.get_mut(&admin_id) else {
-            return;
-        };
-        admin.last_seen = Instant::now();
-        if !admin.is_admin && !admin.is_moderator {
-            tracing::debug!(%admin_id, "report ignored: insufficient authority");
-            return;
-        }
-        let admin_name = admin.name.clone();
-        let admin_account = admin.account_id.clone();
-        let Some(target) = self.players.get(&target_id) else {
-            return;
-        };
-        // An "admin" event with a "report|<target>" detail: the existing feed renders it as
-        // feed.admin_report, and it is the only persisted "admin" event, so replay can keep it private.
-        let detail = format!("report|{}", target.name);
-        let event = ServerMsg::Event {
-            kind: "admin".into(),
-            name: admin_name.clone(),
-            detail: detail.clone(),
-        };
-        for staff in self
-            .players
-            .values()
-            .filter(|p| p.is_admin || p.is_moderator)
-        {
-            staff.conn.send_one(event.clone());
-        }
-        let db = self.hub.db.clone();
-        let tenant = self.key.0.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db
-                .record_event(&tenant, &admin_account, "admin", &admin_name, &detail)
-                .await
-            {
-                tracing::error!(error = %e, "failed to persist report event");
-            }
-        });
-        tracing::info!(tenant = %self.key.0, %admin_id, %target_id, "player reported");
     }
 
     /// Admin-gated world wipe: replace the world with a fresh one (clearing every edit), drop all
@@ -1726,6 +1689,9 @@ impl Room {
             return;
         }
         let Some(addr) = account_id.strip_prefix("ip:") else {
+            // The key is a real account id (a logged-in held player), not a guest's `ip:<addr>`. Banning
+            // here only ever targets guests by IP; an account-keyed entry — the only way a target could
+            // resolve to an admin/moderator — is never banned through this path, so staff stay safe.
             tracing::debug!(%id, key = %account_id, "ban pending ignored: key carries no ip");
             return;
         };
@@ -1945,7 +1911,9 @@ impl Room {
             let idle = Duration::from_secs(self.hub.limits.idle_secs);
             let mut kicked: Vec<PlayerId> = Vec::new();
             for p in self.players.values() {
-                if self.hub.bans.is_banned(p.ip) {
+                // An admin/moderator is exempt from the ban (same rule as the join gate): a ban on their
+                // shared IP must never expel them mid-session, or they couldn't moderate.
+                if self.hub.bans.is_banned(p.ip) && !p.is_admin && !p.is_moderator {
                     p.conn.send_one(ServerMsg::Error {
                         code: "banned".into(),
                         msg: "Your access has been revoked.".into(),
@@ -3508,34 +3476,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_report_notifies_only_staff() {
+    async fn admin_report_is_a_no_op_after_removal() {
+        // The player-report feature was removed: the wire variant is still accepted but the server emits
+        // nothing for it (no event reaches the admin or anyone else).
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
-        let mut player_rx = add_player(&mut room, 2, false);
+        add_player(&mut room, 2, false);
 
         room.on_input(1, ClientMsg::AdminReport { id: 2 });
 
-        let admin_reports = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
-            .filter_map(report_detail)
+        let events = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
+            .filter(|m| matches!(m, ServerMsg::Event { .. }))
             .count();
-        let player_reports = std::iter::from_fn(|| player_rx.try_recv_msg().ok())
-            .filter_map(report_detail)
-            .count();
-        assert_eq!(admin_reports, 1, "the admin must receive the report event");
-        assert_eq!(
-            player_reports, 0,
-            "a non-admin must not receive a report event"
-        );
-    }
-
-    fn report_detail(msg: ServerMsg) -> Option<String> {
-        let ServerMsg::Event { kind, detail, .. } = msg else {
-            return None;
-        };
-        if kind == "admin" && detail.starts_with("report|") {
-            return Some(detail);
-        }
-        None
+        assert_eq!(events, 0, "AdminReport must produce no event");
     }
 
     #[tokio::test]
@@ -3584,6 +3537,79 @@ mod tests {
             "the banned player is removed"
         );
         assert!(room.hub.bans.is_banned(target_ip), "the ip is banned");
+    }
+
+    #[tokio::test]
+    async fn a_banned_ip_still_admits_an_admin_or_moderator_but_refuses_a_player() {
+        // A ban targets an IP. If a parent (admin) or helper (moderator) shares that banned address, they
+        // must still get in to moderate; only an ordinary player from it stays refused.
+        let mut room = test_room().await;
+        let banned_ip = "203.0.113.50";
+        room.hub
+            .bans
+            .ban(banned_ip.parse().unwrap(), "someone".into());
+
+        let (admin_result, _a) =
+            admit_from_ip(&mut room, "acc-a", "Parent", Role::Admin, banned_ip).await;
+        assert!(admin_result.is_ok(), "a banned IP still admits an admin");
+        let (mod_result, _m) =
+            admit_from_ip(&mut room, "acc-m", "Helper", Role::Moderator, banned_ip).await;
+        assert!(mod_result.is_ok(), "a banned IP still admits a moderator");
+        let (player_result, _p) =
+            admit_from_ip(&mut room, "acc-p", "Kid", Role::Player, banned_ip).await;
+        assert_eq!(
+            player_result,
+            Err("banned".into()),
+            "a banned IP still refuses an ordinary player"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_ban_refuses_to_ban_an_admin_or_moderator() {
+        // Banning staff is refused (a kick still works): an admin or moderator target is never banned, so
+        // a ban can't lock a fellow grown-up/helper out. A normal player is still bannable.
+        let mut room = test_room().await;
+        let _admin_rx = add_player(&mut room, 1, true);
+
+        let admin_target_ip: IpAddr = "203.0.113.71".parse().unwrap();
+        let _admin_target_rx = add_player(&mut room, 2, true);
+        room.players.get_mut(&2).unwrap().ip = admin_target_ip;
+        room.on_input(1, ClientMsg::AdminBan { id: 2 });
+        assert!(
+            room.players.contains_key(&2),
+            "an admin target is not removed"
+        );
+        assert!(
+            !room.hub.bans.is_banned(admin_target_ip),
+            "an admin target's ip is never banned"
+        );
+
+        let mod_target_ip: IpAddr = "203.0.113.72".parse().unwrap();
+        let _mod_target_rx = add_player(&mut room, 3, false);
+        room.players.get_mut(&3).unwrap().is_moderator = true;
+        room.players.get_mut(&3).unwrap().ip = mod_target_ip;
+        room.on_input(1, ClientMsg::AdminBan { id: 3 });
+        assert!(
+            room.players.contains_key(&3),
+            "a moderator target is not removed"
+        );
+        assert!(
+            !room.hub.bans.is_banned(mod_target_ip),
+            "a moderator target's ip is never banned"
+        );
+
+        let player_target_ip: IpAddr = "203.0.113.73".parse().unwrap();
+        let _player_target_rx = add_player(&mut room, 4, false);
+        room.players.get_mut(&4).unwrap().ip = player_target_ip;
+        room.on_input(1, ClientMsg::AdminBan { id: 4 });
+        assert!(
+            !room.players.contains_key(&4),
+            "a normal player is still banned"
+        );
+        assert!(
+            room.hub.bans.is_banned(player_target_ip),
+            "a normal player's ip is banned"
+        );
     }
 
     #[tokio::test]
@@ -4304,6 +4330,36 @@ mod tests {
         let saw_bans = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Bans { .. }));
         assert!(saw_bans, "the admin gets the refreshed ban list");
+    }
+
+    #[tokio::test]
+    async fn ban_pending_never_bans_an_account_keyed_target() {
+        // Ban-pending only ever targets a guest by their `ip:<addr>` key. An account-keyed entry — the
+        // only way a target could resolve to an admin/moderator — is never banned through this path, so
+        // staff stay safe even if a client sends an account id.
+        let mut room = test_room().await;
+        let _admin_rx = add_player(&mut room, 1, true);
+        let acc = room
+            .hub
+            .db
+            .claim_account("acme", "parent@x.com", "Parent")
+            .await
+            .unwrap()
+            .account_id;
+        room.hub
+            .db
+            .set_admin_by_name("acme", "Parent", true)
+            .await
+            .unwrap();
+
+        room.on_input(
+            1,
+            ClientMsg::AdminBanPending {
+                account_id: acc.clone(),
+            },
+        );
+        let before = room.hub.bans.list_named().len();
+        assert_eq!(before, 0, "an account-keyed ban-pending adds no ban");
     }
 
     #[tokio::test]
