@@ -65,6 +65,9 @@ export const HEART_DROP_TTL_MS = 20000;
 // A dropped heart hovers this far above its base position and bobs at this rate (radians/sec).
 export const HEART_BOB_HEIGHT = 0.18;
 export const HEART_BOB_SPEED = 3;
+// Two creatures closer than this on the ground push apart so they never stack or overlap into one
+// blob. Mirrors the Rust server's CREATURE_SEPARATION so online truth and offline prediction agree.
+export const CREATURE_SEPARATION = 0.9;
 // The spawn point sits this many cells south of the world centre (so the player faces the monument).
 export const SPAWN_OFFSET_Z = 4;
 // Fall below this Y (under the world floor) and the player is teleported back to spawn.

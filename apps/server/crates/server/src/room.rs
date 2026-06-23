@@ -15,7 +15,7 @@ use sim::World;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 
-use crate::creatures::{Creature, CreatureKind};
+use crate::creatures::{separate_creatures, Creature, CreatureKind};
 use crate::db::Role;
 use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
 
@@ -2054,6 +2054,9 @@ impl Room {
         for creature in self.creatures.iter_mut() {
             creature.advance(&player_xz, peace, dt, tick, |x, z| world.surface_y(x, z));
         }
+        // Spread out any creatures that ended the step stacked so they never overlap into one blob; the
+        // pass re-settles each onto its ground column, keeping them out of solid terrain.
+        separate_creatures(&mut self.creatures, |x, z| world.surface_y(x, z));
         if peace {
             return;
         }
@@ -2698,6 +2701,33 @@ mod tests {
         p.hurt_at = Instant::now() - Duration::from_secs(5);
         room.creatures.clear();
         room.creatures.push(spider);
+    }
+
+    #[tokio::test]
+    async fn two_creatures_on_one_spot_separate_after_a_tick() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        room.peace = true;
+        room.creatures.clear();
+        room.creatures.push(Creature::spawn(
+            80,
+            CreatureKind::Pig,
+            30.0,
+            30.0,
+            sim::height_at,
+        ));
+        room.creatures.push(Creature::spawn(
+            81,
+            CreatureKind::Pig,
+            30.0,
+            30.0,
+            sim::height_at,
+        ));
+        room.simulate_creatures(0.05);
+        let a = room.creatures[0].pos;
+        let b = room.creatures[1].pos;
+        let gap = ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        assert!(gap > 0.5, "stacked creatures must push apart, gap={gap}");
     }
 
     #[tokio::test]
@@ -3371,6 +3401,32 @@ mod tests {
             room.players.get(&1).unwrap().hp,
             2,
             "the player heals by one"
+        );
+        assert!(room.heart_drops.is_empty(), "the drop is consumed");
+    }
+
+    #[tokio::test]
+    async fn a_damaged_player_walking_over_a_real_kill_drop_heals() {
+        // Geometry of a real kill: the drop sits at the creature's body position (surface + the
+        // creature's ground offset), not exactly at the player's feet. A damaged player standing on
+        // the same ground walks over it and must still heal — the regression players reported.
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        let chicken = Creature::spawn(70, CreatureKind::Chicken, 0.0, 0.0, sim::height_at);
+        let drop_pos = chicken.pos;
+        room.drop_heart(drop_pos);
+        let surface = sim::height_at(0, 0) as f32;
+        let p = room.players.get_mut(&1).unwrap();
+        p.hp = 1;
+        p.x = 0.0;
+        p.z = 0.0;
+        p.y = surface + PLAYER_EYE_HEIGHT;
+
+        room.collect_hearts();
+        assert_eq!(
+            room.players.get(&1).unwrap().hp,
+            2,
+            "walking onto a fresh kill drop heals by one"
         );
         assert!(room.heart_drops.is_empty(), "the drop is consumed");
     }

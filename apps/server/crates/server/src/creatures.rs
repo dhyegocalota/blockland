@@ -185,6 +185,46 @@ const MAX_CLIMB: f32 = 1.0;
 /// How fast a creature falls when it walks off a ledge (blocks per second), so drops are smooth
 /// instead of an instant vertical teleport.
 const MAX_FALL_SPEED: f32 = 10.0;
+/// Two creatures closer than this on the ground push apart so they never stack into one blob. Mirrors
+/// the web `CREATURE_SEPARATION` so the server's truth and the client's prediction agree.
+pub const CREATURE_SEPARATION: f32 = 0.9;
+
+/// Push apart any two creatures whose horizontal (XZ) gap is under `CREATURE_SEPARATION`, splitting the
+/// correction evenly so neither is favoured, then settle each back onto its ground column (separation is
+/// XZ-only; the ground clamp owns y). Two exactly coincident creatures split along a stable axis chosen
+/// by id so the result is deterministic. Mirrors the web `separateCreatures`.
+pub fn separate_creatures(creatures: &mut [Creature], height_at: impl Fn(i32, i32) -> i32) {
+    for i in 0..creatures.len() {
+        for j in (i + 1)..creatures.len() {
+            let (a, b) = creatures.split_at_mut(j);
+            push_apart(&mut a[i], &mut b[0]);
+        }
+    }
+    for creature in creatures.iter_mut() {
+        creature.pos[1] = ground_y(creature.pos[0], creature.pos[2], &height_at);
+    }
+}
+
+fn push_apart(a: &mut Creature, b: &mut Creature) {
+    let delta_x = b.pos[0] - a.pos[0];
+    let delta_z = b.pos[2] - a.pos[2];
+    let distance = (delta_x * delta_x + delta_z * delta_z).sqrt();
+    if distance >= CREATURE_SEPARATION {
+        return;
+    }
+    let (axis_x, axis_z) = if distance > 0.0 {
+        (delta_x / distance, delta_z / distance)
+    } else if a.id < b.id {
+        (1.0, 0.0)
+    } else {
+        (-1.0, 0.0)
+    };
+    let push = (CREATURE_SEPARATION - distance) / 2.0;
+    a.pos[0] -= axis_x * push;
+    a.pos[2] -= axis_z * push;
+    b.pos[0] += axis_x * push;
+    b.pos[2] += axis_z * push;
+}
 
 fn ground_y(x: f32, z: f32, height_at: &impl Fn(i32, i32) -> i32) -> f32 {
     height_at(x.floor() as i32, z.floor() as i32) as f32 + GROUND_OFFSET
@@ -410,5 +450,38 @@ mod tests {
             moved > 0.0,
             "an idle world should still let creatures wander"
         );
+    }
+
+    #[test]
+    fn separate_splits_two_creatures_sharing_a_spot() {
+        let mut crowd = [
+            Creature::spawn(1, CreatureKind::Pig, 5.0, 5.0, flat()),
+            Creature::spawn(2, CreatureKind::Pig, 5.0, 5.0, flat()),
+        ];
+        separate_creatures(&mut crowd, flat());
+        let gap = ((crowd[0].pos[0] - crowd[1].pos[0]).powi(2)
+            + (crowd[0].pos[2] - crowd[1].pos[2]).powi(2))
+        .sqrt();
+        assert!(
+            (gap - CREATURE_SEPARATION).abs() < 1e-4,
+            "coincident creatures end exactly one separation apart, gap={gap}"
+        );
+        assert_eq!(
+            crowd[0].pos[1],
+            10.0 + GROUND_OFFSET,
+            "separation re-settles onto the ground"
+        );
+    }
+
+    #[test]
+    fn separate_leaves_distant_creatures_untouched() {
+        let mut crowd = [
+            Creature::spawn(1, CreatureKind::Pig, 0.0, 0.0, flat()),
+            Creature::spawn(2, CreatureKind::Pig, 5.0, 0.0, flat()),
+        ];
+        let before = [crowd[0].pos, crowd[1].pos];
+        separate_creatures(&mut crowd, flat());
+        assert_eq!(crowd[0].pos, before[0]);
+        assert_eq!(crowd[1].pos, before[1]);
     }
 }

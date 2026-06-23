@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCreatureSimulation } from './creature-simulation';
 import { CREATURE_DEFS } from './creatures';
 import { Vec3 } from '../vec3';
-import { HEART_DROP_TTL_MS } from '../constants';
+import { EYE_HEIGHT, HEART_DROP_TTL_MS } from '../constants';
 import { t } from '../../i18n';
 import type { Creature, GameRuntime } from '../runtime';
 
@@ -84,6 +84,19 @@ describe('createCreatureSimulation', () => {
     expect(heartDropRuntime.spawn).toHaveBeenCalledOnce();
   });
 
+  it('updateCreatures separates two creatures that share a spot so they never stack', () => {
+    const { runtime } = makeRuntime();
+    runtime.state.peaceful = true;
+    const a = fakeCreature('pig');
+    const b = fakeCreature('pig');
+    a.pos = new Vec3(20, 0, 20);
+    b.pos = new Vec3(20, 0, 20);
+    runtime.creatures.push(a, b);
+    runtime.updateCreatures(0.016);
+    const gap = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
+    expect(gap).toBeGreaterThan(0.5);
+  });
+
   it('updateHeartDrops heals a damaged player who walks over a drop and consumes it', () => {
     const { runtime, heartDropRuntime } = makeRuntime();
     runtime.state.player.hearts = 1;
@@ -95,6 +108,21 @@ describe('createCreatureSimulation', () => {
     expect(runtime.state.player.hearts).toBe(2);
     expect(runtime.heartDrops).toHaveLength(0);
     expect(heartDropRuntime.remove).toHaveBeenCalledWith(dropId);
+  });
+
+  it('updateHeartDrops heals a player standing on a real kill drop floating at body height', () => {
+    const { runtime } = makeRuntime();
+    runtime.state.player.hearts = 1;
+    const groundY = 12;
+    (runtime as unknown as { groundHeight: () => number }).groundHeight = () => groundY;
+    const creature = fakeCreature('spider');
+    creature.pos = new Vec3(3, groundY + creature.def.size[1] / 2, 3);
+    runtime.creatures.push(creature);
+    runtime.defeatCreature(creature);
+    runtime.state.player.pos.set(3, groundY + EYE_HEIGHT, 3);
+    runtime.updateHeartDrops(performance.now());
+    expect(runtime.state.player.hearts).toBe(2);
+    expect(runtime.heartDrops).toHaveLength(0);
   });
 
   it('updateHeartDrops leaves the heart for a full-hearted player', () => {

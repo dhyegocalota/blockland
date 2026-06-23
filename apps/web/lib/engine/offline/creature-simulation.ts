@@ -16,6 +16,7 @@ import { STARTING_ROSTER, spawnPosition } from './creature-spawn';
 import { bobOffset, creatureBitesPlayer, FLASH_TIME, knockbackVector, stepCreaturePosition } from './creature-combat';
 import { offlineKillFeed } from './feed-events';
 import { canCollectHeart, heartDropExpired } from '../heart-drop';
+import { separateCreatures } from '../creature-separation';
 import type { Creature, GameRuntime } from '../runtime';
 
 export function createCreatureSimulation(runtime: GameRuntime): void {
@@ -51,7 +52,6 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
       const toPlayerZ = player.pos.z - cr.pos.z;
       const dist = Math.hypot(toPlayerX, toPlayerZ);
       const isMonster = cr.def.kind === 'monster';
-      const hostile = isMonster && !runtime.state.peaceful;
 
       const motion = stepCreatureDirection({
         toPlayerX, toPlayerZ, dist, isMonster, peaceful: runtime.state.peaceful,
@@ -62,12 +62,20 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
       const stepped = stepCreaturePosition({
         x: cr.pos.x, z: cr.pos.z, dir: cr.dir, speed: cr.def.speed, dt, sizeX: SIZE_X, sizeZ: SIZE_Z,
       });
-      const y = runtime.groundHeight(stepped.x, stepped.z) + cr.def.size[1] / 2 + bobOffset(cr.bob);
-      cr.pos.set(stepped.x, y, stepped.z);
-      runtime.syncCreatureMesh(cr, { x: stepped.x, y, z: stepped.z, rotationY: cr.dir, flashing: cr.flash > 0 });
+      cr.pos.set(stepped.x, cr.pos.y, stepped.z);
+    }
+    // Spread out any creatures that ended the step stacked, then settle each onto its ground column so
+    // separation never leaves one floating or inside terrain, sync its mesh, and resolve the bite.
+    separateCreatures(runtime.creatures);
+    for (const cr of runtime.creatures) {
+      const y = runtime.groundHeight(cr.pos.x, cr.pos.z) + cr.def.size[1] / 2 + bobOffset(cr.bob);
+      cr.pos.set(cr.pos.x, y, cr.pos.z);
+      runtime.syncCreatureMesh(cr, { x: cr.pos.x, y, z: cr.pos.z, rotationY: cr.dir, flashing: cr.flash > 0 });
 
+      const hostile = cr.def.kind === 'monster' && !runtime.state.peaceful;
+      const horizontalDistance = Math.hypot(player.pos.x - cr.pos.x, player.pos.z - cr.pos.z);
       const verticalGap = Math.abs(player.pos.y - EYE_HEIGHT - cr.pos.y);
-      if (hostile && player.hurtCooldown === 0 && creatureBitesPlayer({ horizontalDistance: dist, verticalGap })) runtime.hurtPlayer();
+      if (hostile && player.hurtCooldown === 0 && creatureBitesPlayer({ horizontalDistance, verticalGap })) runtime.hurtPlayer();
     }
   };
 
