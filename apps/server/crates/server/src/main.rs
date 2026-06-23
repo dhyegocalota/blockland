@@ -46,6 +46,7 @@ use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use axum::serve::ListenerExt;
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -122,7 +123,16 @@ async fn main() {
         )
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(&bind).await.expect("bind");
+    // Disable Nagle on every accepted socket: the game flushes many small frames per second (a snapshot
+    // each tick), and buffering them adds latency that compounds into a ping spike under load.
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .expect("bind")
+        .tap_io(|stream| {
+            if let Err(e) = stream.set_nodelay(true) {
+                tracing::warn!(error = %e, "failed to set TCP_NODELAY on incoming connection");
+            }
+        });
     tracing::info!(%bind, "server listening");
 
     axum::serve(

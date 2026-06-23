@@ -11,7 +11,7 @@ use protocol::{ClientMsg, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::hub::Hub;
-use crate::room::{Appearance, RoomCmd};
+use crate::room::{Appearance, Outbound, RoomCmd};
 
 // Large enough for a chunked EditBatch (the client caps each batch to BATCH_CHUNK cells).
 const MAX_TEXT_BYTES: usize = 32 * 1024;
@@ -89,7 +89,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         }
     };
 
-    let (conn_tx, mut conn_rx) = mpsc::channel::<ServerMsg>(256);
+    let (conn_tx, mut conn_rx) = mpsc::channel::<Outbound>(256);
     let (reply_tx, reply_rx) = oneshot::channel();
     if room_tx
         .send(RoomCmd::Join {
@@ -121,16 +121,21 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         }
     };
 
-    // Writer task: drains the room's outbound channel into the socket.
+    // Writer task: drains the room's outbound channel into the socket. A fan-out frame (snapshot,
+    // event, …) arrives already serialized — the room serialized it ONCE for the whole room — so this
+    // task sends it verbatim instead of re-encoding the same JSON per connection. Per-player messages
+    // still serialize here.
     let writer = tokio::spawn(async move {
-        while let Some(msg) = conn_rx.recv().await {
-            match serde_json::to_string(&msg) {
-                Ok(txt) => {
-                    if sink.send(text_msg(txt)).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Some(out) = conn_rx.recv().await {
+            let txt = match out {
+                Outbound::Frame(frame) => frame.to_string(),
+                Outbound::One(msg) => match serde_json::to_string(&msg) {
+                    Ok(txt) => txt,
+                    Err(_) => break,
+                },
+            };
+            if sink.send(text_msg(txt)).await.is_err() {
+                break;
             }
         }
         let _ = sink.send(Message::Close(None)).await;
