@@ -79,11 +79,6 @@ pub enum ClientMsg {
     AdminBan {
         id: u32,
     },
-    /// Admin/moderator: file a moderation report against a player by id. Visible only to admins/mods
-    /// (live + replayed) and kept on the timeline subject to the activity-log retention. Ignored otherwise.
-    AdminReport {
-        id: u32,
-    },
     /// Attack another player by id; the server validates pvp + range and tells the target it was hit.
     AttackPlayer {
         id: u32,

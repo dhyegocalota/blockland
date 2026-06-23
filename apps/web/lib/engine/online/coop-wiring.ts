@@ -164,7 +164,6 @@ export function createCoopWiring(runtime: GameRuntime): void {
       },
       kickPlayer: (id) => runtime.coop?.sendAdminKick(id),
       banPlayer: (id) => runtime.coop?.sendAdminBan(id),
-      reportPlayer: (id) => runtime.coop?.sendAdminReport(id),
       resetWorld: () => {
         if (runtime.coop) { runtime.coop.sendAdminResetWorld(); return; }
         runtime.resetLocalWorld();

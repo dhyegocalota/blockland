@@ -72,11 +72,6 @@ export interface Banned {
   name: string;
 }
 
-export interface Report {
-  by: string;
-  target: string;
-}
-
 // The data-only rendering hooks coop drives. Every method takes plain data (ids, names, colors,
 // coords, text) — no three.js types — so coop stays three.js-free; engine/rendering/coop-view.ts owns
 // the meshes behind it. Called at the exact points coop used to build/move/dispose a mesh.
@@ -211,7 +206,6 @@ export interface CoopController {
   sendAdminSetChat(on: boolean): void;
   sendAdminKick(id: number): void;
   sendAdminBan(id: number): void;
-  sendAdminReport(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
@@ -584,9 +578,6 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminKick(id): void {
       net.sendAdminKick(id);
-    },
-    sendAdminReport(id): void {
-      net.sendAdminReport(id);
     },
     sendAdminBan(id): void {
       net.sendAdminBan(id);

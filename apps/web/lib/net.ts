@@ -12,7 +12,6 @@ import {
   adminUnban,
   adminBan,
   adminKick,
-  adminReport,
   adminResetWorld,
   adminResetScores,
   adminSuspend,
@@ -199,7 +198,6 @@ export interface NetClient {
   sendAdminSetChat(on: boolean): void;
   sendAdminKick(id: number): void;
   sendAdminBan(id: number): void;
-  sendAdminReport(id: number): void;
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
@@ -510,9 +508,6 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminBan(id): void {
       rawSend(encodeClientMsg(adminBan(id)));
-    },
-    sendAdminReport(id): void {
-      rawSend(encodeClientMsg(adminReport(id)));
     },
     sendAttackPlayer(id): void {
       rawSend(encodeClientMsg(attackPlayer(id)));

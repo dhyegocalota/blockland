@@ -25,7 +25,7 @@ interface LobbyAdminParams {
 export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) {
   const apiRef = useRef<RoomAdminApi | null>(null);
   const admin = useRoomAdmin(apiRef);
-  const { setRoom, setIsAdmin, setIsModerator, setPendingApprovals, setBans, setReports } = admin;
+  const { setRoom, setIsAdmin, setIsModerator, setPendingApprovals, setBans } = admin;
   const [state, setState] = useState<NetState | null>(null);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
 
@@ -91,12 +91,6 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
         },
         onBans: (msg) => {
           setBans(msg.bans.map((b) => ({ ip: b.ip, name: b.name })));
-        },
-        onEvent: (msg) => {
-          if (msg.kind !== 'admin') return;
-          const [action, target] = msg.detail.split('|');
-          if (action !== 'report' || !target) return;
-          setReports((prev) => [...prev, { by: msg.name, target }]);
         },
       },
     });

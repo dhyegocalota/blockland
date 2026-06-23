@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { adminApprove, adminBan, adminBanPending, adminKick, adminReport, adminResetWorld, adminSetApproval, adminSetChat, adminSetInfinite, adminSetPeace, adminSetPvp, adminSetRole, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
+import { adminApprove, adminBan, adminBanPending, adminKick, adminResetWorld, adminSetApproval, adminSetChat, adminSetInfinite, adminSetPeace, adminSetPvp, adminSetRole, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
 
 describe('protocol factories', () => {
   it('builds a join message', () => {
@@ -36,7 +36,6 @@ describe('protocol factories', () => {
     expect(adminSetChat(false)).toEqual({ t: 'admin_set_chat', on: false });
     expect(adminKick(3)).toEqual({ t: 'admin_kick', id: 3 });
     expect(adminBan(4)).toEqual({ t: 'admin_ban', id: 4 });
-    expect(adminReport(8)).toEqual({ t: 'admin_report', id: 8 });
     expect(attackPlayer(5)).toEqual({ t: 'attack_player', id: 5 });
   });
 

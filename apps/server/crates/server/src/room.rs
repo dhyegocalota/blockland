@@ -1076,9 +1076,7 @@ impl Room {
             | ClientMsg::Hit { .. }
             | ClientMsg::Respawn
             | ClientMsg::Dig { .. } => { /* handled before the per-player borrow above */ }
-            // The player-report feature was removed; the wire variant is kept for protocol compatibility
-            // but the server no longer acts on it.
-            ClientMsg::AdminReport { .. } | ClientMsg::Join { .. } => { /* ignored */ }
+            ClientMsg::Join { .. } => { /* handled at connect, not per-input */ }
         }
 
         if let Some(ServerMsg::Edit {
@@ -3560,22 +3558,6 @@ mod tests {
             .filter(|m| matches!(m, ServerMsg::Chat { .. }))
             .collect();
         assert_eq!(chats.len(), 1, "a clean message must be broadcast");
-    }
-
-    #[tokio::test]
-    async fn admin_report_is_a_no_op_after_removal() {
-        // The player-report feature was removed: the wire variant is still accepted but the server emits
-        // nothing for it (no event reaches the admin or anyone else).
-        let mut room = test_room().await;
-        let mut admin_rx = add_player(&mut room, 1, true);
-        add_player(&mut room, 2, false);
-
-        room.on_input(1, ClientMsg::AdminReport { id: 2 });
-
-        let events = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
-            .filter(|m| matches!(m, ServerMsg::Event { .. }))
-            .count();
-        assert_eq!(events, 0, "AdminReport must produce no event");
     }
 
     #[tokio::test]
