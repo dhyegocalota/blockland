@@ -498,6 +498,9 @@ impl Room {
             .unwrap_or((true, true));
         self.online_allowed = online_allowed;
         self.offline_allowed = offline_allowed;
+        // Peace (monsters calm) is persisted so an admin who turned monsters ON keeps them on across a
+        // room restart, instead of silently resetting to calm and looking like "monsters deal no damage".
+        self.peace = self.hub.db.tenant_peace(&self.key.0).await.unwrap_or(true);
         // Online play disabled for this tenant: reject the join (offline reaches the client only, gated
         // there). Admins still get in so they can re-enable it from the in-game panel.
         if !self.online_allowed && !role.is_admin() {
@@ -1128,6 +1131,15 @@ impl Room {
             ClientMsg::AdminSetPeace { on } => {
                 let changed = self.peace != on;
                 self.peace = on;
+                if changed {
+                    let db = self.hub.db.clone();
+                    let tenant = self.key.0.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = db.set_tenant_peace(&tenant, on).await {
+                            tracing::error!(error = %e, "set_tenant_peace failed");
+                        }
+                    });
+                }
                 (changed, if on { "peace_on" } else { "peace_off" })
             }
             ClientMsg::AdminSetStructure { kind, allowed } => {

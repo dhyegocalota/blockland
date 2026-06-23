@@ -237,6 +237,9 @@ impl Db {
             // never the last one (enforced where the toggle is applied).
             "ALTER TABLE tenants ADD COLUMN online_allowed INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE tenants ADD COLUMN offline_allowed INTEGER NOT NULL DEFAULT 1",
+            // Whether monsters are calm (peace) — persisted so the admin's choice survives a room
+            // restart. Default 1 (calm) keeps new worlds kid-safe until an admin turns monsters on.
+            "ALTER TABLE tenants ADD COLUMN peace INTEGER NOT NULL DEFAULT 1",
             // The slim branding model: one image replaces the old avatar/face_texture split. On a
             // legacy-wide db this adds the column and the backfill below seeds it from `avatar`.
             "ALTER TABLE tenants ADD COLUMN image TEXT NOT NULL DEFAULT ''",
@@ -511,6 +514,29 @@ impl Db {
             .execute(
                 "UPDATE tenants SET online_allowed = ?2, offline_allowed = ?3 WHERE id = ?1",
                 params![tenant, online_allowed as i64, offline_allowed as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Whether monsters are calm for a tenant (default true = calm for a fresh world).
+    pub async fn tenant_peace(&self, tenant: &str) -> Result<bool, libsql::Error> {
+        let mut rows = self
+            .conn
+            .query("SELECT peace FROM tenants WHERE id = ?1", params![tenant])
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(row.get::<i64>(0)? != 0),
+            None => Ok(true),
+        }
+    }
+
+    /// Persist whether monsters are calm, so the admin's peace toggle survives a room restart.
+    pub async fn set_tenant_peace(&self, tenant: &str, peace: bool) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE tenants SET peace = ?2 WHERE id = ?1",
+                params![tenant, peace as i64],
             )
             .await?;
         Ok(())
@@ -1650,6 +1676,16 @@ mod tests {
         assert_eq!(db.tenant_flags("acme").await.unwrap(), (true, true));
         db.set_tenant_suspended("acme", false).await.unwrap();
         assert_eq!(db.tenant_flags("acme").await.unwrap(), (false, true));
+    }
+
+    #[tokio::test]
+    async fn tenant_peace_defaults_calm_and_round_trips() {
+        let db = memory_db().await;
+        assert!(db.tenant_peace("acme").await.unwrap());
+        db.set_tenant_peace("acme", false).await.unwrap();
+        assert!(!db.tenant_peace("acme").await.unwrap());
+        db.set_tenant_peace("acme", true).await.unwrap();
+        assert!(db.tenant_peace("acme").await.unwrap());
     }
 
     #[tokio::test]
