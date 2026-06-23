@@ -1,7 +1,7 @@
 // The engine's control interfaces, shared between the React HUD, the headless lobby connection and the
 // runtime modules. They live here (not in game-engine.ts) so the runtime modules can type the bridge
 // without importing the composition root — keeping the dependency arrow one-way (builder -> modules).
-import type { Appearance, CoopHud } from '../coop';
+import type { Appearance, CoopHud, RoomState } from '../coop';
 import type { Role } from '../protocol';
 import type { DebugSnapshot } from './debug-snapshot';
 
@@ -49,6 +49,10 @@ export interface CoopBridge {
   resolveClaim(name: string): string;
   // True when the player chose single-player on the start screen: never connect, simulate locally.
   resolveOffline(): boolean;
+  // The lobby's live RoomState when a lobby-admin connection configured the world, else null. Offline
+  // seeds its sandbox room from it (peace, blocked structures, pvp, chat, approval) so the admin's lobby
+  // settings carry into the local game; online ignores it (the server room is authoritative).
+  resolveInitialRoom(): RoomState | null;
   hud: CoopHud;
   bind(api: GameApi): void;
 }

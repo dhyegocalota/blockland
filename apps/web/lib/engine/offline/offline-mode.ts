@@ -11,6 +11,11 @@ export function createOfflineMode(runtime: GameRuntime): void {
 
   runtime.enterOfflineMode = function enterOfflineMode(): void {
     if (!runtime.creatures.length) runtime.populateCreatures();
+    // Seed the local sandbox from the lobby admin's live config (peace, blocked structures, pvp, chat,
+    // approval) when present, so an offline session starts under the same rules the admin set in the
+    // lobby instead of the hardcoded defaults. No lobby config -> keep the offline defaults.
+    const initialRoom = runtime.bridge?.resolveInitialRoom();
+    if (initialRoom) runtime.applyRoomState(initialRoom);
     runtime.grantOfflineAdmin();
   };
 }

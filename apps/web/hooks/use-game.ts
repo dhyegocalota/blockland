@@ -5,12 +5,12 @@
 // smaller hooks (chat, feed, room-admin). The returned object is spread into the component.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveTenant, type Brand } from '../lib/tenants';
-import { lobbyModeGates } from '../lib/lobby-modes';
+import { lobbyAdminPanelActive, lobbyModeGates, shouldPushToOnline, shouldPushToSolo } from '../lib/lobby-modes';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
 import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
-import type { Appearance, RosterEntry } from '../lib/coop';
+import type { Appearance, RoomState, RosterEntry } from '../lib/coop';
 import { randomLook } from '../lib/look';
 import { CHAT_FADE_MS } from '../lib/chat';
 import { diffPendingApprovals } from '../lib/feed';
@@ -100,6 +100,10 @@ export function useGame() {
 
   const gameApiRef = useRef<GameApi | null>(null);
   const soloRef = useRef(false);
+  // The lobby admin's live RoomState, captured for the engine bridge (read at game start). Holds the
+  // config only while the lobby-admin connection is live, null otherwise — the offline game seeds its
+  // room from it instead of the hardcoded defaults.
+  const lobbyRoomRef = useRef<RoomState | null>(null);
   const loginClearedRef = useRef(false);
   const suspendedRef = useRef(false);
   const seenApprovalsRef = useRef<Set<string>>(new Set());
@@ -113,7 +117,10 @@ export function useGame() {
     bans, setBans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
   } = useRoomAdmin(gameApiRef);
   const updateRequired = useUpdateCheck();
-  const lobbyAdminActive = (lobbyAdmin || lobbyModerator) && !solo && !offline && !started;
+  // The lobby-admin connection stays live for an admin/moderator until the game starts (the panel must
+  // keep working after they disable a mode), and never when the server is unreachable (it couldn't
+  // connect). It is no longer gated on `solo`, so disabling online never tears the panel's connection.
+  const lobbyAdminActive = lobbyAdminPanelActive({ isLobbyAdmin: lobbyAdmin || lobbyModerator, started }) && !offline;
   const lobby = useLobbyAdmin({
     tenant: brand ? brand.id : null,
     name,
@@ -124,6 +131,12 @@ export function useGame() {
     lines: chatLines, open: chatOpen, draft: chatDraft, setDraft: setChatDraft,
     inputRef: chatInputRef, openChat, sendChat, closeChat, pushChatLine,
   } = useChat({ gameApi: gameApiRef, chatEnabled: room.chatEnabled });
+
+  // Mirror the lobby admin's live room into a ref the engine bridge reads at game start: only while the
+  // lobby-admin connection is live (else null), so a non-admin offline game keeps the engine defaults.
+  useEffect(() => {
+    lobbyRoomRef.current = lobbyAdminActive ? lobby.room : null;
+  }, [lobbyAdminActive, lobby.room]);
 
   // Touch devices have no keyboard: the controls help must show the joystick/buttons, not key caps.
   useEffect(() => {
@@ -148,18 +161,20 @@ export function useGame() {
   }, [brand, offline, lobbyConnected, lobbyAdmin, lobby.room.onlineAllowed, lobby.room.offlineAllowed]);
 
   // Keep the chosen mode valid: if the picked mode is blocked, fall to the allowed one. When online is
-  // blocked the player is pushed to solo; when offline is blocked (and online is fine) to multiplayer.
+  // blocked the player is pushed to solo; when offline is blocked (and online is fine) to multiplayer. A
+  // lobby admin/moderator is never pushed — they bypass disabled modes and must keep the panel connected.
   useEffect(() => {
-    if (modeGates.online.disabled && !modeGates.offline.disabled && !soloRef.current) {
+    const isLobbyAdmin = lobbyAdmin || lobbyModerator;
+    if (shouldPushToSolo({ gates: modeGates, alreadySolo: soloRef.current, isLobbyAdmin })) {
       soloRef.current = true;
       setSolo(true);
       return;
     }
-    if (modeGates.offline.disabled && !modeGates.online.disabled && soloRef.current) {
+    if (shouldPushToOnline({ gates: modeGates, alreadySolo: soloRef.current, isLobbyAdmin })) {
       soloRef.current = false;
       setSolo(false);
     }
-  }, [modeGates]);
+  }, [modeGates, lobbyAdmin, lobbyModerator]);
 
   // First-time players get a random look (persisted so it stays stable); done after mount to avoid a
   // hydration mismatch on the color inputs.
@@ -200,6 +215,7 @@ export function useGame() {
       resolveAppearance: () => loadLook(),
       resolveClaim: (resolvedName) => resolveClaim(brand.id, resolvedName),
       resolveOffline: () => soloRef.current,
+      resolveInitialRoom: () => lobbyRoomRef.current,
       hud: {
         onState: (state) => {
           setNetState(state);

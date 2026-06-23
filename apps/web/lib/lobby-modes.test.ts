@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { lobbyModeGates, ModeBlockReason } from './lobby-modes';
+import {
+  lobbyAdminPanelActive, lobbyModeGates, ModeBlockReason, shouldPushToOnline, shouldPushToSolo,
+  type LobbyModeGates,
+} from './lobby-modes';
+
+const ALLOWED = { disabled: false, reason: ModeBlockReason.Allowed };
+function gatesWith({ online, offline }: { online: boolean; offline: boolean }): LobbyModeGates {
+  return {
+    online: online ? { disabled: true, reason: ModeBlockReason.AdminDisabled } : ALLOWED,
+    offline: offline ? { disabled: true, reason: ModeBlockReason.AdminDisabled } : ALLOWED,
+  };
+}
 
 describe('lobbyModeGates', () => {
   it('allows both modes when the tenant allows both and the server is reachable', () => {
@@ -76,5 +87,48 @@ describe('lobbyModeGates', () => {
       isAdmin: true,
     });
     expect(gates.online).toEqual({ disabled: true, reason: ModeBlockReason.Unreachable });
+  });
+});
+
+describe('lobbyAdminPanelActive', () => {
+  it('stays active for a lobby admin until the game starts', () => {
+    expect(lobbyAdminPanelActive({ isLobbyAdmin: true, started: false })).toBe(true);
+  });
+
+  it('drops once the game has started', () => {
+    expect(lobbyAdminPanelActive({ isLobbyAdmin: true, started: true })).toBe(false);
+  });
+
+  it('is never active for a non-admin', () => {
+    expect(lobbyAdminPanelActive({ isLobbyAdmin: false, started: false })).toBe(false);
+  });
+});
+
+describe('shouldPushToSolo', () => {
+  it('pushes a non-admin to solo when online is blocked and offline is allowed', () => {
+    const gates = gatesWith({ online: true, offline: false });
+    expect(shouldPushToSolo({ gates, alreadySolo: false, isLobbyAdmin: false })).toBe(true);
+  });
+
+  it('never pushes a lobby admin to solo even when online is blocked', () => {
+    const gates = gatesWith({ online: true, offline: false });
+    expect(shouldPushToSolo({ gates, alreadySolo: false, isLobbyAdmin: true })).toBe(false);
+  });
+
+  it('does not push when already solo', () => {
+    const gates = gatesWith({ online: true, offline: false });
+    expect(shouldPushToSolo({ gates, alreadySolo: true, isLobbyAdmin: false })).toBe(false);
+  });
+});
+
+describe('shouldPushToOnline', () => {
+  it('pulls a solo non-admin back to online when offline is blocked and online is allowed', () => {
+    const gates = gatesWith({ online: false, offline: true });
+    expect(shouldPushToOnline({ gates, alreadySolo: true, isLobbyAdmin: false })).toBe(true);
+  });
+
+  it('never moves a lobby admin', () => {
+    const gates = gatesWith({ online: false, offline: true });
+    expect(shouldPushToOnline({ gates, alreadySolo: true, isLobbyAdmin: true })).toBe(false);
   });
 });
