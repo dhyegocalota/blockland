@@ -1,6 +1,49 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createCoopWiring } from './coop-wiring';
+import { AIR } from '../constants';
 import type { GameRuntime } from '../runtime';
+
+function makeEditRuntime() {
+  const spawnPoof = vi.fn();
+  const runtime = {
+    state: { chatEnabled: true, player: { pos: { x: 0, y: 20, z: 0 }, vel: { set: () => {} }, bag: 0 } },
+    brand: { id: 'acme' },
+    coop: {},
+    bridge: { hud: {}, resolveName: () => 'A', bind: vi.fn() },
+    inBounds: () => true,
+    getVoxel: () => 3, // stone (#7f7f7f)
+    setVoxel: vi.fn(),
+    remeshRegion: vi.fn(),
+    spawnPoof,
+    isSolid: () => false,
+    inventory: { bank: vi.fn() },
+    updateHotbarCounts: vi.fn(),
+    updateStats: vi.fn(),
+  } as unknown as GameRuntime;
+  createCoopWiring(runtime);
+  return { runtime, spawnPoof };
+}
+
+describe('createCoopWiring applyRemoteEdit', () => {
+  it("puffs the broken block's colour when ANOTHER player breaks it, so the splash shows for everyone", () => {
+    const { runtime, spawnPoof } = makeEditRuntime();
+    runtime.applyRemoteEdit({ x: 5, y: 6, z: 7, id: AIR, mine: false });
+    expect(spawnPoof).toHaveBeenCalledTimes(1);
+    expect(spawnPoof.mock.calls[0][1]).toBe('#7f7f7f');
+  });
+
+  it('does not double-puff my own break (the local dig already puffed it)', () => {
+    const { runtime, spawnPoof } = makeEditRuntime();
+    runtime.applyRemoteEdit({ x: 5, y: 6, z: 7, id: AIR, mine: true });
+    expect(spawnPoof).not.toHaveBeenCalled();
+  });
+
+  it('does not puff a remote place (only breaks splash)', () => {
+    const { runtime, spawnPoof } = makeEditRuntime();
+    runtime.applyRemoteEdit({ x: 5, y: 6, z: 7, id: 3, mine: false });
+    expect(spawnPoof).not.toHaveBeenCalled();
+  });
+});
 
 function makeRuntime({ online, chatEnabled }: { online: boolean; chatEnabled: boolean }) {
   const onChat = vi.fn();

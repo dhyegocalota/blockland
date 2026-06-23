@@ -7,6 +7,7 @@ import { Vec3 } from '../vec3';
 import { t } from '../../i18n';
 import { debug } from '../../log';
 import { AIR, EYE_HEIGHT } from '../constants';
+import { blockById } from '../blocks';
 import { clearFeetAbove } from '../actors';
 import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
 import { debugReportRing, formatDebugReport } from '../debug-report';
@@ -30,11 +31,17 @@ export function createCoopWiring(runtime: GameRuntime): void {
 
   runtime.applyRemoteEdit = function applyRemoteEdit({ x, y, z, id, mine }: { x: number; y: number; z: number; id: number; mine: boolean }): void {
     if (!runtime.inBounds(x, y, z)) return;
+    const removed = runtime.getVoxel(x, y, z);
     // When the server confirms OUR own dig broke a block, that is when we collect it (digs are
     // server-authoritative now, so we wait for the break instead of applying it optimistically).
-    if (mine && id === AIR) {
-      const removed = runtime.getVoxel(x, y, z);
-      if (removed !== AIR) { player.bag += 1; runtime.inventory.bank(removed); runtime.updateHotbarCounts(); runtime.updateStats(); }
+    if (mine && id === AIR && removed !== AIR) {
+      player.bag += 1; runtime.inventory.bank(removed); runtime.updateHotbarCounts(); runtime.updateStats();
+    }
+    // Another player breaking a block: spawn the same colour-tinted puff they saw locally, so the break
+    // splash shows for everyone (we already puffed our own digs in breakBlock).
+    if (!mine && id === AIR && removed !== AIR) {
+      const block = blockById(removed);
+      if (block) runtime.spawnPoof(new Vec3(x + 0.5, y + 0.5, z + 0.5), block.color);
     }
     runtime.setVoxel(x, y, z, id);
     runtime.remeshRegion(x - 1, x + 1, z - 1, z + 1);
