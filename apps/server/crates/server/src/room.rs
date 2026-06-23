@@ -11,6 +11,7 @@ use protocol::{
     BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, HeartDropState, InventoryItem,
     PlayerId, PlayerMeta, PlayerState, ServerMsg,
 };
+use rand::Rng;
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
@@ -2215,10 +2216,11 @@ impl Room {
 
     /// Move a player to spawn with full health and re-baseline the anti-cheat (so the client's snap to
     /// spawn is accepted), telling them to reposition + refill. Used by the respawn request and on death.
-    /// The fixed spawn nudged to the nearest clear column over the live world, creatures and players,
-    /// so a player never materialises inside terrain/the monument/built blocks or on top of a monster
-    /// or another player. `exclude` drops one player (the respawning one) from the occupancy check so
-    /// they don't block their own slot. The returned y is the eye position (feet + PLAYER_EYE_HEIGHT).
+    /// A fresh random base within the spawn area (so players land scattered, not stacked on the centre)
+    /// nudged to the nearest clear column over the live world, creatures and players, so a player never
+    /// materialises inside terrain/the monument/built blocks or on top of a monster or another player.
+    /// `exclude` drops one player (the respawning one) from the occupancy check so they don't block
+    /// their own slot. The returned y is the eye position (feet + PLAYER_EYE_HEIGHT).
     fn spawn_slot(&self, exclude: Option<PlayerId>) -> [f32; 3] {
         let mut actors: Vec<[f32; 2]> = self
             .creatures
@@ -2231,7 +2233,8 @@ impl Room {
                 .filter(|p| Some(p.id) != exclude)
                 .map(|p| [p.x, p.z]),
         );
-        let (base_x, base_z) = World::spawn_base();
+        let mut rng = rand::thread_rng();
+        let (base_x, base_z) = sim::random_spawn_base(rng.gen(), rng.gen());
         let (x, z) = sim::find_spawn_slot(base_x, base_z, sim::SPAWN_SEARCH_RADIUS, |x, z| {
             sim::spawn_column_clear(x, z, sim::SPAWN_CLEARANCE_GAP, &self.world, &actors)
         });
@@ -3034,10 +3037,13 @@ mod tests {
         bite_setup(&mut room);
         room.players.get_mut(&1).unwrap().hp = 1;
         room.simulate_creatures(0.1);
-        let spawn = World::spawn();
+        let (bx, bz) = World::spawn_base();
         let p = room.players.get(&1).unwrap();
         assert_eq!(p.hp, MAX_HP);
-        assert_eq!(p.x, spawn[0]);
+        assert!(
+            within_spawn_area(p, bx, bz),
+            "the player respawns within the spawn area of the centre"
+        );
         assert!(
             (0..50)
                 .filter_map(|_| rx.try_recv_msg().ok())
@@ -3057,9 +3063,12 @@ mod tests {
             p.move_synced = true;
         }
         room.on_input(1, ClientMsg::Respawn);
-        let spawn = World::spawn();
+        let (bx, bz) = World::spawn_base();
         let p = room.players.get(&1).unwrap();
-        assert_eq!(p.x, spawn[0]);
+        assert!(
+            within_spawn_area(p, bx, bz),
+            "the respawn lands within the spawn area of the centre"
+        );
         assert_eq!(p.hp, MAX_HP);
         assert!(
             !p.move_synced,
@@ -3093,9 +3102,46 @@ mod tests {
             "the head cell is air"
         );
         assert!(
-            (fx - bx).abs().max((fz - bz).abs()) <= sim::SPAWN_SEARCH_RADIUS,
-            "the slot stays within a few blocks of the spawn"
+            (fx - bx).abs().max((fz - bz).abs())
+                <= sim::SPAWN_AREA_RADIUS + sim::SPAWN_SEARCH_RADIUS,
+            "the slot stays within the spawn area + search radius of the centre"
         );
+    }
+
+    fn within_spawn_area(player: &Player, base_x: i32, base_z: i32) -> bool {
+        let reach = sim::SPAWN_AREA_RADIUS + sim::SPAWN_SEARCH_RADIUS;
+        let dx = (player.x.floor() as i32 - base_x).abs();
+        let dz = (player.z.floor() as i32 - base_z).abs();
+        dx <= reach && dz <= reach
+    }
+
+    // Every respawn lands within the spawn area (random base + the slot nudge) AND on a clear column —
+    // even when the centre base column is filled solid, the random base + spiral never drop the player
+    // inside a block.
+    #[tokio::test]
+    async fn respawn_lands_within_the_spawn_area_on_a_clear_column() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        let (bx, bz) = World::spawn_base();
+        let surface = room.world.surface_y(bx, bz);
+        for y in (surface + 1)..(surface + 6) {
+            room.world.set(bx, y, bz, sim::STONE);
+        }
+        for _ in 0..40 {
+            room.on_input(1, ClientMsg::Respawn);
+            let p = room.players.get(&1).unwrap();
+            let feet = (p.y - PLAYER_EYE_HEIGHT).round() as i32;
+            let fx = p.x.floor() as i32;
+            let fz = p.z.floor() as i32;
+            assert!(
+                within_spawn_area(p, bx, bz),
+                "respawn stays within the spawn area"
+            );
+            assert!(
+                !room.world.is_solid(fx, feet, fz) && !room.world.is_solid(fx, feet + 1, fz),
+                "respawn lands on a clear column, not inside a filled spawn column"
+            );
+        }
     }
 
     // A buggy client that doesn't self-unstick: an EditBatch fills the player's own body column with

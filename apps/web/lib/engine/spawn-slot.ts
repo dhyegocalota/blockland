@@ -26,6 +26,24 @@ export function spawnColumnClear({
   return !actors.some((actor) => Math.hypot(actor.x - columnX, actor.z - columnZ) < clearanceGap);
 }
 
+// Pick a random base spawn column within `radius` of the centre column, given an injected `random()`
+// returning `[0, 1)` (one draw per axis). The slot search then starts here, so each spawn lands
+// scattered around the monument instead of always on the exact centre while still resolving to a clear
+// column. The `random` fn is injected so tests stay deterministic. Mirrors the Rust `random_spawn_base`.
+export function randomSpawnBase({
+  centerX, centerZ, radius, random,
+}: {
+  centerX: number;
+  centerZ: number;
+  radius: number;
+  random: () => number;
+}): { x: number; z: number } {
+  const span = radius * 2 + 1;
+  const offsetX = Math.floor(random() * span) - radius;
+  const offsetZ = Math.floor(random() * span) - radius;
+  return { x: centerX + offsetX, z: centerZ + offsetZ };
+}
+
 // Ring r visits its perimeter in a fixed order: each row dz from -r..=r, and within a row the two
 // edge columns dx = -r and dx = r (the top/bottom rows scan every dx from -r..=r). This exact order
 // is mirrored in Rust so both sides pick the same column for the same world.

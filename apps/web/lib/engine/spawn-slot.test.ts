@@ -1,6 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { findSpawnSlot, spawnColumnClear } from './spawn-slot';
-import { SPAWN_CLEARANCE_GAP } from './constants';
+import { findSpawnSlot, randomSpawnBase, spawnColumnClear } from './spawn-slot';
+import { SPAWN_AREA_RADIUS, SPAWN_CLEARANCE_GAP } from './constants';
+
+describe('randomSpawnBase', () => {
+  const centerX = 100;
+  const centerZ = 200;
+
+  it('stays within the spawn area of the centre for any draw', () => {
+    const draws = [0, 0.001, 0.25, 0.5, 0.75, 0.999];
+    draws.forEach((value) => {
+      const base = randomSpawnBase({ centerX, centerZ, radius: SPAWN_AREA_RADIUS, random: () => value });
+      expect(Math.abs(base.x - centerX)).toBeLessThanOrEqual(SPAWN_AREA_RADIUS);
+      expect(Math.abs(base.z - centerZ)).toBeLessThanOrEqual(SPAWN_AREA_RADIUS);
+    });
+  });
+
+  it('gives different bases for different draws', () => {
+    const low = randomSpawnBase({ centerX, centerZ, radius: SPAWN_AREA_RADIUS, random: () => 0.05 });
+    const high = randomSpawnBase({ centerX, centerZ, radius: SPAWN_AREA_RADIUS, random: () => 0.95 });
+    expect(low).not.toEqual(high);
+  });
+
+  it('finds a clear slot from a random base', () => {
+    const flatGround = (): number => 30;
+    const allAir = (): boolean => false;
+    const base = randomSpawnBase({ centerX, centerZ, radius: SPAWN_AREA_RADIUS, random: () => 0.5 });
+    const slot = findSpawnSlot({
+      baseX: base.x, baseZ: base.z, maxRadius: 6,
+      isClear: (x, z) => spawnColumnClear({
+        x, z, clearanceGap: SPAWN_CLEARANCE_GAP,
+        surfaceY: flatGround, isSolid: allAir, actors: [],
+      }),
+    });
+    expect(slot).toEqual({ x: base.x, z: base.z });
+  });
+});
 
 describe('findSpawnSlot', () => {
   it('returns the base when the base column is clear', () => {
