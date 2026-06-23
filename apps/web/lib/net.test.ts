@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNet, type NetState, type WebSocketLike } from './net';
+import { encodeSnapshot } from './snapshot-codec';
+import type { SnapshotMsg } from './net-snapshot';
 
 class MockWebSocket implements WebSocketLike {
   static instances: MockWebSocket[] = [];
 
   readyState: number = 0;
+  binaryType = '';
   sent: string[] = [];
   onopen: ((event: unknown) => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
+  onmessage: ((event: { data: string | ArrayBuffer | Blob }) => void) | null = null;
   onclose: ((event: unknown) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
 
@@ -31,6 +34,15 @@ class MockWebSocket implements WebSocketLike {
 
   receive(msg: unknown): void {
     this.onmessage?.({ data: JSON.stringify(msg) });
+  }
+
+  // The per-tick snapshot is the one binary frame; deliver it as the ArrayBuffer a real socket
+  // (binaryType='arraybuffer') hands the client, encoded with the shared codec.
+  receiveSnapshot(snapshot: SnapshotMsg): void {
+    const bytes = encodeSnapshot(snapshot);
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    this.onmessage?.({ data: buffer });
   }
 
   serverClose(): void {
@@ -116,19 +128,19 @@ describe('net client', () => {
     expect(states).toEqual(['connecting', 'online']);
   });
 
-  it('decodes a compact numeric snapshot into the named shape', () => {
+  it('decodes a binary snapshot frame into the named shape', () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
     socket.receive(welcome);
 
-    socket.receive({
+    socket.receiveSnapshot({
       t: 'snapshot',
-      k: 5,
-      p: [[1, 2.5, 3, 4, 0.1, 0.2, 30, 7, 3]],
-      c: [[9, 3, 10, 11, 12, 1.5, 2, 4]],
-      h: [[2, 20, 21, 22]],
+      tick: 5,
+      players: [{ id: 1, x: 2.5, y: 3, z: 4, yaw: 0.1, pitch: 0.2, ping_ms: 30, score: 7, hp: 3 }],
+      creatures: [{ id: 9, kind: 'slime', x: 10, y: 11, z: 12, yaw: 1.5, hp: 2, max_hp: 4 }],
+      hearts: [{ id: 2, x: 20, y: 21, z: 22 }],
     });
     expect(snapshots).toEqual([
       {
@@ -141,14 +153,20 @@ describe('net client', () => {
     ]);
   });
 
-  it('tolerates a snapshot from an older server with no heart-drop field', () => {
+  it('sets binaryType to arraybuffer so the snapshot frame arrives as bytes', () => {
+    const { client } = makeClient();
+    client.connect();
+    expect(MockWebSocket.instances[0].binaryType).toBe('arraybuffer');
+  });
+
+  it('decodes an empty binary snapshot', () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
     socket.receive(welcome);
 
-    socket.receive({ t: 'snapshot', k: 6, p: [], c: [] });
+    socket.receiveSnapshot({ t: 'snapshot', tick: 6, players: [], creatures: [], hearts: [] });
     expect(snapshots).toEqual([{ t: 'snapshot', tick: 6, players: [], creatures: [], hearts: [] }]);
   });
 
@@ -254,7 +272,7 @@ describe('net client', () => {
     for (let elapsed = 2_000; elapsed <= 12_000; elapsed += 2_000) {
       setClock(1_000 + elapsed);
       vi.advanceTimersByTime(2_000);
-      socket.receive({ t: 'snapshot', k: elapsed, p: [], c: [] });
+      socket.receiveSnapshot({ t: 'snapshot', tick: elapsed, players: [], creatures: [], hearts: [] });
     }
     expect(client.state).toBe('online');
     expect(MockWebSocket.instances).toHaveLength(1);

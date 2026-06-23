@@ -117,20 +117,21 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         }
     };
 
-    // Writer task: drains the room's outbound channel into the socket. A fan-out frame (snapshot,
-    // event, …) arrives already serialized — the room serialized it ONCE for the whole room — so this
-    // task sends it verbatim instead of re-encoding the same JSON per connection. Per-player messages
-    // still serialize here.
+    // Writer task: drains the room's outbound channel into the socket. A fan-out JSON frame (event, …)
+    // arrives already serialized — the room serialized it ONCE for the whole room — so this task sends it
+    // verbatim instead of re-encoding the same JSON per connection. The hot per-tick snapshot arrives as a
+    // pre-encoded binary blob and is sent as a WebSocket binary frame. Per-player messages serialize here.
     let writer = tokio::spawn(async move {
         while let Some(out) = conn_rx.recv().await {
-            let txt = match out {
-                Outbound::Frame(frame) => frame.to_string(),
+            let frame = match out {
+                Outbound::Binary(bytes) => Message::Binary(bytes.to_vec().into()),
+                Outbound::Frame(frame) => text_msg(frame.to_string()),
                 Outbound::One(msg) => match serde_json::to_string(&msg) {
-                    Ok(txt) => txt,
+                    Ok(txt) => text_msg(txt),
                     Err(_) => break,
                 },
             };
-            if sink.send(text_msg(txt)).await.is_err() {
+            if sink.send(frame).await.is_err() {
                 break;
             }
         }

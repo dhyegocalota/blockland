@@ -5,6 +5,8 @@
 
 import { debug, warn } from './log';
 import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from './engine/debug-report';
+import { decodeSnapshot } from './snapshot-codec';
+import type { SnapshotMsg } from './net-snapshot';
 import {
   adminApprove,
   adminReject,
@@ -61,64 +63,16 @@ export type NetState =
   | 'needs_login'
   | 'rejected';
 
-// The per-tick Snapshot travels as a compact numeric array (no field names) to keep it tiny; this
-// module decodes it back into the named shape the rest of the client consumes, so only net.ts knows
-// the index order and the kind table. Index order mirrors `PlayerState`/`CreatureState` in the Rust
-// protocol crate, and the kind table mirrors `CreatureKind::ALL` (the `index()` the server emits).
-const CREATURE_KINDS = ['pig', 'chicken', 'cow', 'slime', 'spider'] as const;
-
-export interface SnapshotPlayer {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  pitch: number;
-  ping_ms: number;
-  score: number;
-  hp: number;
-}
-
-export interface SnapshotCreature {
-  id: number;
-  kind: string;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  hp: number;
-  max_hp: number;
-}
-
-export interface SnapshotHeart {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface SnapshotMsg {
-  t: 'snapshot';
-  tick: number;
-  players: SnapshotPlayer[];
-  creatures: SnapshotCreature[];
-  hearts: SnapshotHeart[];
-}
-
-function decodeSnapshot(msg: Extract<ServerMsg, { t: 'snapshot' }>): SnapshotMsg {
-  const players: SnapshotPlayer[] = msg.p.map(
-    ([id, x, y, z, yaw, pitch, ping_ms, score, hp]) => ({ id, x, y, z, yaw, pitch, ping_ms, score, hp }),
-  );
-  const creatures: SnapshotCreature[] = msg.c.map(([id, kindIndex, x, y, z, yaw, hp, max_hp]) => {
-    const kind = CREATURE_KINDS[kindIndex];
-    if (!kind) throw new Error(`unknown creature kind index ${kindIndex}`);
-    return { id, kind, x, y, z, yaw, hp, max_hp };
-  });
-  // `h` (heart drops) is a newer snapshot field; a server one deploy behind omits it. Normalize the
-  // absent wire field to an empty list at this protocol boundary so an old server can't crash the client.
-  const hearts: SnapshotHeart[] = (msg.h ?? []).map(([id, x, y, z]) => ({ id, x, y, z }));
-  return { t: 'snapshot', tick: msg.k, players, creatures, hearts };
-}
+// The per-tick Snapshot is the one message that travels as a compact BINARY frame (every other message
+// stays JSON text). `snapshot-codec.ts` decodes the bytes back into the named shape the rest of the
+// client consumes; `net-snapshot.ts` owns the shared shapes + kind table. We re-export them here so the
+// engine keeps importing snapshot types from `net` unchanged.
+export type {
+  SnapshotPlayer,
+  SnapshotCreature,
+  SnapshotHeart,
+  SnapshotMsg,
+} from './net-snapshot';
 
 type WelcomeMsg = Extract<ServerMsg, { t: 'welcome' }>;
 type EditMsg = Extract<ServerMsg, { t: 'edit' }>;
@@ -161,8 +115,13 @@ export interface WebSocketLike {
   send(data: string): void;
   close(): void;
   readyState: number;
+  // 'arraybuffer' so the per-tick snapshot binary frame arrives as an ArrayBuffer we can decode directly,
+  // without an async Blob read. Set on every socket the moment it is created.
+  binaryType: string;
   onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: string }) => void) | null;
+  // Text frames carry a JSON string; the snapshot binary frame carries an ArrayBuffer (or a Blob if a
+  // socket ignored `binaryType`). `handleMessage` branches on the runtime type.
+  onmessage: ((event: { data: string | ArrayBuffer | Blob }) => void) | null;
   onclose: ((event: unknown) => void) | null;
   onerror: ((event: unknown) => void) | null;
 }
@@ -360,6 +319,31 @@ export function createNet(opts: NetOptions): NetClient {
     return Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz) * 100) / 100;
   }
 
+  // A binary frame is always the per-tick snapshot (the only message that goes binary); decode the bytes
+  // and feed the same onSnapshot path the text path used to. A Blob (a socket that ignored `binaryType`)
+  // is read to an ArrayBuffer first.
+  function handleBinary(buffer: ArrayBuffer): void {
+    lastMessageAt = now();
+    const snapshot: SnapshotMsg = decodeSnapshot(buffer);
+    snapshotCount += 1;
+    if (snapshotCount === 1 || snapshotCount % SNAPSHOT_LOG_EVERY === 0) {
+      debug('net', 'snapshot', { count: snapshotCount, tick: snapshot.tick, players: snapshot.players.length, creatures: snapshot.creatures.length });
+    }
+    opts.handlers.onSnapshot?.(snapshot);
+  }
+
+  function handleData(data: string | ArrayBuffer | Blob): void {
+    if (data instanceof ArrayBuffer) {
+      handleBinary(data);
+      return;
+    }
+    if (typeof data !== 'string') {
+      data.arrayBuffer().then(handleBinary);
+      return;
+    }
+    handleMessage(data);
+  }
+
   function handleMessage(data: string): void {
     lastMessageAt = now();
     const msg = parseServerMsg(data);
@@ -370,14 +354,6 @@ export function createNet(opts: NetOptions): NetClient {
       startLiveness();
       debug('net', 'welcome', { you: msg.you, world: msg.world, version: msg.version });
       opts.handlers.onWelcome?.(msg);
-      return;
-    }
-    if (msg.t === 'snapshot') {
-      snapshotCount += 1;
-      if (snapshotCount === 1 || snapshotCount % SNAPSHOT_LOG_EVERY === 0) {
-        debug('net', 'snapshot', { count: snapshotCount, tick: msg.k, players: msg.p.length, creatures: msg.c.length });
-      }
-      opts.handlers.onSnapshot?.(decodeSnapshot(msg));
       return;
     }
     if (msg.t === 'edit') {
@@ -508,6 +484,7 @@ export function createNet(opts: NetOptions): NetClient {
     debug('net', 'opening socket', { url: opts.url, tenant: opts.tenant, attempt, waitingApproval });
     const next = socketFactory(opts.url);
     socket = next;
+    next.binaryType = 'arraybuffer';
     next.onopen = () => {
       debug('net', 'socket open, joining', { name: opts.name, world: opts.world });
       rawSend(encodeClientMsg(join({
@@ -520,7 +497,7 @@ export function createNet(opts: NetOptions): NetClient {
         claim: opts.claim,
       })));
     };
-    next.onmessage = (event) => handleMessage(event.data);
+    next.onmessage = (event) => handleData(event.data);
     next.onclose = () => handleClose();
     next.onerror = () => debug('net', 'socket error');
   }

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{
-    BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, HeartDropState, InventoryItem,
-    PlayerId, PlayerMeta, PlayerState, ServerMsg,
+    snapshot_codec::encode_snapshot, BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp,
+    HeartDropState, InventoryItem, PlayerId, PlayerMeta, PlayerState, ServerMsg,
 };
 use rand::Rng;
 use sim::World;
@@ -81,13 +81,14 @@ pub struct Appearance {
     pub hair: String,
 }
 
-/// What a connection's writer task receives. A fan-out message (snapshot, event, roster, …) is
-/// serialized to JSON ONCE by the room and shared as a `Frame` across every player, so the per-tick
-/// snapshot is encoded once for the whole room instead of once per connection. A per-player message
-/// (welcome, inventory, error, …) travels as `One` and is serialized by the writer task that owns it.
+/// What a connection's writer task receives. A fan-out JSON message (event, roster, …) is serialized
+/// ONCE by the room and shared as a `Frame` across every player. The hot per-tick snapshot is encoded
+/// ONCE to a compact binary blob and shared as `Binary`, sent as a WebSocket binary frame. A per-player
+/// message (welcome, inventory, error, …) travels as `One` and is serialized by the writer task itself.
 pub enum Outbound {
     One(ServerMsg),
     Frame(Arc<str>),
+    Binary(Arc<[u8]>),
 }
 
 /// Send one per-player message to a connection, dropping it if the channel is full or closed (a slow
@@ -2232,13 +2233,7 @@ impl Room {
                 )
             })
             .collect();
-        let snap = ServerMsg::Snapshot {
-            tick: self.tick,
-            players: states,
-            creatures,
-            hearts,
-        };
-        self.broadcast(&snap);
+        self.broadcast_snapshot(self.tick, &states, &creatures, &hearts);
 
         if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
             self.publish_stats(now);
@@ -2278,6 +2273,22 @@ impl Room {
         };
         for p in self.players.values() {
             let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
+        }
+    }
+
+    /// Fan the hot per-tick snapshot out to every player. Encoded ONCE to a compact binary blob (shared
+    /// as an `Arc<[u8]>` and sent as a WebSocket binary frame) so the dominant per-tick cost is paid a
+    /// single time for the whole room. `try_send` is non-blocking, so a slow client never stalls the tick.
+    fn broadcast_snapshot(
+        &self,
+        tick: u64,
+        players: &[PlayerState],
+        creatures: &[CreatureState],
+        hearts: &[HeartDropState],
+    ) {
+        let bytes: Arc<[u8]> = encode_snapshot(tick, players, creatures, hearts).into();
+        for p in self.players.values() {
+            let _ = p.conn.try_send(Outbound::Binary(bytes.clone()));
         }
     }
 
@@ -2875,6 +2886,9 @@ mod tests {
         match out {
             Outbound::One(msg) => msg,
             Outbound::Frame(frame) => serde_json::from_str(&frame).expect("valid broadcast frame"),
+            Outbound::Binary(_) => {
+                panic!("binary frames carry the snapshot only; assert on its bytes via broadcast_snapshot")
+            }
         }
     }
 
@@ -4162,20 +4176,15 @@ mod tests {
 
     #[tokio::test]
     async fn broadcast_serializes_once_and_sends_identical_bytes_to_every_player() {
-        // The single-serialize win: the room must encode a fan-out message ONCE and send the same frame
-        // to every connection, and those bytes must be byte-for-byte what the old per-connection
-        // `serde_json::to_string(&msg)` produced — same wire format, just encoded one time for the room.
+        // The single-serialize win for JSON fan-out messages (events, roster, …): the room must encode a
+        // fan-out message ONCE and send the same shared frame to every connection, byte-for-byte what the
+        // old per-connection `serde_json::to_string(&msg)` produced — same wire format, encoded one time.
         let mut room = test_room().await;
         let mut rx_a = add_player(&mut room, 1, false);
         let mut rx_b = add_player(&mut room, 2, false);
-        let snap = ServerMsg::Snapshot {
-            tick: 7,
-            players: vec![PlayerState(1, 1.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)],
-            creatures: vec![CreatureState(50, 4, -3.0, 63.5, 8.0, 0.2, 2, 2)],
-            hearts: vec![HeartDropState(200, -5.0, 63.5, 0.0)],
-        };
-        let expected = serde_json::to_string(&snap).unwrap();
-        room.broadcast(&snap);
+        let msg = ServerMsg::Left { id: 9 };
+        let expected = serde_json::to_string(&msg).unwrap();
+        room.broadcast(&msg);
 
         let Outbound::Frame(frame_a) = rx_a.try_recv().unwrap() else {
             panic!("a fan-out message must arrive as a pre-serialized Frame");
@@ -4192,6 +4201,37 @@ mod tests {
         assert!(
             Arc::ptr_eq(&frame_a, &frame_b),
             "the frame is shared, not re-serialized per player"
+        );
+    }
+
+    #[tokio::test]
+    async fn broadcast_snapshot_encodes_once_to_binary_and_shares_it_with_every_player() {
+        // The hot per-tick snapshot goes out as a single binary blob, encoded ONCE for the whole room and
+        // shared (an `Arc<[u8]>`) across every connection — sent as a WebSocket binary frame, not JSON.
+        let mut room = test_room().await;
+        let mut rx_a = add_player(&mut room, 1, false);
+        let mut rx_b = add_player(&mut room, 2, false);
+        let players = vec![PlayerState(1, 1.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)];
+        let creatures = vec![CreatureState(50, 4, -3.0, 63.5, 8.0, 0.2, 2, 2)];
+        let hearts = vec![HeartDropState(200, -5.0, 63.5, 0.0)];
+        let expected = encode_snapshot(7, &players, &creatures, &hearts);
+        room.broadcast_snapshot(7, &players, &creatures, &hearts);
+
+        let Outbound::Binary(bytes_a) = rx_a.try_recv().unwrap() else {
+            panic!("the snapshot must arrive as a pre-encoded Binary blob");
+        };
+        let Outbound::Binary(bytes_b) = rx_b.try_recv().unwrap() else {
+            panic!("the snapshot must arrive as a pre-encoded Binary blob");
+        };
+        assert_eq!(
+            &*bytes_a,
+            expected.as_slice(),
+            "bytes must equal the codec output"
+        );
+        assert_eq!(bytes_a, bytes_b, "every player gets the SAME bytes");
+        assert!(
+            Arc::ptr_eq(&bytes_a, &bytes_b),
+            "the snapshot blob is shared, not re-encoded per player"
         );
     }
 

@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub mod snapshot_codec;
+
 pub type PlayerId = u32;
 
 /// Messages the client sends to the server.
