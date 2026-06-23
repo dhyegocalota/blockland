@@ -14,6 +14,7 @@ import { type VoxelHit, raycastVoxel as ddaRaycast } from './raycast';
 import { cellOverlapsActor } from './actors';
 import { canPlaceSelected as canPlaceOffline, shouldSpendBlock } from './place-eligibility';
 import { chooseCoopTarget, chooseLocalTarget } from './attack-target';
+import { DebugEventDir, DebugEventKind, debugReportRing } from './debug-report';
 import { chipTap, type Chip } from './dig-progress';
 import type { GameRuntime } from './runtime';
 
@@ -38,6 +39,13 @@ export function createBlockActions(runtime: GameRuntime): void {
       const target = chooseCoopTarget({
         playerT: playerHit ? playerHit.t : null, creatureT: serverHit ? serverHit.t : null,
         blockDistance, hasBlock: !!block,
+      });
+      // Record every break/hit attempt so a "can't break" report shows what the aim found vs the reach.
+      const aim = runtime.state.player.pos;
+      debugReportRing.push({
+        dir: DebugEventDir.State, kind: DebugEventKind.Action,
+        pos: { x: aim.x, y: aim.y, z: aim.z },
+        text: `target=${target ?? 'none'} block=${block ? blockDistance.toFixed(1) : 'no'} creature=${serverHit ? serverHit.t.toFixed(1) : 'no'} player=${playerHit ? playerHit.t.toFixed(1) : 'no'} reach=${REACH}`,
       });
       if (target === 'player' && playerHit) { runtime.attackRemotePlayer(playerHit.player); return; }
       if (target === 'creature' && serverHit) { runtime.hitServerCreature(serverHit.creature); return; }

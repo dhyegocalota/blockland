@@ -28,6 +28,9 @@ export enum DebugEventKind {
   Respawn = 'respawn',
   Health = 'health',
   NetState = 'net_state',
+  // A primary action (break/hit) was attempted: records what the aim found (block/creature/none) so a
+  // report taken while "can't break" shows whether nothing was in reach vs a send that was dropped.
+  Action = 'action',
 }
 
 export interface Vec3Like {
