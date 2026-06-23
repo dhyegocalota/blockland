@@ -57,3 +57,46 @@ function onlineBlockReason({
   if (!allowed && !isAdmin) return ModeBlockReason.AdminDisabled;
   return ModeBlockReason.Allowed;
 }
+
+// Whether the headless lobby-admin connection (and its panel) should stay live: a logged-in
+// admin/moderator keeps it on the start screen until the game actually starts, regardless of which
+// modes the tenant disabled — they need the panel to re-enable a mode or change other settings, and
+// dropping the connection would blank the live config the panel edits.
+export function lobbyAdminPanelActive({
+  isLobbyAdmin,
+  started,
+}: {
+  isLobbyAdmin: boolean;
+  started: boolean;
+}): boolean {
+  return isLobbyAdmin && !started;
+}
+
+// The lobby auto-push that keeps a player's chosen mode valid must never move a lobby admin/moderator:
+// they bypass disabled modes (so they can re-enable them) and forcing them to solo would tear down the
+// lobby-admin connection. A non-admin is still pushed to the only mode the tenant allows.
+export function shouldPushToSolo({
+  gates,
+  alreadySolo,
+  isLobbyAdmin,
+}: {
+  gates: LobbyModeGates;
+  alreadySolo: boolean;
+  isLobbyAdmin: boolean;
+}): boolean {
+  if (isLobbyAdmin) return false;
+  return gates.online.disabled && !gates.offline.disabled && !alreadySolo;
+}
+
+export function shouldPushToOnline({
+  gates,
+  alreadySolo,
+  isLobbyAdmin,
+}: {
+  gates: LobbyModeGates;
+  alreadySolo: boolean;
+  isLobbyAdmin: boolean;
+}): boolean {
+  if (isLobbyAdmin) return false;
+  return gates.offline.disabled && !gates.online.disabled && alreadySolo;
+}
