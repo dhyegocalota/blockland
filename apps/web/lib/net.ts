@@ -180,6 +180,28 @@ export interface NetOptions {
   socketFactory?: (url: string) => WebSocketLike;
   now?: () => number;
   reconnect?: boolean;
+  // Source of browser connectivity events (default: window online/offline). The browser flips these the
+  // instant the NIC drops/returns — far faster than waiting out the liveness watchdog. Injectable so the
+  // reconnect reaction is unit-testable without a DOM.
+  connectivity?: Connectivity;
+}
+
+export interface Connectivity {
+  subscribe(onOffline: () => void, onOnline: () => void): () => void;
+}
+
+function windowConnectivity(): Connectivity {
+  return {
+    subscribe(onOffline, onOnline) {
+      if (typeof window === 'undefined') return () => {};
+      window.addEventListener('offline', onOffline);
+      window.addEventListener('online', onOnline);
+      return () => {
+        window.removeEventListener('offline', onOffline);
+        window.removeEventListener('online', onOnline);
+      };
+    },
+  };
 }
 
 export interface NetClient {
@@ -235,6 +257,8 @@ export function createNet(opts: NetOptions): NetClient {
   const socketFactory = opts.socketFactory ?? defaultSocketFactory;
   const now = opts.now ?? Date.now;
   const reconnect = opts.reconnect ?? true;
+  const connectivity = opts.connectivity ?? windowConnectivity();
+  let connectivityUnsub: (() => void) | null = null;
 
   let socket: WebSocketLike | null = null;
   let state: NetState = 'offline';
@@ -274,8 +298,33 @@ export function createNet(opts: NetOptions): NetClient {
     livenessTimer = null;
   }
 
+  // Abandon the current socket and drive the reconnect transition ourselves. A dead socket while OFFLINE
+  // often never fires `onclose` (the close handshake can't complete), so we can't wait for it — detach the
+  // corpse and run the close path directly. No-op unless we currently believe we're online.
+  function dropForReconnect(reason: string): void {
+    if (state !== 'online') return;
+    warn('net', 'forcing reconnect', { reason });
+    const dead = socket;
+    if (dead) dead.onclose = null;
+    try {
+      dead?.close();
+    } catch {
+      /* already gone */
+    }
+    handleClose();
+  }
+
+  // The browser came back online: don't sit out the backoff, retry the connection right now.
+  function reconnectNow(): void {
+    if (state !== 'reconnecting') return;
+    clearReconnectTimer();
+    attempt = 0;
+    open();
+  }
+
   // Watch for a silently-dead socket: once online, if no server message arrives within the timeout the
-  // link is gone, so close the socket to trigger the reconnect path (backoff + rejoin + reconnecting UI).
+  // link is gone, so reconnect (backoff + rejoin + reconnecting UI). The browser `offline` event usually
+  // beats this, but covers half-open sockets that drop without the NIC going down.
   function startLiveness(): void {
     clearLivenessTimer();
     lastMessageAt = now();
@@ -283,17 +332,7 @@ export function createNet(opts: NetOptions): NetClient {
       if (state !== 'online') return;
       if (lastMessageAt === null) return;
       if (now() - lastMessageAt <= LIVENESS_TIMEOUT_MS) return;
-      warn('net', 'liveness timeout, forcing reconnect', { silentMs: now() - lastMessageAt });
-      // A dead socket while OFFLINE often never fires `onclose` (the close handshake can't complete), so
-      // we can't wait for it — detach the corpse and drive the reconnect transition ourselves.
-      const dead = socket;
-      if (dead) dead.onclose = null;
-      try {
-        dead?.close();
-      } catch {
-        /* already gone */
-      }
-      handleClose();
+      dropForReconnect(`silent ${now() - lastMessageAt}ms`);
     }, LIVENESS_CHECK_MS);
   }
 
@@ -490,11 +529,18 @@ export function createNet(opts: NetOptions): NetClient {
       closedByUser = false;
       terminalReason = null;
       attempt = 0;
+      connectivityUnsub?.();
+      connectivityUnsub = connectivity.subscribe(
+        () => dropForReconnect('browser offline'),
+        () => reconnectNow(),
+      );
       setState('connecting');
       open();
     },
     close(): void {
       closedByUser = true;
+      connectivityUnsub?.();
+      connectivityUnsub = null;
       clearReconnectTimer();
       clearLivenessTimer();
       socket?.close();

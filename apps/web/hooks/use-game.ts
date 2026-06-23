@@ -268,11 +268,14 @@ export function useGame() {
       if (chatOpen) return;
       const typingTarget = event.target instanceof HTMLInputElement;
       if (typingTarget) return;
+      // In-game: Tab toggles the online-players list (a scoreboard), like an FPS. On the start screen
+      // (not started) Tab is left alone so it still navigates the form.
+      if (event.code === 'Tab' && started) { event.preventDefault(); setRosterOpen((open) => !open); return; }
       if (event.code === 'Enter' || event.code === 'KeyT') { event.preventDefault(); openChat(); }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chatOpen, openChat]);
+  }, [chatOpen, openChat, started]);
 
   useEffect(() => {
     if (!debugOpen) return;

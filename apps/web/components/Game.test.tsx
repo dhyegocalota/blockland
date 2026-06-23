@@ -119,6 +119,21 @@ describe('Game', () => {
     expect(badge?.className).toBe('offline');
   });
 
+  it('shows my own pvp kills in the HUD when pvp is on, and hides the stat when off', () => {
+    const pvpRoom = { peace: true, blockedStructures: [], pvp: true, chatEnabled: false, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true };
+    useGame.mockReturnValue(gameState({
+      netState: 'online', connectKey: null, room: pvpRoom,
+      roster: [{ id: 1, name: 'Kid', self: true, admin: false, moderator: false, pvpKills: 4, away: false }],
+    }));
+    render(<Game />);
+    expect(document.getElementById('kills')?.textContent).toContain('4');
+
+    cleanup();
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
+    render(<Game />);
+    expect(document.getElementById('kills')).toBeNull();
+  });
+
   it('shows the live feed approval notification with approve/reject/ban for an in-game admin', () => {
     const approvePlayer = vi.fn();
     useGame.mockReturnValue(

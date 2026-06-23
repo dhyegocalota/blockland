@@ -56,6 +56,7 @@ function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
   const states: NetState[] = [];
   const snapshots: unknown[] = [];
   let clock = 1_000;
+  const net = { offline: () => {}, online: () => {} };
   const client = createNet({
     url: 'ws://test',
     tenant: 'acme',
@@ -71,12 +72,20 @@ function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
     },
     socketFactory: (url) => new MockWebSocket(url),
     now: () => clock,
+    connectivity: {
+      subscribe: (onOffline, onOnline) => {
+        net.offline = onOffline;
+        net.online = onOnline;
+        return () => { net.offline = () => {}; net.online = () => {}; };
+      },
+    },
     ...overrides,
   });
   return {
     client,
     states,
     snapshots,
+    net,
     setClock: (value: number) => {
       clock = value;
     },
@@ -189,6 +198,33 @@ describe('net client', () => {
     socket.serverClose();
     vi.runAllTimers();
     expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it('the browser going offline reconnects immediately, not after the watchdog timeout', () => {
+    const { client, net } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+    expect(client.state).toBe('online');
+
+    // The browser flips offline the instant the NIC drops — no clock advance, no waiting.
+    net.offline();
+    expect(socket.readyState).toBe(3);
+    expect(client.state).toBe('reconnecting');
+  });
+
+  it('the browser coming back online retries the connection right away (skips the backoff wait)', () => {
+    const { client, net } = makeClient();
+    client.connect();
+    MockWebSocket.instances[0].open();
+    MockWebSocket.instances[0].receive(welcome);
+
+    net.offline();
+    expect(client.state).toBe('reconnecting');
+    // Without the online event we'd wait out the backoff; the event reopens at once.
+    net.online();
+    expect(MockWebSocket.instances).toHaveLength(2);
   });
 
   it('a silently dead socket (no messages) is force-reconnected by the liveness watchdog', () => {

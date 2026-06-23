@@ -97,6 +97,8 @@ export default function Game() {
   const bannerKey = netState ? BANNER_KEYS[netState] : null;
   const severe = netState ? SEVERE_STATES.includes(netState) : false;
   const showPing = netState === 'online';
+  const self = roster.find((player) => player.self);
+  const myKills = self ? self.pvpKills : 0;
   // The friendly connecting/reconnecting overlay owns that status; suppress the small banner while it is
   // up so a drop reads as one clear "reconnecting…" panel over the live world, not a doubled message.
   const connectingOverlayShown = !!connectKey && !severe && netState !== 'needs_approval';
@@ -125,6 +127,7 @@ export default function Game() {
           <span className="stat" id="hearts">❤️❤️❤️</span>
           <span className="stat" id="stars">⭐ 0</span>
           <span className="stat" id="bag">🎒 0</span>
+          {room.pvp && <span className="stat" id="kills">{PVP_KILL_BADGE} {myKills}</span>}
           {showPing && <span className="stat" id="ping">{t('coop.ping', { ping })}</span>}
         </div>
         <div id="crosshair"></div>
