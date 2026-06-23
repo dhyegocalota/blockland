@@ -1,9 +1,8 @@
 services:
   game-server:
     build:
-      # Repo root so the Dockerfile can COPY .git and bake the deploy SHA into the backend version.
-      context: .
-      dockerfile: apps/server/Dockerfile
+      context: ./apps/server
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     environment:
