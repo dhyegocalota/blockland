@@ -228,10 +228,25 @@ struct HeartDrop {
     spawned_at: Instant,
 }
 
-/// The server build identifier shown in the in-game debug panel: the deploy's `GIT_SHA` when set,
-/// otherwise the crate version baked in at compile time.
+/// The server build identifier shown in the in-game debug panel — kept the SAME TYPE as the frontend's
+/// (a short git SHA): the deploy's `GIT_SHA` env when set, else the SHA baked at build time (build.rs),
+/// else the crate version as a last resort.
 fn server_version() -> String {
-    std::env::var("GIT_SHA").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+    resolve_server_version(
+        std::env::var("GIT_SHA").ok().as_deref(),
+        option_env!("BUILD_GIT_SHA"),
+        env!("CARGO_PKG_VERSION"),
+    )
+}
+
+fn resolve_server_version(git_sha_env: Option<&str>, build_sha: Option<&str>, crate_version: &str) -> String {
+    if let Some(sha) = git_sha_env.filter(|s| !s.is_empty()) {
+        return sha.to_string();
+    }
+    if let Some(sha) = build_sha.filter(|s| !s.is_empty()) {
+        return sha.to_string();
+    }
+    crate_version.to_string()
 }
 
 /// Which per-tenant moderation flag a write-through targets.
@@ -2472,6 +2487,15 @@ mod tests {
     use crate::db::Db;
     use crate::hub::Hub;
     use std::sync::Arc;
+
+    #[test]
+    fn server_version_prefers_env_then_baked_sha_then_crate() {
+        assert_eq!(resolve_server_version(Some("abc1234"), Some("def5678"), "0.1.0"), "abc1234");
+        assert_eq!(resolve_server_version(None, Some("def5678"), "0.1.0"), "def5678");
+        assert_eq!(resolve_server_version(Some(""), Some("def5678"), "0.1.0"), "def5678");
+        assert_eq!(resolve_server_version(None, None, "0.1.0"), "0.1.0");
+        assert_eq!(resolve_server_version(None, Some(""), "0.1.0"), "0.1.0");
+    }
 
     /// A room wired to a fresh memory-db hub. The command receiver is owned by the room; tests drive
     /// it by calling its handlers directly rather than through the channel.
