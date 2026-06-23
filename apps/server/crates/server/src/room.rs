@@ -53,9 +53,12 @@ const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
 const PICKUP_RADIUS: f32 = 1.4;
 const HEART_TTL: Duration = Duration::from_millis(20_000);
 const HURT_RANGE: f32 = 1.2;
-const HURT_LEVEL_SLACK: f32 = 0.5;
+// How far above/below the player's feet a creature can be and still bite. Symmetric + generous to match
+// the offline rule (HIT_VERTICAL_GAP on the web): a ground creature whose center sits ~0.5 below the
+// feet of a player standing on top of a surface block was right on the old tight 0.5 lower bound and so
+// mostly missed — "the monsters aren't at the right height to attack".
+const HURT_VERTICAL_GAP: f32 = 1.6;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
-const PLAYER_BODY_HEIGHT: f32 = 1.7;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
 const DIG_HITS: u8 = 2;
 // Minimum gap between two accepted primary actions (dig / creature hit / pvp attack) from one player.
@@ -2077,8 +2080,7 @@ impl Room {
             let feet = p.y - PLAYER_EYE_HEIGHT;
             let bitten = biters.iter().any(|c| {
                 ((p.x - c[0]).powi(2) + (p.z - c[2]).powi(2)).sqrt() < HURT_RANGE
-                    && c[1] >= feet - HURT_LEVEL_SLACK
-                    && c[1] <= feet + PLAYER_BODY_HEIGHT
+                    && (c[1] - feet).abs() < HURT_VERTICAL_GAP
             });
             if !bitten {
                 continue;
@@ -2743,6 +2745,33 @@ mod tests {
         bite_setup(&mut room);
         room.simulate_creatures(0.1);
         assert_eq!(room.players.get(&1).unwrap().hp, MAX_HP - 1);
+    }
+
+    #[tokio::test]
+    async fn a_creature_a_block_below_the_players_feet_still_bites() {
+        // The real-world miss: a ground creature's center sits a block below the feet of a player
+        // standing on top of a surface block. The old tight 0.5 lower bound dropped the bite; the
+        // symmetric gap (matching offline) lands it.
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        room.peace = false;
+        let spider = Creature::spawn(99, CreatureKind::Spider, 40.0, 40.0, |x, z| {
+            room.world.surface_y(x, z)
+        });
+        let creature_y = spider.pos[1];
+        let p = room.players.get_mut(&1).unwrap();
+        p.x = 40.0;
+        p.z = 40.0;
+        p.y = creature_y + 1.0 + PLAYER_EYE_HEIGHT;
+        p.hurt_at = Instant::now() - Duration::from_secs(5);
+        room.creatures.clear();
+        room.creatures.push(spider);
+        room.simulate_creatures(0.05);
+        assert_eq!(
+            room.players.get(&1).unwrap().hp,
+            MAX_HP - 1,
+            "a creature a block below the feet still bites"
+        );
     }
 
     // End-to-end of the co-op damage the players keep reporting as broken: a player who synced onto open
