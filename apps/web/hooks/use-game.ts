@@ -20,6 +20,7 @@ import { useRoomAdmin } from './use-room-admin';
 import { useLobbyAdmin } from './use-lobby-admin';
 import { useUpdateCheck } from './use-update-check';
 import type { NetState } from '../lib/net';
+import { connectStatusKey, isInteractive } from '../lib/engine/readiness';
 
 const NAME_KEY = 'bl-name';
 const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
@@ -90,6 +91,11 @@ export function useGame() {
   const [isTouch, setIsTouch] = useState(false);
   const [infiniteResources, setInfiniteResources] = useState(true);
   const [started, setStarted] = useState(false);
+  // Online readiness signals for the connecting overlay: Welcome received (socket acknowledged the
+  // join) and the first Snapshot applied (the world is actually live). Until both land, early
+  // break/build/hit clicks would be silently dropped, so the overlay gates input on them.
+  const [welcomed, setWelcomed] = useState(false);
+  const [firstSnapshot, setFirstSnapshot] = useState(false);
 
   const gameApiRef = useRef<GameApi | null>(null);
   const soloRef = useRef(false);
@@ -194,10 +200,14 @@ export function useGame() {
       resolveClaim: (resolvedName) => resolveClaim(brand.id, resolvedName),
       resolveOffline: () => soloRef.current,
       hud: {
-        onState: (state) => setNetState(state),
+        onState: (state) => {
+          setNetState(state);
+          if (state === 'online') setWelcomed(true);
+          debug('coop', 'net state', { state });
+        },
         onPing: (value) => setPing(value),
         onChat: (from, text) => pushChatLine(from, text),
-        onCount: (count) => setOnline(count),
+        onCount: (count) => { setFirstSnapshot(true); setOnline(count); },
         onRoster: (players) => setRoster(players),
         onEvent: (event) => {
           if (event.kind === 'reset_scores') gameApiRef.current?.chime();
@@ -212,14 +222,17 @@ export function useGame() {
           setRoom(state);
         },
         onPendingApprovals: (pending) => {
-          diffPendingApprovals(seenApprovalsRef.current, pending).forEach((event) => pushFeedEntry(event));
+          const fresh = diffPendingApprovals(seenApprovalsRef.current, pending);
+          fresh.forEach((event) => pushFeedEntry(event));
           seenApprovalsRef.current = new Set(pending.map((entry) => entry.accountId));
           setPendingApprovals(pending);
+          debug('coop', 'pending approvals (hud)', { count: pending.length, fresh: fresh.length });
         },
         onBans: (bans) => setBans(bans),
         onError: (code) => {
           const key = AUTH_ERROR_KEYS[code];
           if (key) setAuthToast(t(key));
+          debug('coop', 'error (hud)', { code, toast: key ? true : false });
         },
       },
       bind: (api) => { gameApiRef.current = api; },
@@ -299,9 +312,15 @@ export function useGame() {
   // login is still needed, so this bubble-phase listener only fires when the engine truly boots.
   useEffect(() => {
     if (!brand) return;
+    const tenantId = brand.id;
     const playBtn = document.getElementById('playBtn');
     if (!playBtn) return;
-    function onStart(): void { setStarted(true); }
+    function onStart(): void {
+      setStarted(true);
+      setWelcomed(false);
+      setFirstSnapshot(false);
+      debug('coop', 'mode entry', { mode: soloRef.current ? 'offline' : 'online', name: loadName().trim(), tenant: tenantId });
+    }
     playBtn.addEventListener('click', onStart);
     return () => playBtn.removeEventListener('click', onStart);
   }, [brand]);
@@ -426,10 +445,17 @@ export function useGame() {
     setLoggedIn(false);
   }, []);
 
+  // Single-player (chosen solo or server-unreachable) is interactive the moment the engine starts;
+  // online waits for the socket + Welcome + first snapshot. The overlay reads connectKey for its live
+  // status text and only shows while connecting (key non-null), gating early clicks until ready.
+  const readiness = { offline: solo || offline, started, netState, welcomed, firstSnapshot };
+  const interactive = isInteractive(readiness);
+  const connectKey = connectStatusKey(readiness);
+
   return {
     brand, failed, offline, offlineDismissed, setOfflineDismissed,
     name, look, solo, setSolo, soloRef, modeGates,
-    netState, ping, online,
+    netState, ping, online, interactive, connectKey,
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData,
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,

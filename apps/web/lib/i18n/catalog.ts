@@ -400,6 +400,13 @@ export const messages: Record<Locale, Record<string, string>> = {
     'meta.description': 'Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.',
     'meta.og_title': 'Blockland — mundos de blocos 3D pra crianças',
     'debug.aria': 'Depurar',
+
+    // Connecting / loading overlay (online world becoming interactive)
+    'coop.connect_title': 'Entrando no mundo…',
+    'coop.connect_connecting': '🔌 Conectando…',
+    'coop.connect_reconnecting': '📡 Reconectando…',
+    'coop.connect_ready': '✅ Pronto!',
+    'coop.connect_hint': 'Estamos preparando tudo pra você. Já já dá pra construir e explorar! 🧱',
   },
   'en-US': {
     // HUD action buttons
@@ -796,5 +803,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     'meta.description': '3D block worlds for kids: build, hunt, fight monsters and collect stars.',
     'meta.og_title': 'Blockland — 3D block worlds for kids',
     'debug.aria': 'Debug',
+
+    // Connecting / loading overlay (online world becoming interactive)
+    'coop.connect_title': 'Entering the world…',
+    'coop.connect_connecting': '🔌 Connecting…',
+    'coop.connect_reconnecting': '📡 Reconnecting…',
+    'coop.connect_ready': '✅ Ready!',
+    'coop.connect_hint': "We're getting everything ready for you. You'll be building and exploring in a moment! 🧱",
   },
 };

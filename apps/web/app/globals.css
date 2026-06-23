@@ -307,6 +307,22 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 #approvalOverlay button:active { transform: translateY(4px); box-shadow: 0 2px 0 #00000022; }
 
+/* Connecting/loading: shown right after Play online until the socket, Welcome and first snapshot land.
+   Full-screen so early break/build/hit clicks are absorbed until the world is actually interactive. */
+#connectingOverlay {
+  position: fixed; inset: 0; z-index: 88; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .72); backdrop-filter: blur(7px); padding: 16px;
+}
+#connectingOverlay .panel {
+  background: linear-gradient(#ffffff, #fff3d6); border: 6px solid #fff; border-radius: 28px;
+  padding: 26px 28px; max-width: 460px; width: 100%; text-align: center; box-shadow: 0 24px 60px #0007;
+  animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
+}
+#connectingOverlay .connectingSpinner { font-size: 54px; animation: bob 1.6s ease-in-out infinite; }
+#connectingOverlay h2 { color: var(--ink); font-size: clamp(20px, 5vw, 27px); font-weight: 900; margin: 8px 0; }
+#connectingOverlay .connectingState { color: var(--ink); font-weight: 900; font-size: 18px; margin: 4px 0 10px; }
+#connectingOverlay p { color: #5a4a2a; font-weight: 800; font-size: 15px; margin-bottom: 4px; }
+
 /* A newer build is live: a non-dismissable screen that forces a reload so nobody plays a stale build. */
 #updateOverlay {
   position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center;
