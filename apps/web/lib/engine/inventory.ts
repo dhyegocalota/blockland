@@ -24,6 +24,10 @@ export class BlockInventory {
     if (!this.canPlace(id)) throw new Error(`cannot spend block ${id}: none banked`);
     this.counts.set(id, this.count(id) - 1);
   }
+
+  reset(): void {
+    this.counts.clear();
+  }
 }
 
 // Empty string hides the badge (infinite resources), otherwise the banked count.

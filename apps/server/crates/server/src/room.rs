@@ -1305,6 +1305,21 @@ impl Room {
         self.heart_drops.clear();
         self.dirty = true;
         self.flush();
+        // A world reset is a fresh start for everyone: wipe every player's progress (score/leaderboard)
+        // and reset their live combat state — full hearts and an emptied banked inventory — so no metric
+        // survives the blocks. The zeroed score/hp ride the next slim Snapshot; inventories are resent now.
+        self.wipe_all_scores();
+        let ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        for player_id in &ids {
+            let Some(p) = self.players.get_mut(player_id) else {
+                continue;
+            };
+            p.hp = MAX_HP;
+            p.inventory.clear();
+        }
+        for player_id in &ids {
+            self.send_inventory(*player_id);
+        }
         self.broadcast(&ServerMsg::Event {
             kind: "reset".into(),
             name: admin_name,
@@ -1325,6 +1340,18 @@ impl Room {
             return;
         }
         let admin_name = admin.name.clone();
+        self.wipe_all_scores();
+        self.broadcast(&ServerMsg::Event {
+            kind: "reset_scores".into(),
+            name: admin_name,
+            detail: String::new(),
+        });
+        tracing::info!(tenant = %self.key.0, %id, "scores reset by admin");
+    }
+
+    /// Zero every live player's score and clear the tenant's persisted leaderboard. Shared by the
+    /// standalone "reset scores" action and the full world reset; callers do their own admin gating.
+    fn wipe_all_scores(&mut self) {
         for p in self.players.values_mut() {
             p.score = 0;
         }
@@ -1335,12 +1362,6 @@ impl Room {
                 tracing::error!(error = %e, "reset_scores failed");
             }
         });
-        self.broadcast(&ServerMsg::Event {
-            kind: "reset_scores".into(),
-            name: admin_name,
-            detail: String::new(),
-        });
-        tracing::info!(tenant = %self.key.0, %id, "scores reset by admin");
     }
 
     /// Suspend or resume the world. Admin-only: suspending persists the flag (so it survives a restart),
@@ -3960,6 +3981,38 @@ mod tests {
         assert_eq!(room.next_creature_id, 1, "the id counter is reset");
         assert_eq!(drain_reset_event(&mut admin_rx), Some("p1".into()));
         assert_eq!(drain_reset_event(&mut other_rx), Some("p1".into()));
+    }
+
+    #[tokio::test]
+    async fn admin_reset_world_also_wipes_every_player_score_and_inventory() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, true);
+        let mut other_rx = add_player(&mut room, 2, false);
+        room.players.get_mut(&1).unwrap().score = 8;
+        let other = room.players.get_mut(&2).unwrap();
+        other.score = 4;
+        other.hp = 1;
+        other.inventory.insert(sim::STONE, 7);
+
+        room.on_input(1, ClientMsg::AdminResetWorld);
+
+        assert_eq!(
+            room.players.get(&1).unwrap().score,
+            0,
+            "the admin's score is wiped"
+        );
+        let other = room.players.get(&2).unwrap();
+        assert_eq!(other.score, 0, "every player's score is wiped");
+        assert_eq!(other.hp, MAX_HP, "hearts are refilled");
+        assert!(
+            other.inventory.is_empty(),
+            "the banked inventory is emptied"
+        );
+        assert_eq!(
+            drain_inventory(&mut other_rx, sim::STONE),
+            Some((0, true)),
+            "the cleared inventory is pushed to the player",
+        );
     }
 
     #[tokio::test]

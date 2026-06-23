@@ -28,6 +28,16 @@ describe('BlockInventory', () => {
     const inventory = new BlockInventory();
     expect(() => inventory.spend(1)).toThrow();
   });
+
+  it('reset empties every banked count', () => {
+    const inventory = new BlockInventory();
+    inventory.bank(1);
+    inventory.bank(2);
+    inventory.reset();
+    expect(inventory.count(1)).toBe(0);
+    expect(inventory.count(2)).toBe(0);
+    expect(inventory.canPlace(1)).toBe(false);
+  });
 });
 
 describe('hotbarCountLabel', () => {
