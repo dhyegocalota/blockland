@@ -1,15 +1,22 @@
 // Blockland service worker. Makes the single-player game installable and offline-capable.
-// - App-shell precache so the game boots with no network.
+// - Resilient precache of stable static assets (one missing/redirecting URL must NOT abort install).
 // - Cache-first for static assets (Next chunks, icons, tenant images, bundled tenant.json).
-// - Network-first for navigations, falling back to the cached app shell when offline.
+// - Network-first for navigations: caches each fetched page so the locale-prefixed shell works offline.
 // Bump CACHE_VERSION on every shipped change to invalidate old caches on activate.
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const CACHE_NAME = `blockland-${CACHE_VERSION}`;
-const APP_SHELL = ['/', '/manifest.webmanifest', '/tenant.json', '/icons/icon-192.png', '/icons/icon-512.png'];
+// Only assets that live at a fixed, always-200 path. '/' redirects to a locale prefix and
+// '/tenant.json' is per-tenant — a redirect/404 in an atomic addAll rejected the whole install, which
+// left the OLD worker serving stale bundles (the freshly-deployed page then crashed, e.g. missing
+// #hotbar). Those two are cached on first visit by the navigation / cache-first handlers instead.
+const APP_SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()),
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => Promise.allSettled(APP_SHELL.map((url) => cache.add(url))))
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -35,10 +42,13 @@ async function cacheFirst(request) {
 
 async function networkFirstNavigation(request) {
   try {
-    return await fetch(request);
+    const response = await fetch(request);
+    const cache = await caches.open(CACHE_NAME);
+    cache.put(request, response.clone());
+    return response;
   } catch {
-    const shell = await caches.match('/');
-    if (shell) return shell;
+    const cached = await caches.match(request);
+    if (cached) return cached;
     return new Response('Offline', { status: 503, headers: { 'content-type': 'text/plain' } });
   }
 }
