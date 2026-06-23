@@ -3,7 +3,7 @@
 // messages through typed handlers. It is NOT wired into the game engine yet — that wiring is a
 // later phase. The socket and clock are injectable so tests can run deterministically.
 
-import { debug } from './log';
+import { debug, warn } from './log';
 import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from './engine/debug-report';
 import {
   adminApprove,
@@ -219,6 +219,11 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 10_000;
 // How often a player held for approval silently retries the join while they wait on the frozen screen.
 const APPROVAL_RETRY_MS = 3_000;
+// Silent-drop detection: the server streams snapshots (~30Hz) + pings, so going this long with NO message
+// while supposedly online means the link is dead (internet dropped, half-open socket that never cleanly
+// closed). We force the socket closed so the normal reconnect path takes over. Checked on this interval.
+const LIVENESS_TIMEOUT_MS = 5_000;
+const LIVENESS_CHECK_MS = 1_000;
 // Snapshot logging is throttled: the first one (proves the world is live) plus one every N after, so
 // the debug console shows cadence without drowning in 30Hz spam.
 const SNAPSHOT_LOG_EVERY = 150;
@@ -238,6 +243,8 @@ export function createNet(opts: NetOptions): NetClient {
   let closedByUser = false;
   let terminalReason: NetState | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let livenessTimer: ReturnType<typeof setInterval> | null = null;
+  let lastMessageAt: number | null = null;
   let lastPingAt: number | null = null;
   let snapshotCount = 0;
   // The freshest client player position the engine has thrown out as a Move; we stamp every recorded
@@ -259,6 +266,35 @@ export function createNet(opts: NetOptions): NetClient {
     if (reconnectTimer === null) return;
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
+  }
+
+  function clearLivenessTimer(): void {
+    if (livenessTimer === null) return;
+    clearInterval(livenessTimer);
+    livenessTimer = null;
+  }
+
+  // Watch for a silently-dead socket: once online, if no server message arrives within the timeout the
+  // link is gone, so close the socket to trigger the reconnect path (backoff + rejoin + reconnecting UI).
+  function startLiveness(): void {
+    clearLivenessTimer();
+    lastMessageAt = now();
+    livenessTimer = setInterval(() => {
+      if (state !== 'online') return;
+      if (lastMessageAt === null) return;
+      if (now() - lastMessageAt <= LIVENESS_TIMEOUT_MS) return;
+      warn('net', 'liveness timeout, forcing reconnect', { silentMs: now() - lastMessageAt });
+      // A dead socket while OFFLINE often never fires `onclose` (the close handshake can't complete), so
+      // we can't wait for it — detach the corpse and drive the reconnect transition ourselves.
+      const dead = socket;
+      if (dead) dead.onclose = null;
+      try {
+        dead?.close();
+      } catch {
+        /* already gone */
+      }
+      handleClose();
+    }, LIVENESS_CHECK_MS);
   }
 
   function backoffDelay(): number {
@@ -285,11 +321,13 @@ export function createNet(opts: NetOptions): NetClient {
   }
 
   function handleMessage(data: string): void {
+    lastMessageAt = now();
     const msg = parseServerMsg(data);
     if (msg.t === 'welcome') {
       attempt = 0;
       waitingApproval = false;
       setState('online');
+      startLiveness();
       debug('net', 'welcome', { you: msg.you, world: msg.world, version: msg.version });
       opts.handlers.onWelcome?.(msg);
       return;
@@ -397,6 +435,7 @@ export function createNet(opts: NetOptions): NetClient {
 
   function handleClose(): void {
     socket = null;
+    clearLivenessTimer();
     if (closedByUser) {
       setState('offline');
       return;
@@ -457,6 +496,7 @@ export function createNet(opts: NetOptions): NetClient {
     close(): void {
       closedByUser = true;
       clearReconnectTimer();
+      clearLivenessTimer();
       socket?.close();
       if (socket === null) setState('offline');
     },

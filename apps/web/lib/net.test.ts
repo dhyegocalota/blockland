@@ -191,6 +191,39 @@ describe('net client', () => {
     expect(MockWebSocket.instances).toHaveLength(1);
   });
 
+  it('a silently dead socket (no messages) is force-reconnected by the liveness watchdog', () => {
+    const { client, setClock } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+    expect(client.state).toBe('online');
+
+    // No more messages arrive (internet dropped, the socket never cleanly closed). Once the silence
+    // passes the liveness timeout, the watchdog closes the socket and the reconnect path kicks in.
+    setClock(1_000 + 6_000);
+    vi.advanceTimersByTime(6_000);
+    expect(socket.readyState).toBe(3);
+    expect(client.state).toBe('reconnecting');
+  });
+
+  it('a connection that keeps receiving messages is never tripped by the watchdog', () => {
+    const { client, setClock } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    // A snapshot arrives every 2s — within the 5s timeout — so the watchdog never fires.
+    for (let elapsed = 2_000; elapsed <= 12_000; elapsed += 2_000) {
+      setClock(1_000 + elapsed);
+      vi.advanceTimersByTime(2_000);
+      socket.receive({ t: 'snapshot', k: elapsed, p: [], c: [] });
+    }
+    expect(client.state).toBe('online');
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
   it('an unexpected close reconnects and a successful reopen goes online', () => {
     const { client, states } = makeClient();
     client.connect();

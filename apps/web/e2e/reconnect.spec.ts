@@ -17,11 +17,17 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 // is selected, leave the name empty (guest), and press Play.
 async function joinAsGuest(page: Page): Promise<void> {
   await page.goto('/');
+  // Multiplayer is the default mode; select it if a mode toggle is shown.
   const multiplayer = page.getByRole('button', { name: /multiplayer|multijogador/i });
-  if (await multiplayer.isVisible()) await multiplayer.click();
-  await page.locator('#playBtn').click();
+  if (await multiplayer.isVisible().catch(() => false)) await multiplayer.click({ force: true }).catch(() => {});
+  // The lobby runs idle animations (drifting clouds, a bobbing avatar) and the leaderboard polls +
+  // re-renders, so the Play button is never "stable" by Playwright's heuristic. Dispatch the click event
+  // directly (React's delegated onClick still fires) instead of waiting for an impossible settle.
+  const play = page.locator('#playBtn');
+  await expect(play).toBeVisible({ timeout: 20_000 });
+  await play.dispatchEvent('click');
   // The connecting overlay is up until Welcome + first snapshot land; it clears once the world is live.
-  await expect(page.locator('#connectingOverlay')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#connectingOverlay')).toBeHidden({ timeout: 25_000 });
   await expect(page.locator('#presenceToggle')).toBeVisible();
 }
 
@@ -51,8 +57,10 @@ test('a dropped player reconnects coherently for themselves and for others', asy
   // Drop player A's internet. They must see the non-terminal reconnecting overlay (the connecting look),
   // NOT the severe kick/error panel.
   await contextA.setOffline(true);
+  // The client's liveness watchdog notices the silence (~5s) and forces the reconnect path even though
+  // the offline socket never cleanly closes, so the overlay appears shortly after.
   await expect(pageA.locator('#connectingOverlay')).toBeVisible({ timeout: 15_000 });
-  await expect(pageA.locator('#connectingOverlay .connectingState')).toContainText(/reconect/i);
+  await expect(pageA.locator('#connectingOverlay .connectingState')).toContainText(/reconnect|reconect/i);
   await expect(pageA.locator('#kickOverlay')).toBeHidden();
 
   // During the server grace, B must STILL see A — the roster keeps both, marking A "away" rather than
