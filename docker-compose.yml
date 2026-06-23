@@ -1,8 +1,8 @@
 services:
   game-server:
     build:
-      context: ./apps/server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/server/Dockerfile
     ports:
       - "8080:8080"
     environment:

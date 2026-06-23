@@ -1,0 +1,9 @@
+# Root build context (the server builds from repo root so the Dockerfile can read .git for the deploy
+# SHA). Keep it lean: only apps/server + .git are needed. .git is intentionally NOT excluded.
+**/node_modules
+**/target
+**/.next
+**/.vercel
+apps/web
+.claude
+*.md
