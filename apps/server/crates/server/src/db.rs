@@ -13,6 +13,12 @@ const MAX_TOP_LIMIT: u32 = 100;
 const ACCOUNT_ID_HEX_CHARS: usize = 24;
 const DEFAULT_EVENT_BACKLOG: u32 = 20;
 const MAX_EVENT_BACKLOG: u32 = 100;
+const DEFAULT_CHAT_BACKLOG: u32 = 200;
+const MAX_CHAT_BACKLOG: u32 = 200;
+const DEFAULT_REPORT_ROWS: u32 = 200;
+const MAX_REPORT_ROWS: u32 = 500;
+/// Persisted chat is never kept beyond this window (mirrored in the public Privacy Policy).
+pub const CHAT_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// White-label branding + per-tenant limits for one tenant: a subdomain id, a display name, one
 /// image URL (lobby avatar + in-game face-block texture), the play-time budget (minutes within a
@@ -146,6 +152,22 @@ pub struct TimelineEvent {
     pub kind: String,
     pub name: String,
     pub detail: String,
+}
+
+/// One persisted chat line for the admin chat-log report: who said it, the text, and when (ms epoch).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatEntry {
+    pub name: String,
+    pub text: String,
+    pub sent_at: i64,
+}
+
+/// One row of the hours-played report: a player key (account id, or `ip:<addr>` for a guest) and the
+/// milliseconds it has accrued in the tenant's current window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaytimeEntry {
+    pub key: String,
+    pub used_ms: i64,
 }
 
 /// One account waiting for an admin to let it into a tenant whose approval gate is on.
@@ -351,6 +373,19 @@ impl Db {
                     name TEXT NOT NULL,
                     detail TEXT NOT NULL,
                     created_at INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        // Every accepted chat line, kept for the admin chat-log report within the retention window.
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS chat_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    sent_at INTEGER NOT NULL
                 )",
                 (),
             )
@@ -633,6 +668,32 @@ impl Db {
                 params![cutoff],
             )
             .await
+    }
+
+    /// Drop chat lines older than the retention window. Returns the rows removed.
+    pub async fn purge_stale_chat(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
+        let cutoff = now_ms() - max_age_ms;
+        self.conn
+            .execute("DELETE FROM chat_log WHERE sent_at < ?1", params![cutoff])
+            .await
+    }
+
+    /// Insert a chat line with an explicit timestamp, to exercise the retention purge.
+    #[cfg(test)]
+    pub(crate) async fn add_chat_at(
+        &self,
+        tenant: &str,
+        name: &str,
+        text: &str,
+        sent_at: i64,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO chat_log (tenant, name, text, sent_at) VALUES (?1, ?2, ?3, ?4)",
+                params![tenant, name, text, sent_at],
+            )
+            .await?;
+        Ok(())
     }
 
     /// Insert a timeline event with an explicit timestamp, to exercise the retention purge.
@@ -1365,6 +1426,75 @@ impl Db {
         Ok(out)
     }
 
+    /// Persist a chat line, then prune anything past the retention window so the table self-trims.
+    pub async fn record_chat(
+        &self,
+        tenant: &str,
+        name: &str,
+        text: &str,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "INSERT INTO chat_log (tenant, name, text, sent_at) VALUES (?1, ?2, ?3, ?4)",
+                params![tenant, name, text, now_ms()],
+            )
+            .await?;
+        self.purge_stale_chat(CHAT_RETENTION_MS).await?;
+        Ok(())
+    }
+
+    /// The most recent chat lines for a tenant, newest-first, for the admin chat-log report.
+    pub async fn recent_chat(
+        &self,
+        tenant: &str,
+        limit: u32,
+    ) -> Result<Vec<ChatEntry>, libsql::Error> {
+        let clamped = limit.clamp(1, MAX_CHAT_BACKLOG) as i64;
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT name, text, sent_at FROM chat_log
+                 WHERE tenant = ?1 ORDER BY id DESC LIMIT ?2",
+                params![tenant, clamped],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(ChatEntry {
+                name: row.get::<String>(0)?,
+                text: row.get::<String>(1)?,
+                sent_at: row.get::<i64>(2)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Per-player play time accrued in each player's current window, most-played first, for the admin
+    /// hours-played report. The key is the account id (or `ip:<addr>` for a guest) exactly as written.
+    pub async fn playtime_report(
+        &self,
+        tenant: &str,
+        limit: u32,
+    ) -> Result<Vec<PlaytimeEntry>, libsql::Error> {
+        let clamped = limit.clamp(1, MAX_REPORT_ROWS) as i64;
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT account_id, used_ms FROM playtime
+                 WHERE tenant = ?1 ORDER BY used_ms DESC, window_start_ms DESC LIMIT ?2",
+                params![tenant, clamped],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(PlaytimeEntry {
+                key: row.get::<String>(0)?,
+                used_ms: row.get::<i64>(1)?,
+            });
+        }
+        Ok(out)
+    }
+
     /// Whether the account is approved to play in the tenant (only consulted when the gate is on).
     pub async fn is_approved(&self, tenant: &str, account_id: &str) -> Result<bool, libsql::Error> {
         let mut rows = self
@@ -1537,6 +1667,14 @@ pub fn default_event_backlog() -> u32 {
     DEFAULT_EVENT_BACKLOG
 }
 
+pub fn default_chat_backlog() -> u32 {
+    DEFAULT_CHAT_BACKLOG
+}
+
+pub fn default_report_rows() -> u32 {
+    DEFAULT_REPORT_ROWS
+}
+
 /// A stable, random account identifier (24 lowercase hex chars). The username is mutable; this is not.
 fn gen_account_id() -> String {
     let mut rng = rand::thread_rng();
@@ -1637,6 +1775,85 @@ mod tests {
         db.add_playtime_at("acme", "new", now).await.unwrap();
         let removed = db.purge_stale_playtime(30 * day_ms).await.unwrap();
         assert_eq!(removed, 1);
+    }
+
+    #[tokio::test]
+    async fn chat_log_records_reads_newest_first_and_isolates_tenants() {
+        let db = memory_db().await;
+        db.record_chat("acme", "Ann", "hello").await.unwrap();
+        db.record_chat("acme", "Bob", "hi there").await.unwrap();
+        // Another tenant's chat never leaks in.
+        db.record_chat("demo", "Zoe", "elsewhere").await.unwrap();
+
+        let chat = db
+            .recent_chat("acme", default_chat_backlog())
+            .await
+            .unwrap();
+        let lines: Vec<(&str, &str)> = chat
+            .iter()
+            .map(|c| (c.name.as_str(), c.text.as_str()))
+            .collect();
+        assert_eq!(lines, vec![("Bob", "hi there"), ("Ann", "hello")]);
+    }
+
+    #[tokio::test]
+    async fn purge_stale_chat_drops_only_old_lines() {
+        let db = memory_db().await;
+        let now = now_ms();
+        let day_ms = 24 * 60 * 60 * 1000;
+        // Insert both lines without the self-prune (add_chat_at) so the explicit purge is what trims.
+        db.add_chat_at("acme", "Old", "ancient", now - 100 * day_ms)
+            .await
+            .unwrap();
+        db.add_chat_at("acme", "Ann", "fresh", now).await.unwrap();
+        let removed = db.purge_stale_chat(30 * day_ms).await.unwrap();
+        assert_eq!(removed, 1);
+        let chat = db
+            .recent_chat("acme", default_chat_backlog())
+            .await
+            .unwrap();
+        assert_eq!(chat.len(), 1);
+        assert_eq!(chat[0].text, "fresh");
+    }
+
+    #[tokio::test]
+    async fn record_chat_self_prunes_lines_past_retention() {
+        let db = memory_db().await;
+        let day_ms = 24 * 60 * 60 * 1000;
+        db.add_chat_at("acme", "Old", "ancient", now_ms() - 100 * day_ms)
+            .await
+            .unwrap();
+        // A fresh insert prunes anything already past the retention window.
+        db.record_chat("acme", "Ann", "fresh").await.unwrap();
+        let chat = db
+            .recent_chat("acme", default_chat_backlog())
+            .await
+            .unwrap();
+        assert_eq!(chat.len(), 1);
+        assert_eq!(chat[0].name, "Ann");
+    }
+
+    #[tokio::test]
+    async fn playtime_report_aggregates_per_player_most_played_first() {
+        let db = memory_db().await;
+        let window = 1_000_000;
+        db.add_playtime("acme", "ann-id", 400, window, 0)
+            .await
+            .unwrap();
+        db.add_playtime("acme", "ip:203.0.113.7", 900, window, 0)
+            .await
+            .unwrap();
+        // Another tenant's rows never leak in.
+        db.add_playtime("demo", "zoe-id", 50, window, 0)
+            .await
+            .unwrap();
+
+        let report = db
+            .playtime_report("acme", default_report_rows())
+            .await
+            .unwrap();
+        let rows: Vec<(&str, i64)> = report.iter().map(|r| (r.key.as_str(), r.used_ms)).collect();
+        assert_eq!(rows, vec![("ip:203.0.113.7", 900), ("ann-id", 400)]);
     }
 
     #[tokio::test]

@@ -518,29 +518,30 @@ input, textarea, select { font-size: max(16px, 1em); }
   background: rgba(20,12,40,.6); border: 2px solid rgba(255,255,255,.35); border-radius: 12px;
   padding: 10px 12px; backdrop-filter: blur(6px); animation: chatIn .2s ease both;
 }
-#adminPeace, #adminPvp, #adminChat, #adminApproval, #adminInfinite, #adminSuspend, #adminOnlineMode, #adminOfflineMode {
+#adminPeace, #adminPvp, #adminChat, #adminApproval, #adminInfinite, #adminSuspend, #adminOnlineMode, #adminOfflineMode, #adminPlaytimeReport, #adminChatReport, #adminReportClose {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,93,46,.35); border: 2px solid rgba(255,255,255,.35); border-radius: 10px;
   padding: 6px 10px; transition: transform .08s;
 }
 #adminPeace.on, #adminPvp.on, #adminChat.on, #adminApproval.on, #adminInfinite.on, #adminSuspend.on, #adminOnlineMode.on, #adminOfflineMode.on { background: rgba(91,216,106,.35); border-color: var(--gold); }
-#adminPeace:active, #adminPvp:active, #adminChat:active, #adminApproval:active, #adminInfinite:active, #adminSuspend:active, #adminOnlineMode:active, #adminOfflineMode:active { transform: translateY(2px); }
+#adminPeace:active, #adminPvp:active, #adminChat:active, #adminApproval:active, #adminInfinite:active, #adminSuspend:active, #adminOnlineMode:active, #adminOfflineMode:active, #adminPlaytimeReport:active, #adminChatReport:active, #adminReportClose:active { transform: translateY(2px); }
 #adminOnlineMode:disabled, #adminOfflineMode:disabled { opacity: .6; cursor: default; }
 #adminBody .adminLabel { color: #cbb8ff; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-#adminStructures, #adminPlayers, #adminPending, #adminBanned { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+#adminStructures, #adminPlayers, #adminPending, #adminBanned, #adminReports { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 #adminStructures li { display: flex; align-items: center; gap: 8px; }
 #adminStructures li > span:first-child {
   flex: 1; color: #fff; font-weight: 700; font-size: 13px; word-break: break-word;
 }
 /* Each player is a row that stacks: the name (with its role badge) on its own full-width line so it
    never starves into a 1-char vertical column, then the action buttons wrapping neatly below it. */
-#adminPlayers li, #adminPending li, #adminBanned li {
+#adminPlayers li, #adminPending li, #adminBanned li, #adminReports li {
   display: flex; flex-direction: column; gap: 6px;
   background: rgba(255,255,255,.06); border-radius: 10px; padding: 7px 9px;
 }
-#adminPlayers .playerName, #adminPending .playerName, #adminBanned .playerName {
+#adminPlayers .playerName, #adminPending .playerName, #adminBanned .playerName, #adminReports .playerName {
   display: flex; align-items: center; gap: 6px; color: #fff; font-weight: 800; font-size: 13px; word-break: break-word;
 }
+#adminReports .reportBy { color: rgba(255,255,255,.78); font-weight: 700; font-size: 12px; word-break: break-word; }
 #adminPlayers .playerName .roleBadge, #adminPending .playerName .roleBadge { font-size: 14px; line-height: 1; }
 #adminPlayers .adminPlayerActions, #adminPending .adminPlayerActions, #adminBanned .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; }
 #adminStructures button, #adminPlayers button, #adminPending button, #adminBanned button, #feed .adminPlayerActions button {

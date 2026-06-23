@@ -1071,6 +1071,17 @@ impl Room {
             self.lift_stuck_players();
         }
         if let Some(m) = chat_out {
+            if let ServerMsg::Chat { name, text, .. } = &m {
+                let db = self.hub.db.clone();
+                let tenant = self.key.0.clone();
+                let name = name.clone();
+                let text = text.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = db.record_chat(&tenant, &name, &text).await {
+                        tracing::error!(error = %e, "failed to persist chat");
+                    }
+                });
+            }
             self.broadcast(&m);
         }
         if inventory_changed {

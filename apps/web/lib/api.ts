@@ -153,6 +153,36 @@ export async function topScores(params: {
   return (await res.json()) as ScoreEntry[];
 }
 
+export interface ChatEntry {
+  name: string;
+  text: string;
+  sent_at: number;
+}
+
+export interface PlaytimeEntry {
+  key: string;
+  used_ms: number;
+}
+
+// The two lobby-admin reports. Authority is the caller's claim (the server resolves it to an admin of
+// the tenant); the signed channel proves the request came from Next, the claim proves who is asking.
+export async function fetchChatLog(params: { tenant: string; claim: string }): Promise<ChatEntry[]> {
+  const path = `/internal/chatlog/${encodeURIComponent(params.tenant)}?claim=${encodeURIComponent(params.claim)}`;
+  const res = await signedFetch('GET', path);
+  if (!res.ok) throw new Error(`api: fetchChatLog failed (${res.status})`);
+  return (await res.json()) as ChatEntry[];
+}
+
+export async function fetchPlaytimeReport(params: {
+  tenant: string;
+  claim: string;
+}): Promise<PlaytimeEntry[]> {
+  const path = `/internal/playtime/${encodeURIComponent(params.tenant)}?claim=${encodeURIComponent(params.claim)}`;
+  const res = await signedFetch('GET', path);
+  if (!res.ok) throw new Error(`api: fetchPlaytimeReport failed (${res.status})`);
+  return (await res.json()) as PlaytimeEntry[];
+}
+
 function toBytes(input: ArrayBuffer | Uint8Array): Uint8Array<ArrayBuffer> {
   if (!(input instanceof Uint8Array)) return new Uint8Array(input);
   if (input.buffer instanceof ArrayBuffer) return input as Uint8Array<ArrayBuffer>;
