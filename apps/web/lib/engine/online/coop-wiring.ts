@@ -221,12 +221,12 @@ export function createCoopWiring(runtime: GameRuntime): void {
       onSpawn: (x, y, z) => { player.pos.set(x, y, z); player.vel.set(0, 0, 0); },
       onHealth: (hp) => {
         if (hp < player.hearts) runtime.flashDamage();
-        // Health going UP in co-op is a heart pickup (respawn uses onRespawn): play the same collect cue
-        // the offline path plays, so picking up a heart online makes a sound too.
-        if (hp > player.hearts) runtime.blip(990, 0.1);
         player.hearts = hp;
         runtime.updateStats();
       },
+      // A heart drop vanished within pickup range: play the collect cue the offline path plays, so a
+      // pickup online always sounds — including at full health, when hp never changes.
+      onHeartCollected: () => runtime.blip(990, 0.1),
       onRespawn: (x, y, z, hp) => {
         player.pos.set(x, y, z);
         player.vel.set(0, 0, 0);

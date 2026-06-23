@@ -7,7 +7,7 @@
 // dependency-inverted onto the injected CoopView (engine/rendering/coop-view.ts), driven with plain
 // data so this module stays three.js-free.
 
-import { EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS } from './engine/constants';
+import { EYE_HEIGHT, HEART_PICKUP_RADIUS, PLAYER_HEIGHT, PLAYER_RADIUS } from './engine/constants';
 import type { ActorPos } from './engine/actors';
 import { RemoteInterpolator } from './engine/interpolation';
 import { debug, warn } from './log';
@@ -137,6 +137,9 @@ export interface CoopOptions {
   // The server owns hearts: every snapshot carries this player's current health, and a Respawn message
   // recenters them with full health on death or the back-to-spawn button.
   onHealth(hp: number): void;
+  // A heart drop vanished within pickup range of this player — they collected it. Fired even at full
+  // health (when hp doesn't change) so picking up a heart online always makes a sound, like offline.
+  onHeartCollected(): void;
   onRespawn(x: number, y: number, z: number, hp: number): void;
   // The server owns block resources in co-op: it pushes this player's authoritative counts + infinite
   // flag on join and on every change. The engine repaints the hotbar from coop's stored counts.
@@ -242,7 +245,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   const creatures = new Map<number, ServerCreature>();
   // Server-owned heart drops, keyed by id. Static (no interpolation) — the snapshot is the source of
   // truth: spawn a mesh when one first appears, drop it when it leaves the snapshot.
-  const heartDrops = new Set<number>();
+  const heartDrops = new Map<number, { x: number; y: number; z: number }>();
   // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
   // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
   const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean }>();
@@ -391,11 +394,17 @@ export function createCoop(opts: CoopOptions): CoopController {
           liveHearts.add(heart.id);
           const y = heart.y + HEART_DROP_LIFT;
           if (heartDrops.has(heart.id)) { view.onHeartDropMove(heart.id, heart.x, y, heart.z); continue; }
-          heartDrops.add(heart.id);
+          heartDrops.set(heart.id, { x: heart.x, y: heart.y, z: heart.z });
           view.onHeartDropSpawn(heart.id, heart.x, y, heart.z);
         }
-        for (const id of [...heartDrops]) {
+        for (const [id, pos] of [...heartDrops]) {
           if (liveHearts.has(id)) continue;
+          // A drop that vanished within pickup range of us was collected by us — sound the cue even at
+          // full health (server consumed it without changing hp). Otherwise it was a far pickup/expiry.
+          if (selfServerPos) {
+            const dx = selfServerPos.x - pos.x, dz = selfServerPos.z - pos.z;
+            if (Math.sqrt(dx * dx + dz * dz) <= HEART_PICKUP_RADIUS) opts.onHeartCollected();
+          }
           view.onHeartDropDespawn(id);
           heartDrops.delete(id);
         }
@@ -679,7 +688,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     close(): void {
       for (const id of [...avatars.keys()]) removeAvatar(id);
       for (const id of [...creatures.keys()]) removeCreature(id);
-      for (const id of [...heartDrops]) { view.onHeartDropDespawn(id); heartDrops.delete(id); }
+      for (const id of [...heartDrops.keys()]) { view.onHeartDropDespawn(id); heartDrops.delete(id); }
       net.close();
     },
   };
