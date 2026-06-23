@@ -24,15 +24,20 @@ export interface LobbyModeGates {
 }
 
 // `offline` here means the game server is unreachable (the lobby fell back to the bundled tenant).
+// An admin bypasses an admin-disabled mode (mirrors the server, which still admits an admin to an
+// online-blocked world — room.rs) so they can always pick a mode and re-enable it from the panel;
+// an unreachable server still blocks online for everyone, admin included.
 export function lobbyModeGates({
   tenant,
   serverUnreachable,
+  isAdmin,
 }: {
   tenant: Pick<Tenant, 'online_allowed' | 'offline_allowed'>;
   serverUnreachable: boolean;
+  isAdmin: boolean;
 }): LobbyModeGates {
-  const onlineReason = onlineBlockReason({ allowed: tenant.online_allowed, serverUnreachable });
-  const offlineReason = tenant.offline_allowed ? ModeBlockReason.Allowed : ModeBlockReason.AdminDisabled;
+  const onlineReason = onlineBlockReason({ allowed: tenant.online_allowed, serverUnreachable, isAdmin });
+  const offlineReason = tenant.offline_allowed || isAdmin ? ModeBlockReason.Allowed : ModeBlockReason.AdminDisabled;
   return {
     online: { disabled: onlineReason !== ModeBlockReason.Allowed, reason: onlineReason },
     offline: { disabled: offlineReason !== ModeBlockReason.Allowed, reason: offlineReason },
@@ -42,11 +47,13 @@ export function lobbyModeGates({
 function onlineBlockReason({
   allowed,
   serverUnreachable,
+  isAdmin,
 }: {
   allowed: boolean;
   serverUnreachable: boolean;
+  isAdmin: boolean;
 }): ModeBlockReason {
   if (serverUnreachable) return ModeBlockReason.Unreachable;
-  if (!allowed) return ModeBlockReason.AdminDisabled;
+  if (!allowed && !isAdmin) return ModeBlockReason.AdminDisabled;
   return ModeBlockReason.Allowed;
 }

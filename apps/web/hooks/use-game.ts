@@ -137,8 +137,8 @@ export function useGame() {
   const lobbyConnected = lobbyAdmin || lobbyModerator;
   const modeGates = useMemo(() => {
     const flags = modeFlags({ brand, lobbyConnected, lobbyRoom: lobby.room });
-    return lobbyModeGates({ tenant: flags, serverUnreachable: offline });
-  }, [brand, offline, lobbyConnected, lobby.room.onlineAllowed, lobby.room.offlineAllowed]);
+    return lobbyModeGates({ tenant: flags, serverUnreachable: offline, isAdmin: lobbyAdmin });
+  }, [brand, offline, lobbyConnected, lobbyAdmin, lobby.room.onlineAllowed, lobby.room.offlineAllowed]);
 
   // Keep the chosen mode valid: if the picked mode is blocked, fall to the allowed one. When online is
   // blocked the player is pushed to solo; when offline is blocked (and online is fine) to multiplayer.

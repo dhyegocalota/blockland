@@ -108,7 +108,11 @@ export function createCoopWiring(runtime: GameRuntime): void {
 
   runtime.bindApi = function bindApi(): void {
     runtime.bridge?.bind({
-      sendChat: (text) => { if (state.chatEnabled) runtime.coop?.sendChat(text); },
+      sendChat: (text) => {
+        if (!state.chatEnabled) return;
+        if (runtime.coop) { runtime.coop.sendChat(text); return; }
+        runtime.bridge?.hud.onChat(runtime.bridge.resolveName(), text);
+      },
       setAdminPeace: (on) => { if (runtime.coop) { runtime.coop.sendAdminSetPeace(on); return; } runtime.applyLocalRoom({ ...runtime.currentRoom(), peace: on }); },
       setAdminStructure: (kind, allowed) => {
         if (runtime.coop) { runtime.coop.sendAdminSetStructure(kind, allowed); return; }
