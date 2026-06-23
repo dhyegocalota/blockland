@@ -121,7 +121,6 @@ export default function Game() {
           <span className="title">{brand.name}</span>
           <span className="stat" id="hearts">❤️❤️❤️</span>
           <span className="stat" id="stars">⭐ 0</span>
-          <span className="stat record" id="record">🏆 0</span>
           <span className="stat" id="bag">🎒 0</span>
           {showPing && <span className="stat" id="ping">{t('coop.ping', { ping })}</span>}
         </div>

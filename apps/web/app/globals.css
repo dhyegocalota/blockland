@@ -78,7 +78,6 @@ input, textarea, select { font-size: max(16px, 1em); }
   font-size: 17px; font-weight: 900; color: #fff; background: rgba(42,26,74,.5);
   padding: 4px 12px; border-radius: 14px; border: 2px solid rgba(255,255,255,.5); white-space: nowrap;
 }
-#topbar .stat.record { border-color: var(--gold); color: var(--gold); }
 #topbar .stat.hit { animation: shake .3s; }
 
 /* Succinct online/offline mode chip pinned to the very top-left corner. */

@@ -3,7 +3,7 @@
 // (heartsLabel, bestScore, persistedRecord) lives in ./scoreboard and is unit-tested; this is the glue
 // that drives them against localStorage + the live DOM.
 import { MAX_HEARTS } from '../constants';
-import { bestScore, heartsLabel, persistedRecord } from '../scoreboard';
+import { heartsLabel, persistedRecord } from '../scoreboard';
 import type { GameRuntime } from '../runtime';
 
 export function createScoreboard(runtime: GameRuntime): void {
@@ -21,6 +21,5 @@ export function createScoreboard(runtime: GameRuntime): void {
     runtime.el('hearts').textContent = heartsLabel({ hearts: player.hearts, maxHearts: MAX_HEARTS });
     runtime.el('stars').textContent = `⭐ ${player.stars}`;
     runtime.el('bag').textContent = `🎒 ${player.bag}`;
-    runtime.el('record').textContent = `🏆 ${bestScore({ stars: player.stars, stored: runtime.storedBest() })}`;
   };
 }
