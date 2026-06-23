@@ -928,19 +928,32 @@ impl Room {
                     && horizontal.contains(&z)
                     && (0.0..=sim::MAX_FLY_Y as f32).contains(&y);
                 let finite = x.is_finite() && y.is_finite() && z.is_finite();
-                let first_sync = !p.move_synced && in_world && finite;
-                if in_world && finite && (dist <= allowed || first_sync) {
+                if !in_world || !finite {
+                    tracing::debug!(id = %id, "move rejected: out of bounds / non-finite");
+                }
+                if in_world && finite {
+                    // A normal in-budget move (or the first sync) is taken whole. An over-budget move is
+                    // NOT dropped — dropping strands a desynced player at a stale position forever, since
+                    // every later move is then "too far" too (a deadlock that freezes them in place and
+                    // makes them invisible/wrong to everyone else). Instead step toward the reported
+                    // position at the speed cap so the server converges to the client within a few ticks,
+                    // which still caps real speed (the anti-cheat intent).
+                    let first_sync = !p.move_synced;
                     p.move_synced = true;
-                    p.x = x;
-                    p.y = y;
-                    p.z = z;
                     p.yaw = yaw;
                     p.pitch = pitch;
-                } else {
-                    tracing::debug!(id = %id, dist, allowed, "move rejected by anti-cheat");
+                    let factor = if dist <= allowed || first_sync || dist == 0.0 {
+                        1.0
+                    } else {
+                        allowed / dist
+                    };
+                    p.x += dx * factor;
+                    p.y += dy * factor;
+                    p.z += dz * factor;
+                    if factor < 1.0 {
+                        tracing::debug!(id = %id, dist, allowed, "move clamped toward client (converging)");
+                    }
                 }
-                // Out-of-bounds / too-fast moves are dropped: the next snapshot carries
-                // the authoritative position and the client reconciles.
             }
             ClientMsg::Edit {
                 op,
@@ -2876,7 +2889,10 @@ mod tests {
             },
         );
         assert_eq!(room.players.get(&1).unwrap().x, 50.0);
-        // Once synced, an impossibly fast jump is rejected and the position holds.
+        // Once synced, an impossibly fast jump is NOT taken whole — but it is NOT frozen either. The
+        // server steps TOWARD the reported position at the speed cap so a desync can't strand the player
+        // at a stale spot forever (which froze them / made them invisible to others). The position moves
+        // partway and never teleports the full distance.
         room.on_input(
             1,
             ClientMsg::Move {
@@ -2887,7 +2903,15 @@ mod tests {
                 pitch: 0.0,
             },
         );
-        assert_eq!(room.players.get(&1).unwrap().x, 50.0);
+        let x = room.players.get(&1).unwrap().x;
+        assert!(
+            x > 50.0,
+            "an over-budget move must converge toward the client, not freeze, got {x}"
+        );
+        assert!(
+            x < 120.0,
+            "an over-budget move must not teleport the full distance, got {x}"
+        );
     }
 
     // Stand a player on the open ground with a hostile creature spawned on the same spot, so after the
