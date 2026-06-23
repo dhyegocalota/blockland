@@ -502,21 +502,14 @@ impl Room {
         // room restart, instead of silently resetting to calm and looking like "monsters deal no damage".
         self.peace = self.hub.db.tenant_peace(&self.key.0).await.unwrap_or(true);
         // Online play disabled for this tenant: reject the join (offline reaches the client only, gated
-        // there). Admins still get in so they can re-enable it from the in-game panel.
+        // there). Admins still get in so they can re-enable it from the in-game panel. The reject reason
+        // travels as the reply code; conn.rs turns it into the user-facing message (reject_message).
         if !self.online_allowed && !role.is_admin() {
-            let _ = conn.try_send(ServerMsg::Error {
-                code: "online_blocked".into(),
-                msg: "Online play is turned off for this world.".into(),
-            });
             let _ = reply.send(Err("online_blocked".into()));
             return;
         }
         // A suspended world turns everyone away except admins, who still need to get in to resume it.
         if self.suspended && !role.is_admin() {
-            let _ = conn.try_send(ServerMsg::Error {
-                code: "suspended".into(),
-                msg: "This world is paused by an admin.".into(),
-            });
             let _ = reply.send(Err("suspended".into()));
             return;
         }
@@ -525,10 +518,6 @@ impl Room {
         // recorded as pending and the admins are notified; they approve in-game (and by email).
         if self.approval_required && !role.is_admin() {
             if account_id.is_empty() {
-                let _ = conn.try_send(ServerMsg::Error {
-                    code: "needs_login".into(),
-                    msg: "Please log in so a grown-up can let you in.".into(),
-                });
                 let _ = reply.send(Err("needs_login".into()));
                 return;
             }
@@ -539,10 +528,6 @@ impl Room {
                 .await
                 .unwrap_or(false)
             {
-                let _ = conn.try_send(ServerMsg::Error {
-                    code: "rejected".into(),
-                    msg: "A grown-up didn't let you in this time.".into(),
-                });
                 let _ = reply.send(Err("rejected".into()));
                 return;
             }
@@ -555,10 +540,6 @@ impl Room {
             {
                 self.hold_for_approval(&account_id, &authoritative_name)
                     .await;
-                let _ = conn.try_send(ServerMsg::Error {
-                    code: "needs_approval".into(),
-                    msg: "Waiting for a grown-up to let you in.".into(),
-                });
                 let _ = reply.send(Err("needs_approval".into()));
                 return;
             }
@@ -591,10 +572,6 @@ impl Room {
                 .await
                 .unwrap_or(0);
             if playtime_baseline >= self.playtime_limit_ms {
-                let _ = conn.try_send(ServerMsg::Error {
-                    code: "time_up".into(),
-                    msg: "You've used your play time for now.".into(),
-                });
                 let _ = reply.send(Err("time_up".into()));
                 return;
             }
@@ -2339,9 +2316,10 @@ impl Room {
             }
             // A player standing on a drop picks it up regardless of health — it's collected (and gone)
             // even at full hp; it only heals when below the max.
-            let taker = self.players.values_mut().find(|p| {
-                distance(p.x, p.y - PLAYER_EYE_HEIGHT, p.z, drop.pos) <= PICKUP_RADIUS
-            });
+            let taker = self
+                .players
+                .values_mut()
+                .find(|p| distance(p.x, p.y - PLAYER_EYE_HEIGHT, p.z, drop.pos) <= PICKUP_RADIUS);
             let Some(taker) = taker else {
                 kept.push(drop);
                 continue;
@@ -3776,13 +3754,8 @@ mod tests {
             .unwrap()
             .account_id;
 
-        let (refused, mut rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
+        let (refused, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
         assert_eq!(refused, Err("needs_approval".into()));
-        let coded = std::iter::from_fn(|| rx.try_recv().ok()).find_map(|m| match m {
-            ServerMsg::Error { code, .. } => Some(code),
-            _ => None,
-        });
-        assert_eq!(coded.as_deref(), Some("needs_approval"));
         // The held-out account is now pending.
         let pending = room.hub.db.pending_approvals("acme").await.unwrap();
         assert_eq!(pending.len(), 1);
@@ -3982,10 +3955,8 @@ mod tests {
         }
         assert!(used >= 60_000, "anonymous time accrued by IP, got {used}ms");
         // The IP is now over budget, so the next guest from it is turned away with "time_up".
-        let (blocked, mut rx2) =
-            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
+        let (blocked, _rx2) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
         assert_eq!(blocked, Err("time_up".into()), "the IP is over budget");
-        assert_eq!(first_error_code(&mut rx2).as_deref(), Some("time_up"));
     }
 
     #[tokio::test]
@@ -3996,9 +3967,8 @@ mod tests {
             .set_tenant_modes(&room.key.0, false, true)
             .await
             .unwrap();
-        let (refused, mut rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.9").await;
+        let (refused, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.9").await;
         assert_eq!(refused, Err("online_blocked".into()));
-        assert_eq!(first_error_code(&mut rx).as_deref(), Some("online_blocked"));
         // An admin still gets in so they can re-enable online play from the panel.
         let acc = room
             .hub

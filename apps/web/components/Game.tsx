@@ -27,10 +27,11 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   time_up: 'coop.time_up',
   online_blocked: 'coop.online_blocked',
   needs_approval: null,
+  needs_login: 'coop.needs_login',
   rejected: 'coop.rejected',
 };
 
-const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'online_blocked', 'rejected'];
+const SEVERE_STATES: NetState[] = ['banned', 'kicked', 'room_closed', 'time_up', 'online_blocked', 'needs_login', 'rejected'];
 
 // Why a lobby mode button is disabled → the short hint shown under the mode toggle.
 const MODE_BLOCK_HINT_KEYS: Record<ModeBlockReason, string | null> = {

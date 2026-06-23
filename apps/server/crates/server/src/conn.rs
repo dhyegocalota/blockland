@@ -110,7 +110,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         Ok(Ok(id)) => id,
         Ok(Err(code)) => {
             let _ = sink
-                .send(text_msg(err_json(&code, "Room full or unavailable.")))
+                .send(text_msg(err_json(&code, reject_message(&code))))
                 .await;
             let _ = sink.send(Message::Close(None)).await;
             return;
@@ -173,4 +173,45 @@ fn err_json(code: &str, msg: &str) -> String {
         msg: msg.into(),
     })
     .unwrap_or_else(|_| "{\"t\":\"error\",\"code\":\"internal\",\"msg\":\"\"}".into())
+}
+
+/// The single source of the user-facing message for a join rejection, keyed by its code, so a held or
+/// blocked player gets the right reason (e.g. "log in" — not the old generic "Room full") and the room
+/// never has to send the message itself.
+fn reject_message(code: &str) -> &'static str {
+    match code {
+        "banned" => "You're banned from this world.",
+        "room_full" => "This world is full right now.",
+        "claim_required" => "Please log in to use this name.",
+        "online_blocked" => "Online play is turned off for this world.",
+        "suspended" => "This world is paused by a grown-up.",
+        "needs_login" => "Please log in so a grown-up can let you in.",
+        "rejected" => "A grown-up didn't let you in this time.",
+        "needs_approval" => "Waiting for a grown-up to let you in.",
+        "time_up" => "You've used your play time for now.",
+        _ => "Couldn't join this world right now.",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_message;
+
+    #[test]
+    fn reject_message_is_specific_per_code_and_never_the_old_generic() {
+        assert_eq!(
+            reject_message("needs_login"),
+            "Please log in so a grown-up can let you in."
+        );
+        assert_eq!(
+            reject_message("needs_approval"),
+            "Waiting for a grown-up to let you in."
+        );
+        assert_eq!(reject_message("room_full"), "This world is full right now.");
+        // An unknown code gets a neutral fallback, not the misleading "Room full or unavailable.".
+        assert_eq!(
+            reject_message("whatever"),
+            "Couldn't join this world right now."
+        );
+    }
 }

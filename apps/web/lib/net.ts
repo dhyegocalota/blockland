@@ -57,6 +57,7 @@ export type NetState =
   | 'time_up'
   | 'online_blocked'
   | 'needs_approval'
+  | 'needs_login'
   | 'rejected';
 
 // The per-tick Snapshot travels as a compact numeric array (no field names) to keep it tiny; this
@@ -357,7 +358,7 @@ export function createNet(opts: NetOptions): NetClient {
     online_blocked: 'online_blocked',
     reclaimed: 'kicked',
     claim_required: 'kicked',
-    needs_login: 'kicked',
+    needs_login: 'needs_login',
     rejected: 'rejected',
   };
 
