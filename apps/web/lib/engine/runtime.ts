@@ -184,6 +184,7 @@ export interface GameRuntime {
   localPose(): { x: number; y: number; z: number; yaw: number; pitch: number };
   sendCoopEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   debugSnapshot(): DebugSnapshot;
+  debugReport(): string;
   grantOfflineAdmin(): void;
   enterOfflineMode(): void;
   startCoop(): void;

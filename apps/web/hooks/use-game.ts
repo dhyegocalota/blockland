@@ -79,6 +79,7 @@ export function useGame() {
   const [rosterOpen, setRosterOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugData, setDebugData] = useState<DebugSnapshot | null>(null);
+  const [debugCopied, setDebugCopied] = useState(false);
   const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -269,6 +270,35 @@ export function useGame() {
     return () => cancelAnimationFrame(rafId);
   }, [debugOpen]);
 
+  // Copy the engine's plain-text debug report to the clipboard; if the async clipboard write is blocked
+  // (insecure context, denied permission) fall back to selecting it in an off-screen textarea so the
+  // owner can copy manually. Either way flash "copied" briefly.
+  const flashCopied = useCallback((): void => {
+    setDebugCopied(true);
+    setTimeout(() => setDebugCopied(false), CHAT_FADE_MS);
+  }, []);
+
+  const copyDebugReport = useCallback(async (): Promise<void> => {
+    const api = gameApiRef.current;
+    if (!api) return;
+    const report = api.debugReport();
+    try {
+      await navigator.clipboard.writeText(report);
+      debug('coop', 'debug report copied', { length: report.length });
+      flashCopied();
+      return;
+    } catch (error) {
+      warn('coop', 'clipboard write failed, selecting for manual copy', { error: String(error) });
+    }
+    const area = document.createElement('textarea');
+    area.value = report;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    flashCopied();
+  }, [flashCopied]);
+
   const onNameChange = useCallback((value: string): void => {
     setName(value);
     if (typeof window !== 'undefined') window.localStorage.setItem(NAME_KEY, value);
@@ -457,7 +487,7 @@ export function useGame() {
     name, look, solo, setSolo, soloRef, modeGates,
     netState, ping, online, interactive, connectKey,
     roster, rosterOpen, setRosterOpen,
-    debugOpen, setDebugOpen, debugData,
+    debugOpen, setDebugOpen, debugData, debugCopied, copyDebugReport,
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,

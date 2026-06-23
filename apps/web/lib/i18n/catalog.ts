@@ -414,6 +414,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.connect_reconnecting': '📡 Reconectando…',
     'coop.connect_ready': '✅ Pronto!',
     'coop.connect_hint': 'Estamos preparando tudo pra você. Já já dá pra construir e explorar! 🧱',
+    'debug.copy_report': '📋 Copiar relatório',
+    'debug.copied': '✅ Copiado',
   },
   'en-US': {
     // HUD action buttons
@@ -824,5 +826,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.connect_reconnecting': '📡 Reconnecting…',
     'coop.connect_ready': '✅ Ready!',
     'coop.connect_hint': "We're getting everything ready for you. You'll be building and exploring in a moment! 🧱",
+    'debug.copy_report': '📋 Copy report',
+    'debug.copied': '✅ Copied',
   },
 };
