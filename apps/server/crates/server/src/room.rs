@@ -1816,6 +1816,10 @@ impl Room {
             return false;
         }
         p.last_action = now;
+        // Every accepted primary action (dig tap / creature hit / pvp attack) swings the actor's avatar
+        // arm for everyone else; the actor already swung their own first-person view locally. Purely
+        // cosmetic — no gameplay change.
+        self.broadcast_except(id, &ServerMsg::Swing { id });
         true
     }
 
@@ -3265,6 +3269,22 @@ mod tests {
         assert!(!room.accept_primary_action(1, start + Duration::from_millis(50)));
         // Once the interval has fully elapsed, the next action is accepted again.
         assert!(room.accept_primary_action(1, start + ATTACK_MIN_INTERVAL));
+    }
+
+    #[tokio::test]
+    async fn a_primary_action_swings_the_actors_avatar_for_everyone_else() {
+        let mut room = test_room().await;
+        let mut actor_rx = add_player(&mut room, 1, false);
+        let mut other_rx = add_player(&mut room, 2, false);
+        assert!(room.accept_primary_action(1, Instant::now()));
+        // Everyone but the actor sees the actor's swing.
+        let swung = std::iter::from_fn(|| other_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Swing { id: 1 }));
+        assert!(swung, "the other player sees the actor swing");
+        // The actor never gets its own swing back (it swings its own first-person view locally).
+        let echoed = std::iter::from_fn(|| actor_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Swing { .. }));
+        assert!(!echoed, "the actor does not receive its own swing");
     }
 
     #[tokio::test]

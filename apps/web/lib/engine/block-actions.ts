@@ -31,6 +31,9 @@ export function createBlockActions(runtime: GameRuntime): void {
 
   // ---------- Build / break ----------
   runtime.primaryAction = function primaryAction(): void {
+    // Every attack tap swings the first-person held tool, whether it lands on a block, creature, player
+    // or nothing — the swing is purely visual (damage stays server-authoritative online).
+    runtime.view.swing();
     const block = runtime.raycastVoxel();
     const blockDistance = block ? new Vec3(block.hit[0] + 0.5, block.hit[1] + 0.5, block.hit[2] + 0.5).distanceTo(camera.position) : Infinity;
     if (runtime.coop) {

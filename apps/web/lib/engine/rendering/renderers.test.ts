@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createViewRenderer } from './renderers';
 import type { VoxelHit } from '../raycast';
@@ -44,5 +44,30 @@ describe('createViewRenderer', () => {
     view.present();
     view.present();
     expect(present()).toBe(2);
+  });
+
+  it('swings the first-person held tool then eases it back to rest', () => {
+    const { camera, view } = makeRenderer();
+    const handPivot = camera.getObjectByName('handPivot');
+    if (!handPivot) throw new Error('hand pivot missing');
+    const nowSpy = vi.spyOn(performance, 'now');
+    const pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+
+    // At rest the tool hangs at its resting rotation.
+    nowSpy.mockReturnValue(0);
+    view.renderView({ pose, aim: null });
+    const restRotation = handPivot.rotation.x;
+
+    // A swing rotates the tool forward (away from rest) mid-swing.
+    view.swing(0);
+    nowSpy.mockReturnValue(110);
+    view.renderView({ pose, aim: null });
+    expect(handPivot.rotation.x).toBeGreaterThan(restRotation);
+
+    // Once the swing window passes, the tool returns to rest.
+    nowSpy.mockReturnValue(1000);
+    view.renderView({ pose, aim: null });
+    expect(handPivot.rotation.x).toBe(restRotation);
+    nowSpy.mockRestore();
   });
 });

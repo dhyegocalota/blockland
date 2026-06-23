@@ -31,6 +31,13 @@ export const DIG_HITS = 2;
 // modified client can't spam faster than a legit hold.
 export const ATTACK_REPEAT_MS = 250;
 
+// How long one attack swing animation lasts: the held tool (first-person) and the avatar arm (third-
+// person) rotate forward then ease back over this window. Kept shorter than ATTACK_REPEAT_MS so a held
+// attack retriggers a fresh swing on every tap instead of stacking.
+export const SWING_DURATION_MS = 220;
+// Peak forward rotation of a swing, in radians (~46°): the angle the tool/arm reaches at the apex.
+export const SWING_PEAK_RAD = 0.8;
+
 // ---------- Block ids ----------
 export const AIR = 0;
 export const GRASS_ID = 1;

@@ -132,6 +132,7 @@ type BansMsg = Extract<ServerMsg, { t: 'bans' }>;
 type HurtMsg = Extract<ServerMsg, { t: 'hurt' }>;
 type RoleMsg = Extract<ServerMsg, { t: 'role' }>;
 type AttackMsg = Extract<ServerMsg, { t: 'attack' }>;
+type SwingMsg = Extract<ServerMsg, { t: 'swing' }>;
 type RespawnMsg = Extract<ServerMsg, { t: 'respawn' }>;
 type InventoryMsg = Extract<ServerMsg, { t: 'inventory' }>;
 type RosterMsg = Extract<ServerMsg, { t: 'roster' }>;
@@ -150,6 +151,7 @@ export interface NetHandlers {
   onHurt?(msg: HurtMsg): void;
   onRole?(msg: RoleMsg): void;
   onAttack?(msg: AttackMsg): void;
+  onSwing?(msg: SwingMsg): void;
   onRespawn?(msg: RespawnMsg): void;
   onInventory?(msg: InventoryMsg): void;
   onRoster?(msg: RosterMsg): void;
@@ -340,6 +342,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (msg.t === 'attack') {
       opts.handlers.onAttack?.(msg);
+      return;
+    }
+    if (msg.t === 'swing') {
+      opts.handlers.onSwing?.(msg);
       return;
     }
     if (msg.t === 'respawn') {
