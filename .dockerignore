@@ -1,0 +1,9 @@
+# Root build context (docker-compose builds the server from repo root so build.rs can read .git for the
+# deploy SHA). Keep the context lean: only apps/server + .git are needed; everything else is excluded.
+**/node_modules
+**/target
+**/.next
+**/.vercel
+apps/web
+.claude
+*.md
