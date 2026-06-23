@@ -148,19 +148,19 @@ impl Creature {
         let config = self.kind.config();
         let target = nearest_player(self.pos, players)
             .filter(|&(_, dist)| config.hostile && !peace && dist < CHASE_RADIUS);
+        // Once within biting distance a chaser orbits the player (a menacing circle) instead of standing
+        // still: it strafes tangentially at ORBIT_SPEED while staying at the stop distance, so it keeps
+        // touching the player and the room's bite still lands. Outside that band it homes in; with no
+        // target it wanders. The orbit direction is a pure function of (id, tick) — no RNG, reproducible.
+        let orbiting = matches!(target, Some((_, dist)) if dist < STOP_DISTANCE);
+        let speed = if orbiting { ORBIT_SPEED } else { config.speed };
         self.yaw = match target {
+            Some((player, _)) if orbiting => orbit_yaw(player, self.pos, self.id, tick),
             Some((player, _)) => (player[0] - self.pos[0]).atan2(player[1] - self.pos[2]),
             None => wander_yaw(self.id, tick),
         };
-        // Stop at biting distance so a chaser stands and attacks instead of walking into the player and
-        // jittering at their feet (it keeps facing them; the bite is applied by the room).
-        if let Some((_, dist)) = target {
-            if dist < STOP_DISTANCE {
-                return;
-            }
-        }
-        let next_x = self.pos[0] + self.yaw.sin() * config.speed * dt;
-        let next_z = self.pos[2] + self.yaw.cos() * config.speed * dt;
+        let next_x = self.pos[0] + self.yaw.sin() * speed * dt;
+        let next_z = self.pos[2] + self.yaw.cos() * speed * dt;
         let next_ground = ground_y(next_x, next_z, &height_at);
         // A creature can drop into a hole but climbs at most one block per step, so it never scales a
         // wall or pops two blocks out of a pit the player dug — it walks at its own level.
@@ -177,9 +177,16 @@ impl Creature {
     }
 }
 
-/// How close a chasing creature stops to the player — just inside bite range, so it attacks in place
-/// rather than overrunning the player and oscillating at their feet.
-const STOP_DISTANCE: f32 = 1.0;
+/// How close a chasing creature presses before it stops closing and orbits the player instead — just
+/// inside bite range, so a circling creature still touches and bites rather than overrunning the player
+/// and oscillating at their feet. Mirrors the web `CREATURE_STOP_DISTANCE`.
+const STOP_DISTANCE: f32 = 0.65;
+/// Tangential strafe speed (blocks/sec) of a hostile circling the player at the stop distance, and how
+/// often (in ticks) its orbit reverses so the menacing circle isn't a perfect loop. The circle direction
+/// is deterministic per id (no RNG), so server and client orbit identically. Mirrors the web
+/// `CREATURE_ORBIT_SPEED` / `CREATURE_ORBIT_FLIP_TICKS`.
+const ORBIT_SPEED: f32 = 2.4;
+const ORBIT_FLIP_TICKS: u64 = 80;
 /// Tallest step a creature may climb in a single move (one block).
 const MAX_CLIMB: f32 = 1.0;
 /// How fast a creature falls when it walks off a ledge (blocks per second), so drops are smooth
@@ -241,6 +248,18 @@ fn nearest_player(pos: [f32; 3], players: &[[f32; 2]]) -> Option<([f32; 2], f32)
         .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
+/// A heading perpendicular to the player so the creature orbits at its current radius. Even-id creatures
+/// circle one way, odd-id the other, and every ORBIT_FLIP_TICKS the whole orbit reverses — all pure
+/// functions of (id, tick), so the circle is reproducible on server and client with no RNG. Mirrors the
+/// web `orbitYaw`.
+fn orbit_yaw(player: [f32; 2], pos: [f32; 3], id: u32, tick: u64) -> f32 {
+    let toward_player = (player[0] - pos[0]).atan2(player[1] - pos[2]);
+    let clockwise = id.is_multiple_of(2);
+    let flipped = !(tick / ORBIT_FLIP_TICKS).is_multiple_of(2);
+    let sign = if clockwise == flipped { 1.0 } else { -1.0 };
+    toward_player + sign * (PI / 2.0)
+}
+
 /// A wander heading derived purely from (id, tick): smooth, reproducible, and seedless. The id offsets
 /// each creature's phase so they don't all turn in lockstep.
 fn wander_yaw(id: u32, tick: u64) -> f32 {
@@ -295,24 +314,57 @@ mod tests {
     }
 
     #[test]
-    fn a_chaser_stops_at_biting_distance_instead_of_overrunning_the_player() {
+    fn a_chaser_orbits_the_player_within_biting_distance_instead_of_overrunning() {
         let player = [[5.0, 5.0]];
-        // Spawned 0.5 away (inside STOP_DISTANCE): a hostile creature should hold its ground and bite,
-        // not step into the player and jitter at their feet.
-        let mut close = Creature::spawn(1, CreatureKind::Spider, 5.5, 5.0, flat());
-        let before = close.pos;
+        // Spawned 0.5 away (inside STOP_DISTANCE): a hostile creature should circle the player rather
+        // than walk into them and jitter at their feet — its angle around the player changes between
+        // ticks while it stays near the engage band (so the room's bite still lands).
+        let mut close = Creature::spawn(2, CreatureKind::Spider, 5.5, 5.0, flat());
+        let angle_to_player =
+            |c: &Creature| (c.pos[0] - player[0][0]).atan2(c.pos[2] - player[0][1]);
+        let radius = |c: &Creature| {
+            ((c.pos[0] - player[0][0]).powi(2) + (c.pos[2] - player[0][1]).powi(2)).sqrt()
+        };
+        let before_angle = angle_to_player(&close);
         close.advance(&player, false, 0.1, 0, flat());
-        assert_eq!(
-            close.pos[0], before[0],
-            "a creature within stop distance holds still"
+        assert!(
+            (angle_to_player(&close) - before_angle).abs() > 1e-3,
+            "a creature within stop distance strafes around the player"
         );
-        assert_eq!(close.pos[2], before[2]);
+        assert!(
+            radius(&close) < STOP_DISTANCE + 0.5,
+            "the orbit keeps it near the engage band, radius={}",
+            radius(&close)
+        );
         // From outside biting distance it still closes in.
         let mut far = Creature::spawn(2, CreatureKind::Spider, 9.0, 5.0, flat());
         far.advance(&player, false, 0.1, 0, flat());
         assert!(
             far.pos[0] < 9.0,
             "a chaser outside biting distance moves closer"
+        );
+    }
+
+    #[test]
+    fn orbit_yaw_is_perpendicular_and_flips_by_id_and_cadence() {
+        let player = [0.0_f32, 5.0];
+        let pos = [0.0_f32, 0.0, 4.0];
+        let toward = (player[0] - pos[0]).atan2(player[1] - pos[2]);
+        let gap = |a: f32, b: f32| (a - b).sin().atan2((a - b).cos()).abs();
+        // Perpendicular to the player.
+        assert!((gap(orbit_yaw(player, pos, 2, 0), toward) - PI / 2.0).abs() < 1e-4);
+        // Even and odd ids circle opposite ways (a half-turn apart).
+        assert!(
+            (gap(orbit_yaw(player, pos, 2, 0), orbit_yaw(player, pos, 3, 0)) - PI).abs() < 1e-4
+        );
+        // The orbit reverses on the flip cadence.
+        assert!(
+            (gap(
+                orbit_yaw(player, pos, 2, 0),
+                orbit_yaw(player, pos, 2, ORBIT_FLIP_TICKS)
+            ) - PI)
+                .abs()
+                < 1e-4
         );
     }
 

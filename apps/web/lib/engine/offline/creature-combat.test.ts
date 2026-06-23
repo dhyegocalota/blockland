@@ -14,12 +14,16 @@ describe('bobOffset', () => {
 });
 
 describe('creatureBitesPlayer', () => {
-  it('bites when close and level', () => {
+  it('bites only when essentially touching the player', () => {
     expect(creatureBitesPlayer({ horizontalDistance: 0.5, verticalGap: 1 })).toBe(true);
   });
 
-  it('misses when too far away', () => {
+  it('misses a creature about 1.5 blocks away', () => {
     expect(creatureBitesPlayer({ horizontalDistance: 1.5, verticalGap: 0 })).toBe(false);
+  });
+
+  it('still bites a creature a block below the feet', () => {
+    expect(creatureBitesPlayer({ horizontalDistance: 0.5, verticalGap: 1 })).toBe(true);
   });
 
   it('misses when on a different level', () => {

@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { type CreatureKind, CREATURE_DEFS, hitReward, stepCreatureDirection } from './creatures';
+import { CREATURE_ORBIT_FLIP_TICKS } from '../constants';
 
-const base = { dist: 2, dir: 0.5, timer: 1, random: () => 0.5 };
+const base = { dist: 2, dir: 0.5, timer: 1, random: () => 0.5, id: 1, tick: 1 };
 const KINDS: CreatureKind[] = ['animal', 'monster'];
+
+function headingGap(a: number, b: number): number {
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
 
 describe('CREATURE_DEFS', () => {
   it('lists every spawnable creature with an i18n name key', () => {
@@ -110,6 +115,26 @@ describe('stepCreatureDirection', () => {
     const motion = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 30, isMonster: true, peaceful: false, dir: 2.5, timer: 1 });
     expect(motion.dir).toBe(2.5);
     expect(motion.timer).toBe(1);
+  });
+
+  it('strafes perpendicular to the player once within the stop/engage band', () => {
+    const towardPlayer = Math.atan2(1, 0);
+    const motion = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 0.5, isMonster: true, peaceful: false, id: 2, tick: 0 });
+    const offset = Math.abs(motion.dir - towardPlayer);
+    expect(offset).toBeCloseTo(Math.PI / 2, 5);
+  });
+
+  it('circles even and odd ids in opposite directions', () => {
+    const even = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 0.5, isMonster: true, peaceful: false, id: 2, tick: 0 });
+    const odd = stepCreatureDirection({ ...base, toPlayerX: 1, toPlayerZ: 0, dist: 0.5, isMonster: true, peaceful: false, id: 3, tick: 0 });
+    expect(headingGap(even.dir, odd.dir)).toBeCloseTo(Math.PI, 5);
+  });
+
+  it('reverses the orbit on the flip cadence so the circle is not a perfect loop', () => {
+    const args = { ...base, toPlayerX: 1, toPlayerZ: 0, dist: 0.5, isMonster: true, peaceful: false, id: 2 };
+    const early = stepCreatureDirection({ ...args, tick: 0 });
+    const late = stepCreatureDirection({ ...args, tick: CREATURE_ORBIT_FLIP_TICKS });
+    expect(headingGap(early.dir, late.dir)).toBeCloseTo(Math.PI, 5);
   });
 });
 

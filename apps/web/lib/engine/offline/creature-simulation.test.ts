@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCreatureSimulation } from './creature-simulation';
 import { CREATURE_DEFS } from './creatures';
 import { Vec3 } from '../vec3';
-import { EYE_HEIGHT, HEART_DROP_TTL_MS } from '../constants';
+import { CREATURE_STOP_DISTANCE, EYE_HEIGHT, HEART_DROP_TTL_MS } from '../constants';
 import { t } from '../../i18n';
 import type { Creature, GameRuntime } from '../runtime';
 
@@ -28,7 +28,7 @@ function makeRuntime() {
     syncCreatureMesh,
     knockbackCreatureMesh,
     disposeCreatureMesh,
-    hurtPlayer: vi.fn(),
+    flashDamage: vi.fn(),
     spawnPoof: vi.fn(),
     toast: vi.fn(),
     blip: vi.fn(),
@@ -41,7 +41,7 @@ function makeRuntime() {
 
 function fakeCreature(typeKey: string): Creature {
   const def = CREATURE_DEFS[typeKey];
-  return { typeKey, def, pos: new Vec3(0, 0, 0), mesh: fakeMesh(), body: {} as Creature['body'], hp: 0, dir: 0, timer: 0, bob: 0, flash: 0 };
+  return { id: 1, typeKey, def, pos: new Vec3(0, 0, 0), mesh: fakeMesh(), body: {} as Creature['body'], hp: 0, dir: 0, timer: 0, bob: 0, flash: 0 };
 }
 
 describe('createCreatureSimulation', () => {
@@ -95,6 +95,27 @@ describe('createCreatureSimulation', () => {
     runtime.updateCreatures(0.016);
     const gap = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
     expect(gap).toBeGreaterThan(0.5);
+  });
+
+  it('orbits a hostile around the player within the engage band and still bites it', () => {
+    const { runtime } = makeRuntime();
+    const player = runtime.state.player;
+    player.pos.set(20, EYE_HEIGHT, 20);
+    const spider = fakeCreature('spider');
+    spider.hp = spider.def.hp;
+    spider.pos = new Vec3(20.5, 0, 20);
+    runtime.creatures.push(spider);
+    const angleToPlayer = () => Math.atan2(spider.pos.x - player.pos.x, spider.pos.z - player.pos.z);
+    const before = angleToPlayer();
+    runtime.updateCreatures(0.05);
+    const radiusAfterFirst = Math.hypot(spider.pos.x - player.pos.x, spider.pos.z - player.pos.z);
+    runtime.updateCreatures(0.05);
+    const after = angleToPlayer();
+    const radiusAfterSecond = Math.hypot(spider.pos.x - player.pos.x, spider.pos.z - player.pos.z);
+    expect(after).not.toBeCloseTo(before, 3);
+    expect(radiusAfterFirst).toBeLessThan(CREATURE_STOP_DISTANCE + 0.5);
+    expect(radiusAfterSecond).toBeLessThan(CREATURE_STOP_DISTANCE + 0.5);
+    expect(player.hearts).toBeLessThan(3);
   });
 
   it('updateHeartDrops heals a damaged player who walks over a drop and consumes it', () => {

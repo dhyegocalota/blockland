@@ -52,12 +52,15 @@ const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
 // web rules (HEART_PICKUP_RADIUS, HEART_DROP_TTL_MS) so healing is identical online and offline.
 const PICKUP_RADIUS: f32 = 1.4;
 const HEART_TTL: Duration = Duration::from_millis(20_000);
-const HURT_RANGE: f32 = 1.2;
+// Horizontal bite reach: only a creature essentially touching the player bites. Kept just above the
+// chaser's stop/orbit distance (creatures::STOP_DISTANCE) so a creature pressed up against — or circling
+// — the player still lands the bite, but one ~1.5 blocks out does not. Mirrors the web HIT_RANGE.
+const HURT_RANGE: f32 = 0.9;
 // How far above/below the player's feet a creature can be and still bite. Symmetric + generous to match
-// the offline rule (HIT_VERTICAL_GAP on the web): a ground creature whose center sits ~0.5 below the
-// feet of a player standing on top of a surface block was right on the old tight 0.5 lower bound and so
-// mostly missed — "the monsters aren't at the right height to attack".
-const HURT_VERTICAL_GAP: f32 = 1.6;
+// the offline rule (HIT_VERTICAL_GAP on the web): a ground creature whose center sits ~1 block below the
+// feet of a player standing on top of a surface block must still be hit — do not regress that to a tight
+// bound, or "the monsters aren't at the right height to attack" returns.
+const HURT_VERTICAL_GAP: f32 = 1.3;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
 const DIG_HITS: u8 = 2;

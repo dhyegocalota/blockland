@@ -68,6 +68,14 @@ export const HEART_BOB_SPEED = 3;
 // Two creatures closer than this on the ground push apart so they never stack or overlap into one
 // blob. Mirrors the Rust server's CREATURE_SEPARATION so online truth and offline prediction agree.
 export const CREATURE_SEPARATION = 0.9;
+// A chasing hostile stops closing once this near the player and instead orbits it; just inside bite
+// range so a circling creature still touches and bites. Mirrors the Rust server's CREATURE_STOP_DISTANCE.
+export const CREATURE_STOP_DISTANCE = 0.65;
+// Tangential strafe speed (blocks/sec) of a hostile circling the player at the stop distance, and how
+// often (in ticks) its orbit direction flips so the menacing circle isn't a perfect loop. Deterministic
+// per creature (direction from its id); mirrors the Rust server so online and offline circle identically.
+export const CREATURE_ORBIT_SPEED = 2.4;
+export const CREATURE_ORBIT_FLIP_TICKS = 80;
 // The spawn point sits this many cells south of the world centre (so the player faces the monument).
 export const SPAWN_OFFSET_Z = 4;
 // When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
