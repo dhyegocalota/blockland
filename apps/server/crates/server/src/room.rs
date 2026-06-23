@@ -1089,6 +1089,9 @@ impl Room {
         }
         if let Some(m) = edit_out {
             self.broadcast(&m);
+            // Placing is an arm action too: swing the placer's avatar for everyone else (a break in co-op
+            // comes through Dig, which already swings via accept_primary_action).
+            self.broadcast_except(id, &ServerMsg::Swing { id });
             self.lift_stuck_players();
         }
         if let Some(ServerMsg::EditBatch { edits, .. }) = batch_out.as_ref() {
@@ -4822,6 +4825,32 @@ mod tests {
             .any(|m| matches!(m, ServerMsg::Edit { .. }));
         assert!(!placed, "a rejected place is never broadcast");
         let _ = rx.try_recv_msg();
+    }
+
+    #[tokio::test]
+    async fn placing_a_block_swings_the_placers_avatar_for_everyone_else() {
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        let mut other_rx = add_player(&mut room, 2, false);
+        room.world.set(10, 20, 11, sim::AIR);
+        place_player_at(&mut room, 1, 10, 20, 10);
+
+        room.on_input(
+            1,
+            ClientMsg::Edit {
+                op: EditOp::Place,
+                x: 10,
+                y: 20,
+                z: 11,
+                id: sim::STONE,
+            },
+        );
+        let swung = std::iter::from_fn(|| other_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Swing { id: 1 }));
+        assert!(swung, "the other player sees the placer swing");
+        let echoed = std::iter::from_fn(|| rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Swing { .. }));
+        assert!(!echoed, "the placer does not receive its own swing");
     }
 
     #[tokio::test]

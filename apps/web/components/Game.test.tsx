@@ -72,13 +72,17 @@ describe('Game', () => {
   it('shows the Online mode badge when playing online', () => {
     useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, solo: false }));
     render(<Game />);
-    expect(document.getElementById('mode')?.textContent).toContain('Online');
+    const badge = document.getElementById('modeBadge');
+    expect(badge?.textContent).toContain('Online');
+    expect(badge?.className).toBe('online');
   });
 
   it('shows the Offline mode badge when playing solo', () => {
     useGame.mockReturnValue(gameState({ solo: true }));
     render(<Game />);
-    expect(document.getElementById('mode')?.textContent).toContain('Offline');
+    const badge = document.getElementById('modeBadge');
+    expect(badge?.textContent).toContain('Offline');
+    expect(badge?.className).toBe('offline');
   });
 
   it('bans a pending player from the admin approval list', () => {

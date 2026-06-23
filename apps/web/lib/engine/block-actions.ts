@@ -93,6 +93,9 @@ export function createBlockActions(runtime: GameRuntime): void {
 
   runtime.placeBlock = function placeBlock(): void {
     const { state } = runtime;
+    // Placing swings the first-person tool too, and the server echoes a Swing so others see the avatar
+    // place — same gesture as an attack tap (see primaryAction).
+    runtime.view.swing();
     const r = runtime.raycastVoxel();
     if (!r) return;
     const [px, py, pz] = r.place;
