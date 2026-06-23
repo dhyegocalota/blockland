@@ -61,6 +61,21 @@ describe('LobbyAdmin', () => {
     expect(container.querySelector('#adminReset')).toBeInTheDocument();
   });
 
+  it('no longer offers a per-player report button (feature removed)', () => {
+    const { container } = render(
+      <LobbyAdmin lobby={makeLobby({ isAdmin: true, roster: [{ id: 2, name: 'Kid', self: false, admin: false, moderator: false }] })} />,
+    );
+    const players = container.querySelector('#adminPlayers') as HTMLElement;
+    expect(within(players).queryByText('Reportar')).toBeNull();
+    expect(container.querySelector('#adminReports')).toBeNull();
+  });
+
+  it('keeps the lobby chat + hours-played reports, labelled last 30 days', () => {
+    const { container } = render(<LobbyAdmin lobby={makeLobby({ isAdmin: true })} />);
+    expect(container.querySelector('#adminPlaytimeReport')).toBeInTheDocument();
+    expect(container.querySelector('#adminChatReport')).toBeInTheDocument();
+  });
+
   it('bans a pending player from the approval list', () => {
     const banPending = vi.fn();
     const { container } = render(

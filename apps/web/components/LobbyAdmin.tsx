@@ -17,7 +17,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
   const {
     state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
-    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending, bans, unban, reportPlayer, reports,
+    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending, bans, unban,
     setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
   } = lobby;
 
@@ -58,7 +58,6 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
                   {isAdmin && <button className="role" onClick={() => setRole(player.id, 'admin')}>{t('game_admin.make_admin')}</button>}
                   {isAdmin && <button className="role" onClick={() => setRole(player.id, 'player')}>{t('game_admin.make_player')}</button>}
                   {(isAdmin || isModerator) && <button className="kick" onClick={() => kickPlayer(player.id)}>{t('game_admin.kick')}</button>}
-                  {(isAdmin || isModerator) && <button className="report" onClick={() => reportPlayer(player.id)}>{t('game_admin.report')}</button>}
                   {isAdmin && <button className="ban" onClick={() => banPlayer(player.id)}>{t('game_admin.ban')}</button>}
                 </span>
               </li>
@@ -111,19 +110,6 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
                   <span className="adminPlayerActions">
                     <button className="role" onClick={() => unban(entry.ip)}>{t('game_admin.unban')}</button>
                   </span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {(isAdmin || isModerator) && reports.length > 0 && (
-          <>
-            <span className="adminLabel">{t('game_admin.reports')}</span>
-            <ul id="adminReports">
-              {reports.map((entry, index) => (
-                <li key={`${entry.target}-${index}`}>
-                  <span className="playerName">{entry.target}</span>
-                  <span className="reportBy">{t('game_admin.reported_by', { name: entry.by })}</span>
                 </li>
               ))}
             </ul>
