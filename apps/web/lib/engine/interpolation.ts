@@ -25,16 +25,24 @@ export interface RemotePose {
 export const INTERP_DELAY_MS = 100;
 // Drop samples older than this to bound memory and ignore stale history after a reconnect.
 export const INTERP_BUFFER_MS = 1000;
+// When a snapshot is late, dead-reckon the entity forward at its last velocity instead of freezing —
+// but only up to this many ms past the newest sample. Long enough to bridge one missed snapshot,
+// short enough that a wrong velocity guess never flings the entity far; past it we hold the pose.
+export const EXTRAPOLATE_MAX_MS = 200;
 
 function lerp(a: number, b: number, ratio: number): number {
   return a + (b - a) * ratio;
 }
 
-function lerpAngle(a: number, b: number, ratio: number): number {
+function shortestAngleDelta(a: number, b: number): number {
   let delta = (b - a) % (Math.PI * 2);
   if (delta > Math.PI) delta -= Math.PI * 2;
   if (delta < -Math.PI) delta += Math.PI * 2;
-  return a + delta * ratio;
+  return delta;
+}
+
+function lerpAngle(a: number, b: number, ratio: number): number {
+  return a + shortestAngleDelta(a, b) * ratio;
 }
 
 export class RemoteInterpolator {
@@ -54,7 +62,7 @@ export class RemoteInterpolator {
     const first = this.samples[0];
     if (renderTime <= first.t) return toPose(first);
     const last = this.samples[this.samples.length - 1];
-    if (renderTime >= last.t) return toPose(last);
+    if (renderTime >= last.t) return this.extrapolate(renderTime, last);
 
     for (let i = 0; i < this.samples.length - 1; i++) {
       const a = this.samples[i];
@@ -71,6 +79,22 @@ export class RemoteInterpolator {
       };
     }
     return toPose(last);
+  }
+
+  private extrapolate(renderTime: number, last: RemoteSample): RemotePose {
+    const prev = this.samples[this.samples.length - 2];
+    if (!prev) return toPose(last);
+    const span = last.t - prev.t;
+    if (span === 0) return toPose(last);
+    const ahead = Math.min(renderTime - last.t, EXTRAPOLATE_MAX_MS);
+    const ratio = ahead / span;
+    return {
+      x: last.x + (last.x - prev.x) * ratio,
+      y: last.y + (last.y - prev.y) * ratio,
+      z: last.z + (last.z - prev.z) * ratio,
+      yaw: last.yaw + shortestAngleDelta(prev.yaw, last.yaw) * ratio,
+      pitch: last.pitch + (last.pitch - prev.pitch) * ratio,
+    };
   }
 }
 
