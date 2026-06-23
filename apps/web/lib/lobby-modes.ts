@@ -4,6 +4,7 @@
 // here, on the client, because an offline game never reaches the server.
 
 import type { Tenant } from './builtins';
+import type { NetState } from './net';
 
 export enum ModeBlockReason {
   Allowed = 'allowed',
@@ -98,4 +99,36 @@ export function shouldPushToOnline({
 }): boolean {
   if (isLobbyAdmin) return false;
   return gates.offline.disabled && !gates.online.disabled && alreadySolo;
+}
+
+// Why the lobby is blocking the player from starting a game, surfaced as a big banner on the start
+// screen. `TimeUp` is the play-time budget being spent (server rejects the join with `time_up`);
+// `Paused` is the world being suspended by an admin (a normal player's join is rejected with the
+// `suspended`→`room_closed` terminal state; an admin/moderator sees it proactively via the live
+// lobby-admin `room.suspended`). Returns null when nothing is blocking.
+export enum LobbyBlockKind {
+  TimeUp = 'time_up',
+  Paused = 'paused',
+}
+
+export interface LobbyBlock {
+  kind: LobbyBlockKind;
+  key: string;
+}
+
+const LOBBY_BLOCK_KEYS: Record<LobbyBlockKind, string> = {
+  [LobbyBlockKind.TimeUp]: 'lobby.block_time_up',
+  [LobbyBlockKind.Paused]: 'lobby.block_paused',
+};
+
+export function lobbyBlockBanner({
+  netState,
+  suspended,
+}: {
+  netState: NetState | null;
+  suspended: boolean;
+}): LobbyBlock | null {
+  if (netState === 'time_up') return { kind: LobbyBlockKind.TimeUp, key: LOBBY_BLOCK_KEYS[LobbyBlockKind.TimeUp] };
+  if (netState === 'room_closed' || suspended) return { kind: LobbyBlockKind.Paused, key: LOBBY_BLOCK_KEYS[LobbyBlockKind.Paused] };
+  return null;
 }
