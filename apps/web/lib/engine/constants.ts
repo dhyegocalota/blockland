@@ -78,6 +78,10 @@ export const CREATURE_ORBIT_SPEED = 2.4;
 export const CREATURE_ORBIT_FLIP_TICKS = 80;
 // The spawn point sits this many cells south of the world centre (so the player faces the monument).
 export const SPAWN_OFFSET_Z = 4;
+// Each spawn picks a random base column within this many cells of the centre before the slot search,
+// so players land scattered around the monument area instead of stacked on the exact centre. Mirrors
+// the Rust server's SPAWN_AREA_RADIUS.
+export const SPAWN_AREA_RADIUS = 12;
 // When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
 // player), the spiral search nudges to the nearest clear column within this many cells. Mirrors the
 // Rust server's SPAWN_SEARCH_RADIUS.

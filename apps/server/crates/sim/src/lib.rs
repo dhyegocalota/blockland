@@ -14,6 +14,10 @@ pub const WORLD_SIZE: i32 = 163840;
 /// Blocks the spawn sits north of the exact world center so a player never lands inside the welcome
 /// monument (which the shared worldgen builds at the center). Mirrors the web `spawnPoint` z offset.
 const SPAWN_MONUMENT_CLEARANCE: i32 = 4;
+/// Each spawn picks a random base column within this many cells of the centre before the slot search,
+/// so players land scattered around the monument area instead of stacked on the exact centre. Mirrors
+/// the web `SPAWN_AREA_RADIUS`.
+pub const SPAWN_AREA_RADIUS: i32 = 12;
 /// When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
 /// player), the spiral search nudges to the nearest clear column within this many cells. Mirrors the
 /// web `SPAWN_SEARCH_RADIUS`.
@@ -428,6 +432,19 @@ pub fn spawn_column_clear(
         .any(|a| (a[0] - column_x).hypot(a[1] - column_z) < clearance_gap)
 }
 
+/// Pick a random base spawn column within `SPAWN_AREA_RADIUS` of the centre (the fixed spawn base),
+/// given two injected `[0, 1)` draws (one per axis). The slot search then starts here, so each spawn
+/// lands scattered around the monument instead of always on the exact centre while still resolving to
+/// a clear column. Deterministic in its draws (no `rand` here) so the sim stays pure; room.rs supplies
+/// the randomness. Mirrors the web `randomSpawnBase`.
+pub fn random_spawn_base(random_x: f32, random_z: f32) -> (i32, i32) {
+    let (center_x, center_z) = World::spawn_base();
+    let span = (SPAWN_AREA_RADIUS * 2 + 1) as f32;
+    let offset_x = (random_x * span).floor() as i32 - SPAWN_AREA_RADIUS;
+    let offset_z = (random_z * span).floor() as i32 - SPAWN_AREA_RADIUS;
+    (center_x + offset_x, center_z + offset_z)
+}
+
 /// Walk outward ring by ring (Chebyshev radius 0, 1, 2, …) from the base column and return the first
 /// column where `is_clear` is true; if nothing within `max_radius` is clear, fall back to the base.
 /// Ring r visits its perimeter in a fixed order: each row dz from -r..=r, and within a row the two
@@ -797,6 +814,23 @@ mod tests {
             "spawn is offset clear of the centre monument, got z offset {}",
             s[2] - centre
         );
+    }
+
+    #[test]
+    fn random_spawn_base_stays_within_the_spawn_area_of_the_centre() {
+        let (center_x, center_z) = World::spawn_base();
+        for i in 0..100 {
+            let rx = i as f32 / 100.0;
+            let rz = ((i * 7) % 100) as f32 / 100.0;
+            let (x, z) = random_spawn_base(rx, rz);
+            assert!((x - center_x).abs() <= SPAWN_AREA_RADIUS);
+            assert!((z - center_z).abs() <= SPAWN_AREA_RADIUS);
+        }
+    }
+
+    #[test]
+    fn random_spawn_base_differs_for_different_draws() {
+        assert_ne!(random_spawn_base(0.05, 0.05), random_spawn_base(0.95, 0.95));
     }
 
     #[test]

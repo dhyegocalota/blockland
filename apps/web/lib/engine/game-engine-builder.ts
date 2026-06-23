@@ -9,9 +9,9 @@ import { Vec3 } from './vec3';
 import { PLATFORM_NAME, type Brand } from '../tenants';
 import { t } from '../i18n';
 import { debug } from '../log';
-import { CHUNK, DEFAULT_APP_VERSION, EYE_HEIGHT, FACE_ID, SIZE_X, SIZE_Y, SIZE_Z, SPAWN_CLEARANCE_GAP, SPAWN_OFFSET_Z, SPAWN_SEARCH_RADIUS } from './constants';
+import { CHUNK, DEFAULT_APP_VERSION, EYE_HEIGHT, FACE_ID, SIZE_X, SIZE_Y, SIZE_Z, SPAWN_AREA_RADIUS, SPAWN_CLEARANCE_GAP, SPAWN_OFFSET_Z, SPAWN_SEARCH_RADIUS } from './constants';
 import { type BlockDef } from './blocks';
-import { findSpawnSlot, spawnColumnClear } from './spawn-slot';
+import { findSpawnSlot, randomSpawnBase, spawnColumnClear } from './spawn-slot';
 import { VoxelWorld } from './world';
 import { BlockInventory } from './inventory';
 import { clearFeetAbove } from './actors';
@@ -116,11 +116,13 @@ export class GameEngineBuilder {
     // flags default to the offline sandbox (peaceful, infinite resources, no gates).
     const columnSurfaceY = (x: number, z: number): number =>
       groundHeightAt({ isSolidAt: (y) => world.isSolid(x, y, z) }) - 1;
-    // Nudge the fixed spawn to the nearest clear column (avoiding terrain, the monument, built blocks
-    // and any creature/player) before resolving the standing position. Actors come from the live
-    // world: offline creatures and, when connected, the server's creatures and remote players.
+    // Pick a fresh random base within the spawn area (so players land scattered, not stacked on the
+    // centre), then nudge it to the nearest clear column (avoiding terrain, the monument, built blocks
+    // and any creature/player) before resolving the standing position. Actors come from the live world:
+    // offline creatures and, when connected, the server's creatures and remote players.
     const spawnPoint = (actors: Array<{ x: number; z: number }>): Vec3 => {
-      const baseX = SIZE_X >> 1, baseZ = (SIZE_Z >> 1) + SPAWN_OFFSET_Z;
+      const centerX = SIZE_X >> 1, centerZ = (SIZE_Z >> 1) + SPAWN_OFFSET_Z;
+      const { x: baseX, z: baseZ } = randomSpawnBase({ centerX, centerZ, radius: SPAWN_AREA_RADIUS, random: Math.random });
       const slot = findSpawnSlot({
         baseX, baseZ, maxRadius: SPAWN_SEARCH_RADIUS,
         isClear: (x, z) => spawnColumnClear({
