@@ -5,11 +5,18 @@ import type { RosterEntry } from './coop';
 
 export const ADMIN_BADGE = '👑';
 export const MODERATOR_BADGE = '🧒';
+export const PVP_KILL_BADGE = '⚔️';
 
 export function roleBadge(role: { admin: boolean; moderator: boolean }): string | null {
   if (role.admin) return ADMIN_BADGE;
   if (role.moderator) return MODERATOR_BADGE;
   return null;
+}
+
+// The presence roster ranked for PvP: most kills first, ties broken by name so the order is stable.
+// Used only when the room has pvp on; otherwise the roster renders in its arrival order.
+export function pvpRanked(roster: RosterEntry[]): RosterEntry[] {
+  return [...roster].sort((a, b) => b.pvpKills - a.pvpKills || a.name.localeCompare(b.name));
 }
 
 // The online names that carry an admin/mod badge, for the lobby presence line where we only have

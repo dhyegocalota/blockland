@@ -44,6 +44,7 @@ export interface RosterEntry extends RosterMember {
   self: boolean;
   admin: boolean;
   moderator: boolean;
+  pvpKills: number;
 }
 
 export interface RoomState {
@@ -245,7 +246,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   const heartDrops = new Map<number, { x: number; y: number; z: number }>();
   // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
   // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
-  const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean }>();
+  const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean; pvpKills: number }>();
   let selfId: number | null = null;
   let backendVersion = '';
   let lastMoveSentAt = 0;
@@ -412,7 +413,7 @@ export function createCoop(opts: CoopOptions): CoopController {
             .filter((p) => identities.has(p.id))
             .map((p) => {
               const identity = identities.get(p.id)!;
-              return { id: p.id, name: identity.name, self: p.id === selfId, admin: identity.admin, moderator: identity.moderator };
+              return { id: p.id, name: identity.name, self: p.id === selfId, admin: identity.admin, moderator: identity.moderator, pvpKills: identity.pvpKills };
             }),
         );
         opts.hud.onPing(selfPing);
@@ -521,7 +522,7 @@ export function createCoop(opts: CoopOptions): CoopController {
       },
       onRoster: (msg) => {
         identities.clear();
-        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair, admin: p.admin, moderator: p.moderator });
+        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair, admin: p.admin, moderator: p.moderator, pvpKills: p.pvp_kills });
         debug('coop', 'roster', { players: msg.players.length });
       },
       onError: (code, message) => {

@@ -173,6 +173,9 @@ struct Player {
     pitch: f32,
     ping_ms: u32,
     score: u32,
+    // PvP kills landed by this player (a hit that brought another player to 0 hp). Carried in the
+    // Roster so the presence list can rank players when pvp is on; never affects the leaderboard.
+    pvp_kills: u32,
     conn: mpsc::Sender<Outbound>,
     last_seen: Instant,
     last_move: Instant,
@@ -650,6 +653,7 @@ impl Room {
             pitch: 0.0,
             ping_ms: 0,
             score: 0,
+            pvp_kills: 0,
             conn: conn.clone(),
             last_seen: now,
             last_move: now,
@@ -1249,6 +1253,7 @@ impl Room {
             tracing::debug!(%admin_id, ban, "remove ignored: insufficient authority");
             return;
         }
+        let actor_is_admin = admin.is_admin;
         let admin_name = admin.name.clone();
         let Some(target) = self.players.get(&target_id) else {
             return;
@@ -1257,6 +1262,11 @@ impl Room {
         // ban can't lock a fellow grown-up/helper out of the world.
         if ban && (target.is_admin || target.is_moderator) {
             tracing::debug!(%admin_id, %target_id, "ban ignored: target is an admin/moderator");
+            return;
+        }
+        // A moderator (kid) may not kick an admin (parent); an admin can still kick anyone.
+        if !ban && !actor_is_admin && target.is_admin {
+            tracing::debug!(%admin_id, %target_id, "kick ignored: moderator cannot kick an admin");
             return;
         }
         let target_ip = target.ip;
@@ -1351,8 +1361,11 @@ impl Room {
     /// Zero every live player's score and clear the tenant's persisted leaderboard. Shared by the
     /// standalone "reset scores" action and the full world reset; callers do their own admin gating.
     fn wipe_all_scores(&mut self) {
+        // Zero every progress metric except the banked inventory: stars/score and the live pvp-kill
+        // count here; the persisted record/trophies (the leaderboard) below via db.reset_scores.
         for p in self.players.values_mut() {
             p.score = 0;
+            p.pvp_kills = 0;
         }
         let db = self.hub.db.clone();
         let tenant = self.key.0.clone();
@@ -1862,6 +1875,9 @@ impl Room {
             },
         );
         if died {
+            if let Some(attacker) = self.players.get_mut(&attacker_id) {
+                attacker.pvp_kills = attacker.pvp_kills.saturating_add(1);
+            }
             self.respawn(target_id);
         }
         tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
@@ -1898,6 +1914,7 @@ impl Room {
                     hair: p.hair.clone(),
                     admin: p.is_admin,
                     moderator: p.is_moderator,
+                    pvp_kills: p.pvp_kills,
                 })
                 .collect(),
         }
@@ -2745,6 +2762,7 @@ mod tests {
             pitch: 0.0,
             ping_ms: 0,
             score: 0,
+            pvp_kills: 0,
             conn,
             last_seen: now,
             last_move: now,
@@ -3222,6 +3240,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pvp_kill_credits_the_attacker_and_respawns_the_victim() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        let mut target_rx = add_player(&mut room, 2, false);
+        room.pvp = true;
+        // Both at the origin (within MELEE_RANGE); the victim is one hit from death.
+        room.players.get_mut(&2).unwrap().hp = 1;
+        room.on_attack_player(1, 2);
+        assert_eq!(
+            room.players.get(&1).unwrap().pvp_kills,
+            1,
+            "the killer's pvp-kill count rises by one"
+        );
+        assert_eq!(
+            room.players.get(&2).unwrap().hp,
+            MAX_HP,
+            "the victim respawns at full health"
+        );
+        assert!(
+            (0..50)
+                .filter_map(|_| target_rx.try_recv_msg().ok())
+                .any(|m| matches!(m, ServerMsg::Respawn { hp, .. } if hp == MAX_HP)),
+            "the victim is told to respawn",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_lethal_pvp_hit_does_not_credit_a_kill() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        add_player(&mut room, 2, false);
+        room.pvp = true;
+        // The victim has hearts to spare, so the hit hurts but does not kill.
+        room.on_attack_player(1, 2);
+        assert_eq!(
+            room.players.get(&1).unwrap().pvp_kills,
+            0,
+            "no kill is credited while the victim survives",
+        );
+    }
+
+    #[tokio::test]
     async fn dig_breaks_only_after_enough_taps_and_resets_on_switch() {
         let mut room = test_room().await;
         let mut rx = add_player(&mut room, 1, false);
@@ -3363,9 +3423,21 @@ mod tests {
         add_player(&mut room, 2, false);
         room.players.get_mut(&1).unwrap().score = 5;
         room.players.get_mut(&2).unwrap().score = 9;
+        room.players.get_mut(&2).unwrap().pvp_kills = 4;
+        room.players.get_mut(&2).unwrap().inventory.insert(1, 3);
         room.on_admin_reset_scores(1);
         assert_eq!(room.players.get(&1).unwrap().score, 0);
         assert_eq!(room.players.get(&2).unwrap().score, 0);
+        assert_eq!(
+            room.players.get(&2).unwrap().pvp_kills,
+            0,
+            "the pvp-kill count is wiped too",
+        );
+        assert_eq!(
+            room.players.get(&2).unwrap().inventory.get(&1),
+            Some(&3),
+            "the banked inventory is never touched by a score reset",
+        );
         assert!(
             (0..50)
                 .filter_map(|_| admin_rx.try_recv_msg().ok())
@@ -3588,6 +3660,35 @@ mod tests {
 
         room.on_input(2, ClientMsg::AdminKick { id: 3 });
         assert!(room.players.contains_key(&3), "a non-admin cannot kick");
+    }
+
+    #[tokio::test]
+    async fn a_moderator_cannot_kick_an_admin_but_an_admin_can_kick_anyone() {
+        // A helper (moderator) may kick ordinary players, but never a parent (admin). An admin can still
+        // kick anyone, including a moderator.
+        let mut room = test_room().await;
+        let _moderator_rx = add_player(&mut room, 1, false);
+        room.players.get_mut(&1).unwrap().is_moderator = true;
+        let _admin_rx = add_player(&mut room, 2, true);
+        let _player_rx = add_player(&mut room, 3, false);
+
+        room.on_input(1, ClientMsg::AdminKick { id: 2 });
+        assert!(
+            room.players.contains_key(&2),
+            "a moderator cannot kick an admin"
+        );
+
+        room.on_input(1, ClientMsg::AdminKick { id: 3 });
+        assert!(
+            !room.players.contains_key(&3),
+            "a moderator can still kick a normal player"
+        );
+
+        room.on_input(2, ClientMsg::AdminKick { id: 1 });
+        assert!(
+            !room.players.contains_key(&1),
+            "an admin can kick a moderator"
+        );
     }
 
     #[tokio::test]

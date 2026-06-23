@@ -11,7 +11,7 @@ export type EditCell = { x: number, y: number, z: number, id: number, };
 
 export type InventoryItem = { id: number, count: number, };
 
-export type PlayerMeta = { id: number, name: string, skin: string, shirt: string, hair: string, admin: boolean, moderator: boolean, };
+export type PlayerMeta = { id: number, name: string, skin: string, shirt: string, hair: string, admin: boolean, moderator: boolean, pvp_kills: number, };
 
 export type PlayerState = [number, number, number, number, number, number, number, number, number];
 

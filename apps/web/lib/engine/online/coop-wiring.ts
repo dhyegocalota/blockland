@@ -11,7 +11,7 @@ import { clearFeetAbove } from '../actors';
 import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
 import { debugReportRing, formatDebugReport } from '../debug-report';
 import { createCoop, MAIN_WORLD, type CoopHud, type RoomState } from '../../coop';
-import { offlineAdminFeed, offlineResetFeed } from '../offline/feed-events';
+import { offlineAdminFeed, offlineResetFeed, offlineResetScoresFeed } from '../offline/feed-events';
 import type { EditCell, EditOp } from '../../protocol';
 import type { GameRuntime } from '../runtime';
 
@@ -169,7 +169,11 @@ export function createCoopWiring(runtime: GameRuntime): void {
         runtime.resetLocalWorld();
         runtime.bridge?.hud.onEvent(offlineResetFeed({ name: runtime.bridge.resolveName() }));
       },
-      resetScores: () => runtime.coop?.sendAdminResetScores(),
+      resetScores: () => {
+        if (runtime.coop) { runtime.coop.sendAdminResetScores(); return; }
+        runtime.resetLocalScores();
+        runtime.bridge?.hud.onEvent(offlineResetScoresFeed({ name: runtime.bridge.resolveName() }));
+      },
       suspendRoom: (on) => runtime.coop?.sendAdminSuspend(on),
       setRole: (id, role) => runtime.coop?.sendAdminSetRole(id, role),
       setApprovalRequired: (on) => runtime.coop?.sendAdminSetApproval(on),

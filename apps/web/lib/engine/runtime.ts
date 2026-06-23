@@ -170,6 +170,7 @@ export interface GameRuntime {
   overlapsPlayer(x: number, y: number, z: number): boolean;
   buildStructure(kind: StructureKind): void;
   resetLocalWorld(): void;
+  resetLocalScores(): void;
 
   // ---- Scoreboard ----
   storedBest(): number;

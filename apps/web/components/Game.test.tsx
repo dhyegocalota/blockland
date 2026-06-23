@@ -81,6 +81,43 @@ describe('Game', () => {
     expect(document.getElementById('mode')?.textContent).toContain('Offline');
   });
 
+  it('ranks the presence roster by pvp kills with the ⚔️ stat when pvp is on', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        rosterOpen: true,
+        room: { ...gameState().room, pvp: true },
+        roster: [
+          { id: 1, name: 'Ana', self: false, admin: false, moderator: false, pvpKills: 1 },
+          { id: 2, name: 'Bia', self: false, admin: false, moderator: false, pvpKills: 4 },
+        ],
+      }),
+    );
+    render(<Game />);
+    const items = within(document.getElementById('presenceList')!).getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual(['Bia ⚔️ 4', 'Ana ⚔️ 1']);
+  });
+
+  it('shows the presence roster without the ⚔️ stat when pvp is off', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        rosterOpen: true,
+        room: { ...gameState().room, pvp: false },
+        roster: [
+          { id: 1, name: 'Ana', self: false, admin: false, moderator: false, pvpKills: 1 },
+          { id: 2, name: 'Bia', self: false, admin: false, moderator: false, pvpKills: 4 },
+        ],
+      }),
+    );
+    render(<Game />);
+    const items = within(document.getElementById('presenceList')!).getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual(['Ana', 'Bia']);
+    expect(document.getElementById('presenceList')!.textContent).not.toContain('⚔️');
+  });
+
   it('bans a pending player from the admin approval list', () => {
     const banPending = vi.fn();
     useGame.mockReturnValue(

@@ -63,7 +63,7 @@ describe('LobbyAdmin', () => {
 
   it('no longer offers a per-player report button (feature removed)', () => {
     const { container } = render(
-      <LobbyAdmin lobby={makeLobby({ isAdmin: true, roster: [{ id: 2, name: 'Kid', self: false, admin: false, moderator: false }] })} />,
+      <LobbyAdmin lobby={makeLobby({ isAdmin: true, roster: [{ id: 2, name: 'Kid', self: false, admin: false, moderator: false, pvpKills: 0 }] })} />,
     );
     const players = container.querySelector('#adminPlayers') as HTMLElement;
     expect(within(players).queryByText('Reportar')).toBeNull();

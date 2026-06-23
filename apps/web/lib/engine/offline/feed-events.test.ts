@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { offlineAdminFeed, offlineKillFeed, offlineResetFeed } from './feed-events';
+import { offlineAdminFeed, offlineKillFeed, offlineResetFeed, offlineResetScoresFeed } from './feed-events';
 import { t } from '../../i18n';
 
 describe('offlineAdminFeed', () => {
@@ -35,5 +35,15 @@ describe('offlineResetFeed', () => {
 
   it('labels a nameless guest with feed.you', () => {
     expect(offlineResetFeed({ name: '' })).toEqual({ kind: 'reset', name: t('feed.you') });
+  });
+});
+
+describe('offlineResetScoresFeed', () => {
+  it('names the player who reset the scores', () => {
+    expect(offlineResetScoresFeed({ name: 'Maria' })).toEqual({ kind: 'reset_scores', name: 'Maria' });
+  });
+
+  it('labels a nameless guest with feed.you', () => {
+    expect(offlineResetScoresFeed({ name: '' })).toEqual({ kind: 'reset_scores', name: t('feed.you') });
   });
 });
