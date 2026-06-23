@@ -2141,6 +2141,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reset_scores_wipes_only_its_own_tenant_leaderboard() {
+        let db = memory_db().await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+        let zoe = account(&db, "demo", "zoe@x.com", "Zoe").await;
+        db.submit_score(&ann, 42).await.unwrap();
+        db.submit_score(&zoe, 9).await.unwrap();
+
+        db.reset_scores("acme").await.unwrap();
+
+        assert!(db
+            .top_scores("acme", default_top_limit())
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.top_scores("demo", default_top_limit())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "another tenant's leaderboard is untouched"
+        );
+    }
+
+    #[tokio::test]
     async fn claim_account_finds_or_creates_and_renames_when_free() {
         let db = memory_db().await;
         let first = db.claim_account("acme", "ann@x.com", "Ann").await.unwrap();

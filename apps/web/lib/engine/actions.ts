@@ -5,6 +5,7 @@
 import { createBlockActions } from './block-actions';
 import { createStructurePlacement } from './structure-placement';
 import { createScoreboard } from './rendering/scoreboard-runtime';
+import { MAX_HEARTS } from './constants';
 import type { GameRuntime } from './runtime';
 
 export function createActions(runtime: GameRuntime): void {
@@ -14,7 +15,9 @@ export function createActions(runtime: GameRuntime): void {
 
   // The admin wiped the world: rebuild it in place (like a fresh boot) and respawn, so every player
   // resets without being kicked back to the lobby. The server's reset already cleared its own world
-  // and creatures; the local creatures (single-player) and poofs are cleared to match.
+  // and creatures; the local creatures (single-player) and poofs are cleared to match. A reset is a
+  // fresh start, so OFFLINE it also wipes the local player's progress: zero stars/bag, refill hearts,
+  // empty the banked inventory, and drop the persisted record — then repaint the HUD.
   runtime.resetLocalWorld = function resetLocalWorld(): void {
     const { player } = runtime.state;
     runtime.chime();
@@ -24,8 +27,15 @@ export function createActions(runtime: GameRuntime): void {
     runtime.poofRuntime.clear();
     runtime.heartDropRuntime.clear();
     runtime.heartDrops.length = 0;
+    player.stars = 0;
+    player.bag = 0;
+    player.hearts = MAX_HEARTS;
+    runtime.inventory.reset();
+    localStorage.removeItem(runtime.bestKey);
     player.pos.copy(runtime.spawnPoint());
     player.vel.set(0, 0, 0);
     runtime.savePos();
+    runtime.updateHotbarCounts();
+    runtime.updateStats();
   };
 }
