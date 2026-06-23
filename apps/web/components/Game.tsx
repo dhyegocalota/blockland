@@ -311,7 +311,7 @@ export default function Game() {
         </div>
       )}
 
-      {connectKey && netState !== 'needs_approval' && (
+      {connectKey && !severe && netState !== 'needs_approval' && (
         <div id="connectingOverlay" role="status" aria-live="polite">
           <div className="panel">
             <div className="connectingSpinner" aria-hidden="true">🧩</div>

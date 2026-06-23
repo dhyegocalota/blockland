@@ -309,8 +309,9 @@ export function useGame() {
     if (typeof window !== 'undefined') window.localStorage.setItem(LOOK_KEYS[part], value);
   }, []);
 
+  // Using a NAME means owning it: a named player must log in to claim it, online OR offline (only an
+  // anonymous guest — empty name — plays without logging in). Offline is no exception.
   const needsLogin = useCallback((): boolean => {
-    if (soloRef.current) return false;
     const trimmed = name.trim();
     if (!trimmed) return false;
     if (!brand) return false;
