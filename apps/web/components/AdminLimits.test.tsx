@@ -21,8 +21,7 @@ function renderLimits(overrides: Partial<RoomState> = {}) {
     />,
   );
   const checkbox = () => screen.getByRole('checkbox') as HTMLInputElement;
-  const save = () => fireEvent.submit(checkbox().closest('form')!);
-  return { setLimits, checkbox, save };
+  return { setLimits, checkbox };
 }
 
 afterEach(cleanup);
@@ -40,21 +39,32 @@ describe('AdminLimits play-time', () => {
     expect(screen.getAllByRole('spinbutton')).toHaveLength(2);
   });
 
-  it('reveals the inputs when the limit is enabled', () => {
-    const { checkbox } = renderLimits({ playtimeLimitMin: 0 });
+  it('enabling the limit reveals the inputs and auto-saves the default 5 min / 24 h', () => {
+    const { setLimits, checkbox } = renderLimits({ playtimeLimitMin: 0, playtimeWindowH: 0 });
     fireEvent.click(checkbox());
     expect(screen.getAllByRole('spinbutton')).toHaveLength(2);
+    expect(setLimits).toHaveBeenCalledWith(5, 24);
   });
 
-  it('saves an unlimited (0) limit when the checkbox is off', () => {
-    const { setLimits, save } = renderLimits({ playtimeLimitMin: 0, playtimeWindowH: 24 });
-    save();
+  it('disabling the limit auto-saves unlimited (0)', () => {
+    const { setLimits, checkbox } = renderLimits({ playtimeLimitMin: 15, playtimeWindowH: 24 });
+    fireEvent.click(checkbox());
     expect(setLimits).toHaveBeenCalledWith(0, 24);
   });
 
-  it('saves the entered minutes when the checkbox is on', () => {
-    const { setLimits, save } = renderLimits({ playtimeLimitMin: 15, playtimeWindowH: 24 });
-    save();
-    expect(setLimits).toHaveBeenCalledWith(15, 24);
+  it('editing a field auto-saves on blur, clamping a zero back to the default', () => {
+    const { setLimits } = renderLimits({ playtimeLimitMin: 15, playtimeWindowH: 24 });
+    const minutes = screen.getAllByRole('spinbutton')[0];
+    fireEvent.change(minutes, { target: { value: '0' } });
+    fireEvent.blur(minutes);
+    expect(setLimits).toHaveBeenCalledWith(5, 24);
+  });
+
+  it('editing a field to a valid value auto-saves it', () => {
+    const { setLimits } = renderLimits({ playtimeLimitMin: 15, playtimeWindowH: 24 });
+    const minutes = screen.getAllByRole('spinbutton')[0];
+    fireEvent.change(minutes, { target: { value: '10' } });
+    fireEvent.blur(minutes);
+    expect(setLimits).toHaveBeenCalledWith(10, 24);
   });
 });

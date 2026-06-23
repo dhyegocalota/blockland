@@ -16,29 +16,45 @@ interface AdminLimitsProps {
   toggleOfflineAllowed: () => void;
 }
 
-// When the admin first enables a limit on a previously-unlimited world, start from a friendly default
-// instead of 0 (which would still mean unlimited).
-const DEFAULT_LIMIT_MIN = 30;
+// Enabling a limit starts from a friendly default (never 0, which would mean unlimited): 5 minutes
+// every 24 hours. Both fields are always at least 1 while limited.
+const DEFAULT_LIMIT_MIN = 5;
+const DEFAULT_WINDOW_H = 24;
 
 export default function AdminLimits({ room, setLimits, toggleOnlineAllowed, toggleOfflineAllowed }: AdminLimitsProps) {
   const [limited, setLimited] = useState(room.playtimeLimitMin > 0);
-  const [limitMin, setLimitMin] = useState(String(room.playtimeLimitMin));
-  const [windowH, setWindowH] = useState(String(room.playtimeWindowH));
+  const [limitMin, setLimitMin] = useState(String(room.playtimeLimitMin || DEFAULT_LIMIT_MIN));
+  const [windowH, setWindowH] = useState(String(room.playtimeWindowH || DEFAULT_WINDOW_H));
 
-  // Re-sync the inputs whenever the server-authoritative values change (another admin, or our own save
-  // echoed back), so the fields never drift from the live RoomState.
-  useEffect(() => { setLimited(room.playtimeLimitMin > 0); setLimitMin(String(room.playtimeLimitMin)); }, [room.playtimeLimitMin]);
-  useEffect(() => { setWindowH(String(room.playtimeWindowH)); }, [room.playtimeWindowH]);
+  // Re-sync the inputs when the server-authoritative values change (another admin, or our own save
+  // echoed back). Keep the friendly defaults visible while unlimited so enabling never shows 0.
+  useEffect(() => {
+    setLimited(room.playtimeLimitMin > 0);
+    if (room.playtimeLimitMin > 0) setLimitMin(String(room.playtimeLimitMin));
+  }, [room.playtimeLimitMin]);
+  useEffect(() => { if (room.playtimeWindowH > 0) setWindowH(String(room.playtimeWindowH)); }, [room.playtimeWindowH]);
 
+  // Switching the checkbox saves immediately: on → the (non-zero) minutes/window, off → unlimited (0).
   function toggleLimited(next: boolean): void {
     setLimited(next);
-    if (next && clampNonNegative(limitMin) === 0) setLimitMin(String(DEFAULT_LIMIT_MIN));
+    if (!next) { setLimits(0, clampPositive(windowH, DEFAULT_WINDOW_H)); return; }
+    const min = clampPositive(limitMin, DEFAULT_LIMIT_MIN);
+    const window = clampPositive(windowH, DEFAULT_WINDOW_H);
+    setLimitMin(String(min));
+    setWindowH(String(window));
+    setLimits(min, window);
   }
 
-  function save(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    if (!limited) { setLimits(0, clampNonNegative(windowH)); return; }
-    setLimits(clampNonNegative(limitMin), clampNonNegative(windowH));
+  // Editing a field saves automatically (on blur / submit), clamping a blank or zero back to the default
+  // so a limited world is never accidentally set to 0 = unlimited.
+  function commitFields(event?: FormEvent<HTMLFormElement>): void {
+    event?.preventDefault();
+    if (!limited) return;
+    const min = clampPositive(limitMin, DEFAULT_LIMIT_MIN);
+    const window = clampPositive(windowH, DEFAULT_WINDOW_H);
+    setLimitMin(String(min));
+    setWindowH(String(window));
+    setLimits(min, window);
   }
 
   // The last enabled mode can't be turned off (a tenant always keeps one); disable that toggle.
@@ -48,7 +64,7 @@ export default function AdminLimits({ room, setLimits, toggleOnlineAllowed, togg
   return (
     <div id="adminLimits">
       <span className="adminLabel">{t('game_admin.playtime')}</span>
-      <form id="adminPlaytime" onSubmit={save}>
+      <form id="adminPlaytime" onSubmit={commitFields}>
         <label className="playtimeToggle">
           <input type="checkbox" checked={limited} onChange={(e) => toggleLimited(e.target.checked)} />
           {t('game_admin.playtime_limit_toggle')}
@@ -56,16 +72,15 @@ export default function AdminLimits({ room, setLimits, toggleOnlineAllowed, togg
         {limited && (
           <label>
             {t('game_admin.playtime_minutes')}
-            <input type="number" min={0} value={limitMin} onChange={(e) => setLimitMin(e.target.value)} />
+            <input type="number" min={1} value={limitMin} onChange={(e) => setLimitMin(e.target.value)} onBlur={() => commitFields()} />
           </label>
         )}
         {limited && (
           <label>
             {t('game_admin.playtime_window')}
-            <input type="number" min={0} value={windowH} onChange={(e) => setWindowH(e.target.value)} />
+            <input type="number" min={1} value={windowH} onChange={(e) => setWindowH(e.target.value)} onBlur={() => commitFields()} />
           </label>
         )}
-        <button type="submit">{t('game_admin.playtime_save')}</button>
       </form>
       <span className="adminLabel">{t('game_admin.modes')}</span>
       <button
@@ -88,8 +103,8 @@ export default function AdminLimits({ room, setLimits, toggleOnlineAllowed, togg
   );
 }
 
-function clampNonNegative(raw: string): number {
+function clampPositive(raw: string, fallback: number): number {
   const value = Number.parseInt(raw, 10);
-  if (Number.isNaN(value) || value < 0) return 0;
+  if (Number.isNaN(value) || value < 1) return fallback;
   return value;
 }
