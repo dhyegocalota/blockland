@@ -70,6 +70,18 @@ describe('LobbyAdmin', () => {
     expect(container.querySelector('#adminReports')).toBeNull();
   });
 
+  it('hides the kick button for an admin target from a moderator, but shows it for a normal player', () => {
+    const { container } = render(
+      <LobbyAdmin lobby={makeLobby({ isModerator: true, roster: [
+        { id: 1, name: 'BossAdmin', self: false, admin: true, moderator: false, pvpKills: 0, away: false },
+        { id: 2, name: 'NormalKid', self: false, admin: false, moderator: false, pvpKills: 0, away: false },
+      ] })} />,
+    );
+    const rows = within(container.querySelector('#adminPlayers') as HTMLElement).getAllByRole('listitem');
+    expect(rows[0].querySelector('.kick')).toBeNull();
+    expect(rows[1].querySelector('.kick')).not.toBeNull();
+  });
+
   it('keeps the lobby chat + hours-played reports, labelled last 30 days', () => {
     const { container } = render(<LobbyAdmin lobby={makeLobby({ isAdmin: true })} />);
     expect(container.querySelector('#adminPlaytimeReport')).toBeInTheDocument();

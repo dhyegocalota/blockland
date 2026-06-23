@@ -259,4 +259,23 @@ describe('Game', () => {
     fireEvent.click(within(pending).getByText('Banir'));
     expect(banPending).toHaveBeenCalledWith('ip:1.2.3.4');
   });
+
+  it('hides the kick button for an admin target from a moderator, but shows it for a normal player', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        isModerator: true,
+        adminOpen: true,
+        roster: [
+          { id: 1, name: 'BossAdmin', self: false, admin: true, moderator: false, pvpKills: 0, away: false },
+          { id: 2, name: 'NormalKid', self: false, admin: false, moderator: false, pvpKills: 0, away: false },
+        ],
+      }),
+    );
+    render(<Game />);
+    const rows = within(document.getElementById('adminPlayers')!).getAllByRole('listitem');
+    expect(rows[0].querySelector('.kick')).toBeNull();
+    expect(rows[1].querySelector('.kick')).not.toBeNull();
+  });
 });
