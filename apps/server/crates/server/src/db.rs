@@ -1543,7 +1543,9 @@ impl Db {
         Ok(())
     }
 
-    async fn clear_approval_request(
+    /// Drop a held request entirely. Used when an approval is granted, when a one-shot reject is
+    /// consumed (so a fresh join is held for approval again), and when a pending player is banned.
+    pub async fn clear_approval_request(
         &self,
         tenant: &str,
         account_id: &str,

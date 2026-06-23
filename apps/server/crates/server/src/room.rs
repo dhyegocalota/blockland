@@ -546,6 +546,8 @@ impl Room {
         // pending so the admins are notified; they approve in-game (and by email when there is one).
         if self.approval_required && !role.is_admin() {
             let approval_key = playtime_key(&account_id, ip);
+            // A reject is one-shot (expel, not ban): tell this attempt "rejected" and clear the request,
+            // so a fresh join falls through to hold_for_approval below and the admins are re-notified.
             if self
                 .hub
                 .db
@@ -553,6 +555,14 @@ impl Room {
                 .await
                 .unwrap_or(false)
             {
+                if let Err(e) = self
+                    .hub
+                    .db
+                    .clear_approval_request(&self.key.0, &approval_key)
+                    .await
+                {
+                    tracing::error!(error = %e, "clearing one-shot reject failed");
+                }
                 let _ = reply.send(Err("rejected".into()));
                 return;
             }
@@ -806,6 +816,10 @@ impl Room {
             self.on_admin_reject(id, account_id);
             return;
         }
+        if let ClientMsg::AdminBanPending { account_id } = msg {
+            self.on_admin_ban_pending(id, account_id);
+            return;
+        }
         if let ClientMsg::AdminUnban { ip } = msg {
             self.on_admin_unban(id, ip);
             return;
@@ -1039,6 +1053,7 @@ impl Room {
             | ClientMsg::AdminSetApproval { .. }
             | ClientMsg::AdminApprove { .. }
             | ClientMsg::AdminReject { .. }
+            | ClientMsg::AdminBanPending { .. }
             | ClientMsg::AdminUnban { .. }
             | ClientMsg::AdminSetLimits { .. }
             | ClientMsg::AdminSetModes { .. }
@@ -1681,6 +1696,52 @@ impl Room {
                 return;
             }
             tracing::info!(%tenant, %account_id, "account rejected by admin");
+            send_pending(&db, &tenant, &admin_conns).await;
+        });
+    }
+
+    /// Permanently ban a player still waiting for approval. Admin-only; the approval key carries the
+    /// guest's address (`ip:<addr>`), so the ban is applied to that IP (reusing the existing ban path),
+    /// the pending request is dropped, and the pending + ban lists are refreshed for online admins.
+    fn on_admin_ban_pending(&mut self, id: PlayerId, account_id: String) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = Instant::now();
+        if !admin.is_admin {
+            tracing::debug!(%id, "ban pending ignored: not an admin");
+            return;
+        }
+        let Some(addr) = account_id.strip_prefix("ip:") else {
+            tracing::debug!(%id, key = %account_id, "ban pending ignored: key carries no ip");
+            return;
+        };
+        let Ok(ip) = addr.parse::<IpAddr>() else {
+            tracing::debug!(%id, key = %account_id, "ban pending ignored: unparsable ip");
+            return;
+        };
+        let admin_name = admin.name.clone();
+        self.hub.bans.ban(ip, account_id.clone());
+        self.broadcast(&ServerMsg::Event {
+            kind: "admin".into(),
+            name: admin_name,
+            detail: format!("ban|{account_id}"),
+        });
+        self.broadcast_bans_to_admins();
+        let tenant = self.key.0.clone();
+        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
+            .players
+            .values()
+            .filter(|p| p.is_admin)
+            .map(|p| p.conn.clone())
+            .collect();
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.clear_approval_request(&tenant, &account_id).await {
+                tracing::error!(error = %e, "ban pending: clearing request failed");
+                return;
+            }
+            tracing::info!(%tenant, %ip, "pending player banned by admin");
             send_pending(&db, &tenant, &admin_conns).await;
         });
     }
@@ -4100,6 +4161,125 @@ mod tests {
             .unwrap();
         let (allowed, _rx2) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.50").await;
         assert!(allowed.is_ok(), "an approved guest is admitted");
+    }
+
+    #[tokio::test]
+    async fn reject_is_one_shot_then_a_fresh_join_is_held_again() {
+        let mut room = test_room().await;
+        room.hub
+            .db
+            .set_tenant_approval_required(&room.key.0, true)
+            .await
+            .unwrap();
+        let acc = room
+            .hub
+            .db
+            .claim_account("acme", "kid@x.com", "Kid")
+            .await
+            .unwrap()
+            .account_id;
+        // The admin rejected the held request: the next join is told "rejected" exactly once.
+        room.hub
+            .db
+            .record_approval_request("acme", &acc, "Kid", "kid@x.com")
+            .await
+            .unwrap();
+        room.hub
+            .db
+            .reject_approval_request("acme", &acc)
+            .await
+            .unwrap();
+
+        let (rejected, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
+        assert_eq!(
+            rejected,
+            Err("rejected".into()),
+            "the rejected attempt ends"
+        );
+        assert!(
+            !room.hub.db.is_rejected("acme", &acc).await.unwrap(),
+            "the one-shot reject is cleared so a fresh join is not stuck on rejected"
+        );
+
+        // A fresh join is held for approval again, re-recording the pending row (admins re-notified).
+        let (held, _rx2) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
+        assert_eq!(
+            held,
+            Err("needs_approval".into()),
+            "the next join is held for approval, not turned away forever"
+        );
+        let pending = room.hub.db.pending_approvals("acme").await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].account_id, acc);
+    }
+
+    #[tokio::test]
+    async fn banning_a_pending_player_bans_the_ip_and_drops_the_request() {
+        let mut room = test_room().await;
+        room.hub
+            .db
+            .set_tenant_approval_required(&room.key.0, true)
+            .await
+            .unwrap();
+        let mut admin_rx = add_player(&mut room, 1, true);
+        // A held guest, recorded as pending by their IP key.
+        let (held, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.77").await;
+        assert_eq!(held, Err("needs_approval".into()));
+        assert_eq!(
+            room.hub.db.pending_approvals("acme").await.unwrap().len(),
+            1
+        );
+
+        room.on_input(
+            1,
+            ClientMsg::AdminBanPending {
+                account_id: "ip:203.0.113.77".into(),
+            },
+        );
+        // The ip ban is applied synchronously; the request clear is spawned, so let it run.
+        let banned_ip: IpAddr = "203.0.113.77".parse().unwrap();
+        assert!(
+            room.hub.bans.is_banned(banned_ip),
+            "the pending ip is banned"
+        );
+        for _ in 0..50 {
+            if room
+                .hub
+                .db
+                .pending_approvals("acme")
+                .await
+                .unwrap()
+                .is_empty()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            room.hub
+                .db
+                .pending_approvals("acme")
+                .await
+                .unwrap()
+                .is_empty(),
+            "the banned player is removed from the pending list"
+        );
+
+        // The banned address is now turned away at the join gate (the same check the connect path runs).
+        let (conn, _conn_rx) = mpsc::channel::<Outbound>(64);
+        let (reply, reply_rx) = oneshot::channel();
+        let look = Appearance {
+            skin: "#fff".into(),
+            shirt: "#fff".into(),
+            hair: "#fff".into(),
+        };
+        room.on_join(String::new(), String::new(), look, banned_ip, conn, reply)
+            .await;
+        assert_eq!(reply_rx.await.unwrap(), Err("banned".into()));
+        // The admin who acted received the refreshed ban list.
+        let saw_bans = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Bans { .. }));
+        assert!(saw_bans, "the admin gets the refreshed ban list");
     }
 
     #[tokio::test]

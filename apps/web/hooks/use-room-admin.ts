@@ -45,6 +45,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   );
   const approvePlayer = useCallback((accountId: string) => gameApi.current?.approvePlayer(accountId), [gameApi]);
   const rejectPlayer = useCallback((accountId: string) => gameApi.current?.rejectPlayer(accountId), [gameApi]);
+  const banPending = useCallback((accountId: string) => gameApi.current?.banPending(accountId), [gameApi]);
   const unban = useCallback((ip: string) => gameApi.current?.unban(ip), [gameApi]);
   const setLimits = useCallback(
     (playtimeLimitMin: number, playtimeWindowH: number) => gameApi.current?.setLimits(playtimeLimitMin, playtimeWindowH),
@@ -112,6 +113,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     toggleApprovalRequired,
     approvePlayer,
     rejectPlayer,
+    banPending,
     bans,
     setBans,
     unban,

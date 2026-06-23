@@ -82,6 +82,8 @@ export const adminApprove = (accountId: string): ClientMsg => ({ t: 'admin_appro
 
 export const adminReject = (accountId: string): ClientMsg => ({ t: 'admin_reject', account_id: accountId });
 
+export const adminBanPending = (accountId: string): ClientMsg => ({ t: 'admin_ban_pending', account_id: accountId });
+
 export const adminUnban = (ip: string): ClientMsg => ({ t: 'admin_unban', ip });
 
 export const adminSetLimits = (playtimeLimitMin: number, playtimeWindowH: number): ClientMsg => ({

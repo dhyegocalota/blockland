@@ -157,6 +157,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       setApprovalRequired: (on) => runtime.coop?.sendAdminSetApproval(on),
       approvePlayer: (accountId) => runtime.coop?.sendAdminApprove(accountId),
       rejectPlayer: (accountId) => runtime.coop?.sendAdminReject(accountId),
+      banPending: (accountId) => runtime.coop?.sendAdminBanPending(accountId),
       unban: (ip) => runtime.coop?.sendAdminUnban(ip),
       setLimits: (min, hours) => runtime.coop?.sendAdminSetLimits(min, hours),
       setModes: (online, offline) => runtime.coop?.sendAdminSetModes(online, offline),

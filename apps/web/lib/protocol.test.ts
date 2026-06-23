@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { adminApprove, adminBan, adminKick, adminReport, adminResetWorld, adminSetApproval, adminSetChat, adminSetInfinite, adminSetPeace, adminSetPvp, adminSetRole, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
+import { adminApprove, adminBan, adminBanPending, adminKick, adminReport, adminResetWorld, adminSetApproval, adminSetChat, adminSetInfinite, adminSetPeace, adminSetPvp, adminSetRole, adminSetStructure, attackPlayer, chat, edit, encodeClientMsg, hit, join, move, parseServerMsg, pong } from './protocol';
 
 describe('protocol factories', () => {
   it('builds a join message', () => {
@@ -61,6 +61,7 @@ describe('protocol factories', () => {
   it('builds approval toggle and approve messages', () => {
     expect(adminSetApproval(true)).toEqual({ t: 'admin_set_approval', on: true });
     expect(adminApprove('acc1')).toEqual({ t: 'admin_approve', account_id: 'acc1' });
+    expect(adminBanPending('ip:1.2.3.4')).toEqual({ t: 'admin_ban_pending', account_id: 'ip:1.2.3.4' });
   });
 
   it('round-trips a client message through JSON', () => {

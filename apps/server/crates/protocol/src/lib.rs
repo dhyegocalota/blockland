@@ -118,6 +118,12 @@ pub enum ClientMsg {
     AdminReject {
         account_id: String,
     },
+    /// Admin-only: permanently ban a player still waiting for approval, keyed by their approval key
+    /// (`ip:<addr>` for a guest, else the account's IP). Their address is blocked and the pending
+    /// request dropped. Ignored from non-admins.
+    AdminBanPending {
+        account_id: String,
+    },
     /// Admin-only: lift a global IP ban so that address can join again. Ignored from non-admins.
     AdminUnban {
         ip: String,

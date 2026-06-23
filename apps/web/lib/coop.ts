@@ -221,6 +221,7 @@ export interface CoopController {
   sendAdminSetApproval(on: boolean): void;
   sendAdminApprove(accountId: string): void;
   sendAdminReject(accountId: string): void;
+  sendAdminBanPending(accountId: string): void;
   sendAdminUnban(ip: string): void;
   sendAdminSetLimits(playtimeLimitMin: number, playtimeWindowH: number): void;
   sendAdminSetModes(onlineAllowed: boolean, offlineAllowed: boolean): void;
@@ -614,6 +615,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminReject(accountId): void {
       net.sendAdminReject(accountId);
+    },
+    sendAdminBanPending(accountId): void {
+      net.sendAdminBanPending(accountId);
     },
     sendAdminUnban(ip): void {
       net.sendAdminUnban(ip);

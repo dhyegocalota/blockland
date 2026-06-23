@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { useLobbyAdmin } from '../hooks/use-lobby-admin';
 
@@ -39,6 +39,7 @@ function makeLobby(overrides: Partial<ReturnType<typeof useLobbyAdmin>>): Return
     toggleApprovalRequired: noop,
     approvePlayer: noop,
     rejectPlayer: noop,
+    banPending: noop,
     bans: [],
     unban: noop,
     setLimits: noop,
@@ -58,5 +59,21 @@ describe('LobbyAdmin', () => {
     const { container } = render(<LobbyAdmin lobby={makeLobby({ isAdmin: true })} />);
     expect(container.querySelector('#lobbyAdmin')).toBeInTheDocument();
     expect(container.querySelector('#adminReset')).toBeInTheDocument();
+  });
+
+  it('bans a pending player from the approval list', () => {
+    const banPending = vi.fn();
+    const { container } = render(
+      <LobbyAdmin
+        lobby={makeLobby({
+          isAdmin: true,
+          pendingApprovals: [{ accountId: 'ip:1.2.3.4', name: 'Guest', email: '' }],
+          banPending,
+        })}
+      />,
+    );
+    const pending = container.querySelector('#adminPending') as HTMLElement;
+    fireEvent.click(within(pending).getByText('Banir'));
+    expect(banPending).toHaveBeenCalledWith('ip:1.2.3.4');
   });
 });

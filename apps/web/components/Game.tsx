@@ -85,7 +85,7 @@ export default function Game() {
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, reportPlayer, setRole, suspendRoom,
-    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer,
+    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
@@ -211,6 +211,7 @@ export default function Game() {
                         <span className="adminPlayerActions">
                           <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
                           <button className="ban" onClick={() => rejectPlayer(entry.accountId)}>{t('game_admin.reject')}</button>
+                          <button className="ban" onClick={() => banPending(entry.accountId)}>{t('game_admin.ban')}</button>
                         </span>
                       </li>
                     ))}
@@ -409,6 +410,7 @@ export default function Game() {
               <span className="adminPlayerActions">
                 <button className="role" onClick={() => approvePlayer(entry.detail!)}>{t('game_admin.approve')}</button>
                 <button className="ban" onClick={() => rejectPlayer(entry.detail!)}>{t('game_admin.reject')}</button>
+                <button className="ban" onClick={() => banPending(entry.detail!)}>{t('game_admin.ban')}</button>
               </span>
             )}
           </div>

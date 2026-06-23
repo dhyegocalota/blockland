@@ -344,6 +344,8 @@ describe('net client', () => {
 
     client.sendAdminReject('acc1');
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_reject', account_id: 'acc1' }));
+    client.sendAdminBanPending('ip:1.2.3.4');
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_ban_pending', account_id: 'ip:1.2.3.4' }));
     client.sendAdminUnban('1.2.3.4');
     expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_unban', ip: '1.2.3.4' }));
   });

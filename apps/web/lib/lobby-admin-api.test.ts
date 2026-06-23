@@ -31,6 +31,7 @@ function recordingNet() {
     sendAdminSetApproval: record('sendAdminSetApproval'),
     sendAdminApprove: record('sendAdminApprove'),
     sendAdminReject: record('sendAdminReject'),
+    sendAdminBanPending: record('sendAdminBanPending'),
     sendAdminUnban: record('sendAdminUnban'),
     sendAdminSetRole: record('sendAdminSetRole'),
     sendAdminSetLimits: record('sendAdminSetLimits'),
@@ -60,6 +61,7 @@ describe('lobbyAdminApi', () => {
     api.setApprovalRequired(true);
     api.approvePlayer('acc1');
     api.rejectPlayer('acc2');
+    api.banPending('ip:1.2.3.4');
     api.unban('1.2.3.4');
     api.setLimits(5, 24);
     api.setModes(false, true);
@@ -79,6 +81,7 @@ describe('lobbyAdminApi', () => {
       ['sendAdminSetApproval', true],
       ['sendAdminApprove', 'acc1'],
       ['sendAdminReject', 'acc2'],
+      ['sendAdminBanPending', 'ip:1.2.3.4'],
       ['sendAdminUnban', '1.2.3.4'],
       ['sendAdminSetLimits', 5, 24],
       ['sendAdminSetModes', false, true],

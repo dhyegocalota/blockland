@@ -21,6 +21,7 @@ export function lobbyAdminApi(net: NetClient): RoomAdminApi {
     setApprovalRequired: (on) => net.sendAdminSetApproval(on),
     approvePlayer: (accountId) => net.sendAdminApprove(accountId),
     rejectPlayer: (accountId) => net.sendAdminReject(accountId),
+    banPending: (accountId) => net.sendAdminBanPending(accountId),
     unban: (ip) => net.sendAdminUnban(ip),
     setLimits: (min, hours) => net.sendAdminSetLimits(min, hours),
     setModes: (online, offline) => net.sendAdminSetModes(online, offline),

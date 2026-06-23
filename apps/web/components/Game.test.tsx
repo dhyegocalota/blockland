@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const useGame = vi.fn();
@@ -28,7 +28,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     feed: [], room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: false, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
     isAdmin: false, isModerator: false, adminOpen: false, setAdminOpen: () => {}, resetArmed: false, resetWorld: () => {}, resetScoresArmed: false, resetScores: () => {},
     toggleRoomPeace: () => {}, toggleStructure: () => {}, toggleRoomPvp: () => {}, toggleRoomChat: () => {}, kickPlayer: () => {}, banPlayer: () => {}, reportPlayer: () => {}, setRole: () => {}, suspendRoom: () => {},
-    pendingApprovals: [], toggleApprovalRequired: () => {}, approvePlayer: () => {}, rejectPlayer: () => {},
+    pendingApprovals: [], toggleApprovalRequired: () => {}, approvePlayer: () => {}, rejectPlayer: () => {}, banPending: () => {},
     bans: [], unban: () => {}, setLimits: () => {}, toggleOnlineAllowed: () => {}, toggleOfflineAllowed: () => {}, updateRequired: false,
     chatLines: [], chatOpen: false, chatDraft: '', setChatDraft: () => {}, chatInputRef: { current: null }, openChat: () => {}, sendChat: () => {}, closeChat: () => {},
     onNameChange: () => {}, onLookChange: () => {}, requestCode: () => {}, verifyCode: () => {}, logout: () => {}, playAsGuest: () => {}, discardName: () => {},
@@ -67,5 +67,23 @@ describe('Game', () => {
     render(<Game />);
     expect(document.getElementById('connectingOverlay')).toBeNull();
     expect(document.getElementById('approvalOverlay')).toBeInTheDocument();
+  });
+
+  it('bans a pending player from the admin approval list', () => {
+    const banPending = vi.fn();
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        isAdmin: true,
+        adminOpen: true,
+        pendingApprovals: [{ accountId: 'ip:1.2.3.4', name: 'Guest', email: '' }],
+        banPending,
+      }),
+    );
+    render(<Game />);
+    const pending = document.getElementById('adminPending')!;
+    fireEvent.click(within(pending).getByText('Banir'));
+    expect(banPending).toHaveBeenCalledWith('ip:1.2.3.4');
   });
 });

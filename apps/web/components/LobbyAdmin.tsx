@@ -17,7 +17,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
   const {
     state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
-    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, bans, unban, reportPlayer, reports,
+    pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending, bans, unban, reportPlayer, reports,
     setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
   } = lobby;
 
@@ -94,6 +94,7 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
                   <span className="adminPlayerActions">
                     <button className="role" onClick={() => approvePlayer(entry.accountId)}>{t('game_admin.approve')}</button>
                     <button className="ban" onClick={() => rejectPlayer(entry.accountId)}>{t('game_admin.reject')}</button>
+                    <button className="ban" onClick={() => banPending(entry.accountId)}>{t('game_admin.ban')}</button>
                   </span>
                 </li>
               ))}

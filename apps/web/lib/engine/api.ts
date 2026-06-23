@@ -22,6 +22,7 @@ export interface RoomAdminApi {
   setApprovalRequired(on: boolean): void;
   approvePlayer(accountId: string): void;
   rejectPlayer(accountId: string): void;
+  banPending(accountId: string): void;
   unban(ip: string): void;
   setLimits(playtimeLimitMin: number, playtimeWindowH: number): void;
   setModes(onlineAllowed: boolean, offlineAllowed: boolean): void;

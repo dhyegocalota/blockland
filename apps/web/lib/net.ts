@@ -8,6 +8,7 @@ import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from '.
 import {
   adminApprove,
   adminReject,
+  adminBanPending,
   adminUnban,
   adminBan,
   adminKick,
@@ -206,6 +207,7 @@ export interface NetClient {
   sendAdminSetApproval(on: boolean): void;
   sendAdminApprove(accountId: string): void;
   sendAdminReject(accountId: string): void;
+  sendAdminBanPending(accountId: string): void;
   sendAdminUnban(ip: string): void;
   sendAdminSetLimits(playtimeLimitMin: number, playtimeWindowH: number): void;
   sendAdminSetModes(onlineAllowed: boolean, offlineAllowed: boolean): void;
@@ -532,6 +534,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminReject(accountId): void {
       rawSend(encodeClientMsg(adminReject(accountId)));
+    },
+    sendAdminBanPending(accountId): void {
+      rawSend(encodeClientMsg(adminBanPending(accountId)));
     },
     sendAdminUnban(ip): void {
       rawSend(encodeClientMsg(adminUnban(ip)));
