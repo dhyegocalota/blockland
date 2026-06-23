@@ -14,6 +14,14 @@ pub const WORLD_SIZE: i32 = 163840;
 /// Blocks the spawn sits north of the exact world center so a player never lands inside the welcome
 /// monument (which the shared worldgen builds at the center). Mirrors the web `spawnPoint` z offset.
 const SPAWN_MONUMENT_CLEARANCE: i32 = 4;
+/// When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
+/// player), the spiral search nudges to the nearest clear column within this many cells. Mirrors the
+/// web `SPAWN_SEARCH_RADIUS`.
+pub const SPAWN_SEARCH_RADIUS: i32 = 6;
+/// A spawn column counts as occupied if a creature or other player is within this horizontal distance
+/// of it, so a player never materialises on top of a monster or another player. Mirrors the web
+/// `SPAWN_CLEARANCE_GAP`.
+pub const SPAWN_CLEARANCE_GAP: f32 = 1.2;
 /// Horizontal chunk edge for procedural decoration (trees + plants). Mirrors the TS `CHUNK`: the
 /// decoration RNG is seeded per chunk so every player and a post-reset regen see the same world.
 pub const CHUNK: i32 = 32;
@@ -389,6 +397,64 @@ impl World {
         let y = height_at(cx, cz) as f32 + 3.0;
         [cx as f32 + 0.5, y, cz as f32 + 0.5]
     }
+
+    /// The fixed spawn column (the centre + monument clearance). The slot search starts here and only
+    /// nudges outward when this column is blocked or occupied.
+    pub fn spawn_base() -> (i32, i32) {
+        (WORLD_SIZE / 2, WORLD_SIZE / 2 + SPAWN_MONUMENT_CLEARANCE)
+    }
+}
+
+/// A column is a clear spawn slot when its body — the two cells just above the surface, where the
+/// player stands — is not solid (so the player never lands inside terrain, the monument or a built
+/// block) AND no creature or other player is within `clearance_gap` horizontally (so the player never
+/// materialises on top of a monster or another player). The feet land at `surface + 1`. Mirrors the
+/// web `spawnColumnClear` so online truth and offline prediction agree.
+pub fn spawn_column_clear(
+    x: i32,
+    z: i32,
+    clearance_gap: f32,
+    world: &World,
+    actors: &[[f32; 2]],
+) -> bool {
+    let surface = world.surface_y(x, z);
+    if world.is_solid(x, surface + 1, z) || world.is_solid(x, surface + 2, z) {
+        return false;
+    }
+    let column_x = x as f32 + 0.5;
+    let column_z = z as f32 + 0.5;
+    !actors
+        .iter()
+        .any(|a| (a[0] - column_x).hypot(a[1] - column_z) < clearance_gap)
+}
+
+/// Walk outward ring by ring (Chebyshev radius 0, 1, 2, …) from the base column and return the first
+/// column where `is_clear` is true; if nothing within `max_radius` is clear, fall back to the base.
+/// Ring r visits its perimeter in a fixed order: each row dz from -r..=r, and within a row the two
+/// edge columns dx = -r and dx = r (the top/bottom rows scan every dx). This exact order is mirrored
+/// in the web `findSpawnSlot` so both sides pick the same column for the same world.
+pub fn find_spawn_slot(
+    base_x: i32,
+    base_z: i32,
+    max_radius: i32,
+    mut is_clear: impl FnMut(i32, i32) -> bool,
+) -> (i32, i32) {
+    for radius in 0..=max_radius {
+        for dz in -radius..=radius {
+            let on_edge_row = dz == -radius || dz == radius;
+            for dx in -radius..=radius {
+                if !on_edge_row && dx != -radius && dx != radius {
+                    continue;
+                }
+                let x = base_x + dx;
+                let z = base_z + dz;
+                if is_clear(x, z) {
+                    return (x, z);
+                }
+            }
+        }
+    }
+    (base_x, base_z)
 }
 
 // ---------- Cheap persistence codec ----------
@@ -730,6 +796,62 @@ mod tests {
             s[2] - centre >= SPAWN_MONUMENT_CLEARANCE as f32,
             "spawn is offset clear of the centre monument, got z offset {}",
             s[2] - centre
+        );
+    }
+
+    #[test]
+    fn find_spawn_slot_returns_the_base_when_clear() {
+        assert_eq!(find_spawn_slot(10, 20, 4, |_, _| true), (10, 20));
+    }
+
+    #[test]
+    fn find_spawn_slot_falls_back_to_the_base_when_nothing_is_clear() {
+        assert_eq!(find_spawn_slot(5, 5, 3, |_, _| false), (5, 5));
+    }
+
+    #[test]
+    fn find_spawn_slot_picks_the_nearest_ring_when_only_the_base_is_blocked() {
+        let (x, z) = find_spawn_slot(0, 0, 4, |x, z| !(x == 0 && z == 0));
+        assert_eq!(x.abs().max(z.abs()), 1);
+    }
+
+    #[test]
+    fn find_spawn_slot_scans_a_ring_in_the_same_order_as_the_web() {
+        let mut visited = Vec::new();
+        find_spawn_slot(0, 0, 1, |x, z| {
+            visited.push((x, z));
+            false
+        });
+        assert_eq!(visited.first(), Some(&(0, 0)));
+        assert_eq!(visited.get(1), Some(&(-1, -1)));
+        assert_eq!(visited.last(), Some(&(1, 1)));
+    }
+
+    #[test]
+    fn spawn_column_clear_rejects_a_solid_body_and_a_nearby_actor() {
+        let mut w = World::new();
+        let (bx, bz) = World::spawn_base();
+        let surface = w.surface_y(bx, bz);
+        assert!(
+            spawn_column_clear(bx, bz, SPAWN_CLEARANCE_GAP, &w, &[]),
+            "the bare spawn column is clear"
+        );
+        let actor = [bx as f32 + 0.5, bz as f32 + 0.5];
+        assert!(
+            !spawn_column_clear(bx, bz, SPAWN_CLEARANCE_GAP, &w, &[actor]),
+            "an actor on the column blocks it"
+        );
+        w.set(bx, surface + 1, bz, STONE);
+        w.set(bx, surface + 2, bz, STONE);
+        let raised = w.surface_y(bx, bz);
+        assert!(
+            spawn_column_clear(bx, bz, SPAWN_CLEARANCE_GAP, &w, &[]),
+            "the body sits above the raised surface, so the column is clear again"
+        );
+        assert_eq!(
+            raised,
+            surface + 2,
+            "surface rose with the two stacked blocks"
         );
     }
 

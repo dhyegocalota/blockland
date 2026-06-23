@@ -610,7 +610,7 @@ impl Room {
         } else {
             authoritative_name
         };
-        let spawn = World::spawn();
+        let spawn = self.spawn_slot(None);
         let limits = &self.hub.limits;
         let now = Instant::now();
         let player = Player {
@@ -2138,8 +2138,41 @@ impl Room {
 
     /// Move a player to spawn with full health and re-baseline the anti-cheat (so the client's snap to
     /// spawn is accepted), telling them to reposition + refill. Used by the respawn request and on death.
+    /// The fixed spawn nudged to the nearest clear column over the live world, creatures and players,
+    /// so a player never materialises inside terrain/the monument/built blocks or on top of a monster
+    /// or another player. `exclude` drops one player (the respawning one) from the occupancy check so
+    /// they don't block their own slot. The returned y is the eye position (feet + PLAYER_EYE_HEIGHT).
+    fn spawn_slot(&self, exclude: Option<PlayerId>) -> [f32; 3] {
+        let mut actors: Vec<[f32; 2]> = self
+            .creatures
+            .iter()
+            .map(|c| [c.pos[0], c.pos[2]])
+            .collect();
+        actors.extend(
+            self.players
+                .values()
+                .filter(|p| Some(p.id) != exclude)
+                .map(|p| [p.x, p.z]),
+        );
+        let (base_x, base_z) = World::spawn_base();
+        let (x, z) = sim::find_spawn_slot(base_x, base_z, sim::SPAWN_SEARCH_RADIUS, |x, z| {
+            sim::spawn_column_clear(x, z, sim::SPAWN_CLEARANCE_GAP, &self.world, &actors)
+        });
+        let mut feet = self.world.surface_y(x, z) + 1;
+        while feet < sim::SIZE_Y - 2
+            && (self.world.is_solid(x, feet, z) || self.world.is_solid(x, feet + 1, z))
+        {
+            feet += 1;
+        }
+        [
+            x as f32 + 0.5,
+            feet as f32 + PLAYER_EYE_HEIGHT,
+            z as f32 + 0.5,
+        ]
+    }
+
     fn respawn(&mut self, id: PlayerId) {
-        let spawn = World::spawn();
+        let spawn = self.spawn_slot(Some(id));
         let Some(p) = self.players.get_mut(&id) else {
             return;
         };
@@ -2947,6 +2980,34 @@ mod tests {
         assert!((0..50)
             .filter_map(|_| rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Respawn { .. })),);
+    }
+
+    // The spawn column is solid (built blocks stacked over the surface); a respawn must NOT drop the
+    // player inside a block. The slot search nudges to a nearby clear column and the feet/head cells
+    // are air.
+    #[tokio::test]
+    async fn respawn_never_lands_inside_a_solid_spawn_column() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        let (bx, bz) = World::spawn_base();
+        let surface = room.world.surface_y(bx, bz);
+        for y in (surface + 1)..(surface + 6) {
+            room.world.set(bx, y, bz, sim::STONE);
+        }
+        room.on_input(1, ClientMsg::Respawn);
+        let p = room.players.get(&1).unwrap();
+        let feet = (p.y - PLAYER_EYE_HEIGHT).round() as i32;
+        let fx = p.x.floor() as i32;
+        let fz = p.z.floor() as i32;
+        assert!(!room.world.is_solid(fx, feet, fz), "the feet cell is air");
+        assert!(
+            !room.world.is_solid(fx, feet + 1, fz),
+            "the head cell is air"
+        );
+        assert!(
+            (fx - bx).abs().max((fz - bz).abs()) <= sim::SPAWN_SEARCH_RADIUS,
+            "the slot stays within a few blocks of the spawn"
+        );
     }
 
     // A buggy client that doesn't self-unstick: an EditBatch fills the player's own body column with

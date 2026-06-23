@@ -70,6 +70,14 @@ export const HEART_BOB_SPEED = 3;
 export const CREATURE_SEPARATION = 0.9;
 // The spawn point sits this many cells south of the world centre (so the player faces the monument).
 export const SPAWN_OFFSET_Z = 4;
+// When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
+// player), the spiral search nudges to the nearest clear column within this many cells. Mirrors the
+// Rust server's SPAWN_SEARCH_RADIUS.
+export const SPAWN_SEARCH_RADIUS = 6;
+// A spawn column counts as occupied if a creature or other player is within this horizontal distance
+// of it, so a player never materialises on top of a monster or another player. Mirrors the Rust
+// server's SPAWN_CLEARANCE_GAP.
+export const SPAWN_CLEARANCE_GAP = 1.2;
 // Fall below this Y (under the world floor) and the player is teleported back to spawn.
 export const VOID_FALL_Y = -8;
 

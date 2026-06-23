@@ -9,9 +9,9 @@ import { Vec3 } from './vec3';
 import { PLATFORM_NAME, type Brand } from '../tenants';
 import { t } from '../i18n';
 import { debug } from '../log';
-import { CHUNK, DEFAULT_APP_VERSION, EYE_HEIGHT, FACE_ID, SIZE_X, SIZE_Y, SIZE_Z, SPAWN_OFFSET_Z } from './constants';
+import { CHUNK, DEFAULT_APP_VERSION, EYE_HEIGHT, FACE_ID, SIZE_X, SIZE_Y, SIZE_Z, SPAWN_CLEARANCE_GAP, SPAWN_OFFSET_Z, SPAWN_SEARCH_RADIUS } from './constants';
 import { type BlockDef } from './blocks';
-import { heightAt } from './worldgen';
+import { findSpawnSlot, spawnColumnClear } from './spawn-slot';
 import { VoxelWorld } from './world';
 import { BlockInventory } from './inventory';
 import { clearFeetAbove } from './actors';
@@ -114,12 +114,31 @@ export class GameEngineBuilder {
     const savedPos = parseSavedPosition(localStorage.getItem(posKey));
     // The engine's mutable runtime state (player, keys, joystick, room flags, loop bookkeeping). Room
     // flags default to the offline sandbox (peaceful, infinite resources, no gates).
-    const spawnPoint = (): Vec3 => {
-      const sx = SIZE_X >> 1, sz = (SIZE_Z >> 1) + SPAWN_OFFSET_Z;
-      const feet = clearFeetAbove({ feet: heightAt(sx, sz) + 1, isSolid: (y) => world.isSolid(sx, y, sz) });
-      return new Vec3(SIZE_X / 2, feet + EYE_HEIGHT, SIZE_Z / 2 + SPAWN_OFFSET_Z);
+    const columnSurfaceY = (x: number, z: number): number =>
+      groundHeightAt({ isSolidAt: (y) => world.isSolid(x, y, z) }) - 1;
+    // Nudge the fixed spawn to the nearest clear column (avoiding terrain, the monument, built blocks
+    // and any creature/player) before resolving the standing position. Actors come from the live
+    // world: offline creatures and, when connected, the server's creatures and remote players.
+    const spawnPoint = (actors: Array<{ x: number; z: number }>): Vec3 => {
+      const baseX = SIZE_X >> 1, baseZ = (SIZE_Z >> 1) + SPAWN_OFFSET_Z;
+      const slot = findSpawnSlot({
+        baseX, baseZ, maxRadius: SPAWN_SEARCH_RADIUS,
+        isClear: (x, z) => spawnColumnClear({
+          x, z, clearanceGap: SPAWN_CLEARANCE_GAP, actors,
+          surfaceY: columnSurfaceY, isSolid: (cx, cy, cz) => world.isSolid(cx, cy, cz),
+        }),
+      });
+      const feet = clearFeetAbove({ feet: columnSurfaceY(slot.x, slot.z) + 1, isSolid: (y) => world.isSolid(slot.x, y, slot.z) });
+      return new Vec3(slot.x + 0.5, feet + EYE_HEIGHT, slot.z + 0.5);
     };
-    const state = createEngineState({ spawn: savedPos ? new Vec3(savedPos.x, savedPos.y, savedPos.z) : spawnPoint() });
+    const liveSpawnActors = (): Array<{ x: number; z: number }> => {
+      const creatures = runtime.creatures.map((cr) => ({ x: cr.pos.x, z: cr.pos.z }));
+      if (!runtime.coop) return creatures;
+      const serverCreatures = runtime.coop.getCreatures().map((cr) => ({ x: cr.x, z: cr.z }));
+      const players = runtime.coop.getPlayers().map((p) => ({ x: p.x, z: p.z }));
+      return [...creatures, ...serverCreatures, ...players];
+    };
+    const state = createEngineState({ spawn: savedPos ? new Vec3(savedPos.x, savedPos.y, savedPos.z) : spawnPoint([]) });
     const creatureGroup = createCreatureGroup(scene);
 
     const runtime = {
@@ -149,7 +168,7 @@ export class GameEngineBuilder {
       if (!node) throw new Error(`missing element #${id}`);
       return node;
     };
-    runtime.spawnPoint = spawnPoint;
+    runtime.spawnPoint = (): Vec3 => spawnPoint(liveSpawnActors());
     runtime.savePos = (): void => { localStorage.setItem(posKey, serializeSavedPosition(state.player.pos)); };
     runtime.groundHeight = (x: number, z: number): number => {
       const gx = Math.floor(x), gz = Math.floor(z);
