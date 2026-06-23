@@ -5,7 +5,7 @@
 
 import { debug, warn } from './log';
 import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from './engine/debug-report';
-import { decodeSnapshot } from './snapshot-codec';
+import { SnapshotReconstructor } from './snapshot-delta';
 import type { SnapshotMsg } from './net-snapshot';
 import {
   adminApprove,
@@ -231,6 +231,9 @@ export function createNet(opts: NetOptions): NetClient {
   let lastMessageAt: number | null = null;
   let lastPingAt: number | null = null;
   let snapshotCount = 0;
+  // Keeps the authoritative full entity state and reconstructs each full snapshot from the server's
+  // keyframe + delta stream, so `onSnapshot` still receives the SAME full object every tick.
+  const reconstructor = new SnapshotReconstructor();
   // The freshest client player position the engine has thrown out as a Move; we stamp every recorded
   // Dig/Hit/Edit with it so the diagnostics ring shows where the client believed it was aiming from.
   let lastMovePos: Vec3Like = { x: 0, y: 0, z: 0 };
@@ -319,12 +322,17 @@ export function createNet(opts: NetOptions): NetClient {
     return Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz) * 100) / 100;
   }
 
-  // A binary frame is always the per-tick snapshot (the only message that goes binary); decode the bytes
-  // and feed the same onSnapshot path the text path used to. A Blob (a socket that ignored `binaryType`)
-  // is read to an ArrayBuffer first.
+  // A binary frame is always the per-tick snapshot (the only message that goes binary): a keyframe or a
+  // delta. The reconstructor keeps the full state and returns the reconstructed full snapshot to emit, or
+  // null for a delta it can't safely apply yet (wait for the next keyframe). A Blob (a socket that ignored
+  // `binaryType`) is read to an ArrayBuffer first.
   function handleBinary(buffer: ArrayBuffer): void {
     lastMessageAt = now();
-    const snapshot: SnapshotMsg = decodeSnapshot(buffer);
+    const snapshot: SnapshotMsg | null = reconstructor.apply(buffer);
+    if (snapshot === null) {
+      debug('net', 'snapshot delta dropped (stale baseline)', { count: snapshotCount });
+      return;
+    }
     snapshotCount += 1;
     if (snapshotCount === 1 || snapshotCount % SNAPSHOT_LOG_EVERY === 0) {
       debug('net', 'snapshot', { count: snapshotCount, tick: snapshot.tick, players: snapshot.players.length, creatures: snapshot.creatures.length });

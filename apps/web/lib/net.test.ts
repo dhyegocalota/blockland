@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNet, type NetState, type WebSocketLike } from './net';
-import { encodeSnapshot } from './snapshot-codec';
+import { encodeKeyframe, encodeDelta } from './snapshot-codec';
 import type { SnapshotMsg } from './net-snapshot';
 
 class MockWebSocket implements WebSocketLike {
@@ -37,9 +37,17 @@ class MockWebSocket implements WebSocketLike {
   }
 
   // The per-tick snapshot is the one binary frame; deliver it as the ArrayBuffer a real socket
-  // (binaryType='arraybuffer') hands the client, encoded with the shared codec.
+  // (binaryType='arraybuffer') hands the client. A keyframe carries the full snapshot; the helper below
+  // delivers a delta against a baseline so the reconstructor path is exercised end-to-end.
   receiveSnapshot(snapshot: SnapshotMsg): void {
-    const bytes = encodeSnapshot(snapshot);
+    this.deliver(encodeKeyframe(snapshot));
+  }
+
+  receiveDelta(baseline: SnapshotMsg, next: SnapshotMsg): void {
+    this.deliver(encodeDelta(baseline, next));
+  }
+
+  private deliver(bytes: Uint8Array): void {
     const buffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(buffer).set(bytes);
     this.onmessage?.({ data: buffer });
@@ -151,6 +159,71 @@ describe('net client', () => {
         hearts: [{ id: 2, x: 20, y: 21, z: 22 }],
       },
     ]);
+  });
+
+  it('reconstructs the full snapshot from a keyframe then a delta', () => {
+    const { client, snapshots } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const keyframe: SnapshotMsg = {
+      t: 'snapshot',
+      tick: 5,
+      players: [
+        { id: 1, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, ping_ms: 0, score: 0, hp: 3 },
+        { id: 2, x: 5, y: 0, z: 0, yaw: 0, pitch: 0, ping_ms: 0, score: 0, hp: 3 },
+      ],
+      creatures: [{ id: 9, kind: 'slime', x: 1, y: 1, z: 1, yaw: 0, hp: 2, max_hp: 4 }],
+      hearts: [{ id: 7, x: 3, y: 0, z: 3 }],
+    };
+    // Player 1 moves, player 2 leaves; the creature stays still; the heart stays.
+    const next: SnapshotMsg = {
+      t: 'snapshot',
+      tick: 6,
+      players: [{ id: 1, x: 2, y: 0, z: 0, yaw: 0, pitch: 0, ping_ms: 0, score: 0, hp: 3 }],
+      creatures: keyframe.creatures,
+      hearts: keyframe.hearts,
+    };
+    socket.receiveSnapshot(keyframe);
+    socket.receiveDelta(keyframe, next);
+
+    expect(snapshots).toEqual([keyframe, next]);
+  });
+
+  it('drops a delta whose baseline does not match the current tick, until the next keyframe', () => {
+    const { client, snapshots } = makeClient();
+    client.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive(welcome);
+
+    const keyframe: SnapshotMsg = {
+      t: 'snapshot',
+      tick: 5,
+      players: [{ id: 1, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, ping_ms: 0, score: 0, hp: 3 }],
+      creatures: [],
+      hearts: [],
+    };
+    socket.receiveSnapshot(keyframe);
+    // A delta built on tick 9 — a baseline the client never saw (current is 5). It must be dropped.
+    const stale: SnapshotMsg = { ...keyframe, tick: 9 };
+    const next: SnapshotMsg = {
+      t: 'snapshot',
+      tick: 10,
+      players: [{ id: 1, x: 9, y: 0, z: 0, yaw: 0, pitch: 0, ping_ms: 0, score: 0, hp: 3 }],
+      creatures: [],
+      hearts: [],
+    };
+    socket.receiveDelta(stale, next);
+    // Only the keyframe was emitted; the stale delta was silently dropped.
+    expect(snapshots).toEqual([keyframe]);
+
+    // A fresh keyframe resyncs and emits again.
+    const resync: SnapshotMsg = { ...keyframe, tick: 12 };
+    socket.receiveSnapshot(resync);
+    expect(snapshots).toEqual([keyframe, resync]);
   });
 
   it('sets binaryType to arraybuffer so the snapshot frame arrives as bytes', () => {

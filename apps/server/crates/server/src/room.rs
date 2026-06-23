@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{
-    snapshot_codec::encode_snapshot, BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp,
-    HeartDropState, InventoryItem, PlayerId, PlayerMeta, PlayerState, ServerMsg,
+    snapshot_codec::{encode_delta, encode_keyframe, SnapshotView},
+    BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, HeartDropState, InventoryItem,
+    PlayerId, PlayerMeta, PlayerState, ServerMsg,
 };
 use rand::Rng;
 use sim::World;
@@ -189,6 +190,10 @@ struct Player {
     // Roster so the presence list can rank players when pvp is on; never affects the leaderboard.
     pvp_kills: u32,
     conn: mpsc::Sender<Outbound>,
+    // True until this connection has received a full keyframe it can build deltas on. Set when the player
+    // joins or resumes (a new socket has no baseline), so the next snapshot it gets is a KEYFRAME, not a
+    // delta against state it never saw; cleared once that keyframe is sent.
+    needs_keyframe: bool,
     // When the player's socket dropped, if it currently is. `Some` freezes the avatar in place and holds
     // the slot for RECONNECT_GRACE: a rejoin with the same identity resumes it; otherwise the tick prunes
     // it (a single `Left`). `None` is a live, connected player. A resume clears it back to `None`.
@@ -265,6 +270,20 @@ pub struct Room {
     approval_required: bool,
     online_allowed: bool,
     offline_allowed: bool,
+    // The last full snapshot sent to in-sync clients, kept as the baseline every per-tick delta is built
+    // against. After each broadcast it becomes this tick's full state. A connection flagged
+    // `needs_keyframe` (just joined/resumed) gets a keyframe instead and then follows the deltas.
+    snapshot_baseline: SnapshotBaseline,
+}
+
+/// The room's last-sent full snapshot, the baseline each per-tick delta is encoded against. Starts at a
+/// tick no client can match, so the first frame everyone gets is a keyframe.
+#[derive(Default)]
+struct SnapshotBaseline {
+    tick: u64,
+    players: Vec<PlayerState>,
+    creatures: Vec<CreatureState>,
+    hearts: Vec<HeartDropState>,
 }
 
 /// A heart pickup on the ground, dropped where a creature died. Collected by a damaged player who walks
@@ -310,6 +329,9 @@ const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
                                   // The ban/reclaim/idle sweep + admin telemetry don't need 30Hz; running them at ~2Hz keeps the hot tick
                                   // loop cheap (no per-tick DashMap lookups or player clones) without users noticing the slower cadence.
 const STATUS_EVERY_TICKS: u64 = 15; // 0.5s @ 30Hz
+                                    // The snapshot stream is keyframe + deltas: a full keyframe every this-many ticks (~2s @ 30Hz) bounds
+                                    // the baseline and lets any desynced client resync; every other tick is a delta against the baseline.
+const KEYFRAME_INTERVAL_TICKS: u64 = 60;
 const EMPTY_ROOM_TTL: Duration = Duration::from_secs(30);
 const PERSIST_SECS: u64 = 10; // flush the world diff at most this often, only when dirty
                               // Snapshot coordinates are rounded to centimeter precision before going on the wire: full f32
@@ -358,6 +380,7 @@ impl Room {
             approval_required: false,
             online_allowed: true,
             offline_allowed: true,
+            snapshot_baseline: SnapshotBaseline::default(),
             hub,
         }
     }
@@ -675,6 +698,7 @@ impl Room {
             score: 0,
             pvp_kills: 0,
             conn: conn.clone(),
+            needs_keyframe: true,
             disconnected_at: None,
             last_seen: now,
             last_move: now,
@@ -829,6 +853,8 @@ impl Room {
         let (spawn, role_admin, role_moderator) = {
             let p = self.players.get_mut(&id)?;
             p.conn = conn.clone();
+            // A fresh socket has no baseline — its next snapshot must be a keyframe, not a delta.
+            p.needs_keyframe = true;
             p.disconnected_at = None;
             p.last_seen = now;
             p.skin = sanitize_color(&look.skin, "#f2c18b");
@@ -2276,20 +2302,60 @@ impl Room {
         }
     }
 
-    /// Fan the hot per-tick snapshot out to every player. Encoded ONCE to a compact binary blob (shared
-    /// as an `Arc<[u8]>` and sent as a WebSocket binary frame) so the dominant per-tick cost is paid a
-    /// single time for the whole room. `try_send` is non-blocking, so a slow client never stalls the tick.
+    /// Fan the hot per-tick snapshot out to every player as a keyframe + delta stream. In-sync clients get
+    /// ONE delta (encoded once, shared as `Arc<[u8]>`) against the room's baseline; a just-joined/resumed
+    /// connection (or every connection on the periodic keyframe tick) gets a full keyframe (also encoded at
+    /// most once and shared) it can build later deltas on. After sending, the baseline becomes this tick's
+    /// full state. `try_send` stays non-blocking, so a slow client never stalls the tick.
     fn broadcast_snapshot(
-        &self,
+        &mut self,
         tick: u64,
         players: &[PlayerState],
         creatures: &[CreatureState],
         hearts: &[HeartDropState],
     ) {
-        let bytes: Arc<[u8]> = encode_snapshot(tick, players, creatures, hearts).into();
-        for p in self.players.values() {
-            let _ = p.conn.try_send(Outbound::Binary(bytes.clone()));
+        let periodic_keyframe = tick.is_multiple_of(KEYFRAME_INTERVAL_TICKS);
+        let any_needs_keyframe = self.players.values().any(|p| p.needs_keyframe);
+
+        let keyframe: Option<Arc<[u8]>> = (periodic_keyframe || any_needs_keyframe)
+            .then(|| encode_keyframe(tick, players, creatures, hearts).into());
+        let delta: Option<Arc<[u8]>> = (!periodic_keyframe).then(|| {
+            encode_delta(
+                SnapshotView {
+                    tick: self.snapshot_baseline.tick,
+                    players: &self.snapshot_baseline.players,
+                    creatures: &self.snapshot_baseline.creatures,
+                    hearts: &self.snapshot_baseline.hearts,
+                },
+                SnapshotView {
+                    tick,
+                    players,
+                    creatures,
+                    hearts,
+                },
+            )
+            .into()
+        });
+
+        for p in self.players.values_mut() {
+            let send_keyframe = periodic_keyframe || p.needs_keyframe;
+            let frame = if send_keyframe {
+                keyframe.clone()
+            } else {
+                delta.clone()
+            };
+            if let Some(bytes) = frame {
+                let _ = p.conn.try_send(Outbound::Binary(bytes));
+            }
+            p.needs_keyframe = false;
         }
+
+        self.snapshot_baseline = SnapshotBaseline {
+            tick,
+            players: players.to_vec(),
+            creatures: creatures.to_vec(),
+            hearts: hearts.to_vec(),
+        };
     }
 
     /// Broadcast to everyone except one player (e.g. the attacker, who already played the hit effect
@@ -2928,6 +2994,7 @@ mod tests {
             score: 0,
             pvp_kills: 0,
             conn,
+            needs_keyframe: true,
             disconnected_at: None,
             last_seen: now,
             last_move: now,
@@ -4205,34 +4272,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broadcast_snapshot_encodes_once_to_binary_and_shares_it_with_every_player() {
-        // The hot per-tick snapshot goes out as a single binary blob, encoded ONCE for the whole room and
-        // shared (an `Arc<[u8]>`) across every connection — sent as a WebSocket binary frame, not JSON.
+    async fn fresh_players_get_a_shared_keyframe_then_a_shared_delta() {
+        // Two just-added connections each need a baseline, so the first snapshot is a KEYFRAME — encoded
+        // ONCE and shared (an `Arc<[u8]>`) across both. The next tick, both are in-sync, so they get the
+        // single shared DELTA instead. Both frames arrive as pre-encoded Binary blobs.
         let mut room = test_room().await;
         let mut rx_a = add_player(&mut room, 1, false);
         let mut rx_b = add_player(&mut room, 2, false);
         let players = vec![PlayerState(1, 1.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)];
         let creatures = vec![CreatureState(50, 4, -3.0, 63.5, 8.0, 0.2, 2, 2)];
         let hearts = vec![HeartDropState(200, -5.0, 63.5, 0.0)];
-        let expected = encode_snapshot(7, &players, &creatures, &hearts);
+        let expected_keyframe = encode_keyframe(7, &players, &creatures, &hearts);
         room.broadcast_snapshot(7, &players, &creatures, &hearts);
 
-        let Outbound::Binary(bytes_a) = rx_a.try_recv().unwrap() else {
-            panic!("the snapshot must arrive as a pre-encoded Binary blob");
+        let Outbound::Binary(key_a) = rx_a.try_recv().unwrap() else {
+            panic!("a fresh player must get a Binary keyframe");
         };
-        let Outbound::Binary(bytes_b) = rx_b.try_recv().unwrap() else {
-            panic!("the snapshot must arrive as a pre-encoded Binary blob");
+        let Outbound::Binary(key_b) = rx_b.try_recv().unwrap() else {
+            panic!("a fresh player must get a Binary keyframe");
         };
         assert_eq!(
-            &*bytes_a,
-            expected.as_slice(),
-            "bytes must equal the codec output"
+            &*key_a,
+            expected_keyframe.as_slice(),
+            "the first frame is a keyframe"
         );
-        assert_eq!(bytes_a, bytes_b, "every player gets the SAME bytes");
         assert!(
-            Arc::ptr_eq(&bytes_a, &bytes_b),
-            "the snapshot blob is shared, not re-encoded per player"
+            Arc::ptr_eq(&key_a, &key_b),
+            "the keyframe is shared across both fresh connections, not re-encoded"
         );
+
+        // Next tick: both are in-sync, so they get one shared delta against the now-stored baseline.
+        let moved = vec![PlayerState(1, 2.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)];
+        let expected_delta = encode_delta(
+            SnapshotView {
+                tick: 7,
+                players: &players,
+                creatures: &creatures,
+                hearts: &hearts,
+            },
+            SnapshotView {
+                tick: 8,
+                players: &moved,
+                creatures: &creatures,
+                hearts: &hearts,
+            },
+        );
+        room.broadcast_snapshot(8, &moved, &creatures, &hearts);
+
+        let Outbound::Binary(delta_a) = rx_a.try_recv().unwrap() else {
+            panic!("an in-sync player must get a Binary delta");
+        };
+        let Outbound::Binary(delta_b) = rx_b.try_recv().unwrap() else {
+            panic!("an in-sync player must get a Binary delta");
+        };
+        assert_eq!(
+            &*delta_a,
+            expected_delta.as_slice(),
+            "the follow-up frame is a delta"
+        );
+        assert!(
+            Arc::ptr_eq(&delta_a, &delta_b),
+            "the single delta blob is shared across in-sync connections"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resumed_connection_gets_a_keyframe_not_a_delta_it_cannot_apply() {
+        // A player that was in-sync, dropped, and reconnected has a fresh socket with no baseline. Mark it
+        // needs_keyframe (as try_resume does) and assert the next snapshot is a KEYFRAME, not a delta.
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        let players = vec![PlayerState(1, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 3)];
+        room.broadcast_snapshot(7, &players, &[], &[]);
+        let _ = rx.try_recv(); // drain the join keyframe
+
+        // In-sync now; a normal delta would follow. Simulate a resume re-flagging needs_keyframe.
+        room.players.get_mut(&1).unwrap().needs_keyframe = true;
+        room.broadcast_snapshot(8, &players, &[], &[]);
+        let Outbound::Binary(bytes) = rx.try_recv().unwrap() else {
+            panic!("the resumed connection must get a Binary frame");
+        };
+        assert_eq!(
+            bytes[1],
+            protocol::snapshot_codec::FRAME_KEYFRAME,
+            "a resume gets a keyframe"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_periodic_keyframe_is_emitted_on_the_interval() {
+        // Every KEYFRAME_INTERVAL_TICKS the room sends a full keyframe to in-sync clients to bound the
+        // baseline and let any desynced client resync; the ticks between are deltas.
+        let mut room = test_room().await;
+        let mut rx = add_player(&mut room, 1, false);
+        let players = vec![PlayerState(1, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 3)];
+        room.broadcast_snapshot(1, &players, &[], &[]); // join keyframe
+        let _ = rx.try_recv();
+
+        room.broadcast_snapshot(2, &players, &[], &[]); // in-sync -> delta
+        let Outbound::Binary(d) = rx.try_recv().unwrap() else {
+            panic!("expected a binary frame");
+        };
+        assert_eq!(d[1], protocol::snapshot_codec::FRAME_DELTA);
+
+        room.broadcast_snapshot(KEYFRAME_INTERVAL_TICKS, &players, &[], &[]); // on the interval -> keyframe
+        let Outbound::Binary(k) = rx.try_recv().unwrap() else {
+            panic!("expected a binary frame");
+        };
+        assert_eq!(k[1], protocol::snapshot_codec::FRAME_KEYFRAME);
     }
 
     #[tokio::test]
