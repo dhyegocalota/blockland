@@ -1,10 +1,12 @@
 'use client';
 
-// The open lobby-admin report (hours played or chat log), rendered as an on-theme list that reuses
-// the admin roster styles (#adminReports list/li/playerName). Pure presentation: the data + open/close
-// live in useLobbyReports; the formatters turn raw ms/timestamps into localized labels.
+// The open lobby-admin report (hours played or chat log), rendered as a kid-friendly overlay modal
+// that reuses the connecting/update overlay panel and the admin roster list styles (#adminReports
+// list/li/playerName). The data + open/close live in useLobbyReports; this pages the (bounded) rows
+// client-side with paginate() and runs the formatters to turn raw ms/timestamps into localized labels.
+import { useState } from 'react';
 import { t } from '../lib/i18n';
-import { formatPlaytime, relativeTime } from '../lib/report-format';
+import { formatPlaytime, paginate, relativeTime } from '../lib/report-format';
 import type { ReportKind } from '../hooks/use-lobby-reports';
 import type { ChatEntry, PlaytimeEntry } from '../lib/api';
 
@@ -50,26 +52,48 @@ function ChatRows({ rows, now }: { rows: ChatEntry[]; now: number }) {
 }
 
 export default function LobbyReports({ report, close }: { report: ReportView; close: () => void }) {
+  const [requestedPage, setRequestedPage] = useState(1);
   const titleKey = report.kind === 'playtime' ? 'report.playtime_title' : 'report.chat_title';
   const rows = report.kind === 'playtime' ? report.playtime : report.chat;
+  const ready = !report.loading && !report.failed;
+  const playtimePage = paginate(report.playtime, requestedPage);
+  const chatPage = paginate(report.chat, requestedPage);
+  const page = report.kind === 'playtime' ? playtimePage : chatPage;
+  const showPager = ready && rows.length > 0;
+
   return (
-    <>
-      <span className="adminLabel">{t(titleKey)}</span>
-      <span className="reportBy">{t('report.window')}</span>
-      {report.loading && <span className="reportBy">{t('report.loading')}</span>}
-      {report.failed && <span className="reportBy">{t('report.failed')}</span>}
-      {!report.loading && !report.failed && rows.length === 0 && (
-        <span className="reportBy">{t('report.empty')}</span>
-      )}
-      {!report.loading && !report.failed && report.kind === 'playtime' && (
-        <PlaytimeRows rows={report.playtime} />
-      )}
-      {!report.loading && !report.failed && report.kind === 'chat' && (
-        <ChatRows rows={report.chat} now={Date.now()} />
-      )}
-      <button id="adminReportClose" onClick={close}>
-        {t('report.close')}
-      </button>
-    </>
+    <div id="reportOverlay" role="dialog" aria-modal="true" onClick={close}>
+      <div className="panel" onClick={(event) => event.stopPropagation()}>
+        <h2>{t(titleKey)}</h2>
+        <span className="reportWindow">{t('report.window')}</span>
+        {report.loading && <span className="reportBy">{t('report.loading')}</span>}
+        {report.failed && <span className="reportBy">{t('report.failed')}</span>}
+        {ready && rows.length === 0 && <span className="reportBy">{t('report.empty')}</span>}
+        {ready && report.kind === 'playtime' && <PlaytimeRows rows={playtimePage.items} />}
+        {ready && report.kind === 'chat' && <ChatRows rows={chatPage.items} now={Date.now()} />}
+        {showPager && (
+          <div className="reportPager">
+            <button
+              className="reportPage"
+              disabled={page.page <= 1}
+              onClick={() => setRequestedPage((current) => current - 1)}
+            >
+              {t('report.prev')}
+            </button>
+            <span className="reportPageOf">{t('report.page_of', { page: page.page, total: page.totalPages })}</span>
+            <button
+              className="reportPage"
+              disabled={page.page >= page.totalPages}
+              onClick={() => setRequestedPage((current) => current + 1)}
+            >
+              {t('report.next')}
+            </button>
+          </div>
+        )}
+        <button id="adminReportClose" onClick={close}>
+          {t('report.close')}
+        </button>
+      </div>
+    </div>
   );
 }
