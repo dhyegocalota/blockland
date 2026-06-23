@@ -925,8 +925,10 @@ impl Db {
         }
     }
 
-    /// Set the admin flag on the `(tenant, name)` account. Returns false if no such account exists,
-    /// so the /admin panel can report an unknown name instead of silently succeeding.
+    /// Set the admin flag on the `(tenant, name)` account. Admin and moderator are mutually exclusive,
+    /// so granting admin clears moderator in the same atomic update; revoking it leaves moderator alone.
+    /// Returns false if no such account exists, so the /admin panel can report an unknown name instead
+    /// of silently succeeding.
     pub async fn set_admin_by_name(
         &self,
         tenant: &str,
@@ -936,7 +938,8 @@ impl Db {
         let changed = self
             .conn
             .execute(
-                "UPDATE accounts SET is_admin = ?3 WHERE tenant = ?1 AND name = ?2",
+                "UPDATE accounts SET is_admin = ?3, is_moderator = is_moderator AND ?3 = 0 \
+                 WHERE tenant = ?1 AND name = ?2",
                 params![tenant, name, admin as i64],
             )
             .await?;
@@ -952,13 +955,16 @@ impl Db {
         let changed = self
             .conn
             .execute(
-                "UPDATE accounts SET is_admin = ?3 WHERE tenant = ?1 AND email = ?2",
+                "UPDATE accounts SET is_admin = ?3, is_moderator = is_moderator AND ?3 = 0 \
+                 WHERE tenant = ?1 AND email = ?2",
                 params![tenant, email, admin as i64],
             )
             .await?;
         Ok(changed > 0)
     }
 
+    /// Set the moderator flag on the `(tenant, name)` account. Granting moderator clears admin in the
+    /// same atomic update (the two roles are mutually exclusive); revoking it leaves admin alone.
     pub async fn set_moderator_by_name(
         &self,
         tenant: &str,
@@ -968,7 +974,8 @@ impl Db {
         let changed = self
             .conn
             .execute(
-                "UPDATE accounts SET is_moderator = ?3 WHERE tenant = ?1 AND name = ?2",
+                "UPDATE accounts SET is_moderator = ?3, is_admin = is_admin AND ?3 = 0 \
+                 WHERE tenant = ?1 AND name = ?2",
                 params![tenant, name, moderator as i64],
             )
             .await?;
@@ -984,7 +991,8 @@ impl Db {
         let changed = self
             .conn
             .execute(
-                "UPDATE accounts SET is_moderator = ?3 WHERE tenant = ?1 AND email = ?2",
+                "UPDATE accounts SET is_moderator = ?3, is_admin = is_admin AND ?3 = 0 \
+                 WHERE tenant = ?1 AND email = ?2",
                 params![tenant, email, moderator as i64],
             )
             .await?;
@@ -2095,6 +2103,45 @@ mod tests {
             .await
             .unwrap());
         assert!(!db.set_moderator_by_name("demo", "Ann", true).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn admin_and_moderator_are_mutually_exclusive() {
+        let db = memory_db().await;
+        // Seed the auto-admin first account so "Ann" starts as a plain player.
+        account(&db, "acme", "first@x.com", "First").await;
+        let ann = account(&db, "acme", "ann@x.com", "Ann").await;
+
+        // Granting moderator, then admin, clears the moderator flag in the same update.
+        db.set_moderator_by_name("acme", "Ann", true).await.unwrap();
+        db.set_admin_by_name("acme", "Ann", true).await.unwrap();
+        let now_admin = db.get_account_by_id(&ann).await.unwrap().unwrap();
+        assert!(now_admin.is_admin);
+        assert!(!now_admin.is_moderator);
+        assert_eq!(now_admin.role(), Role::Admin);
+
+        // Granting moderator back clears the admin flag.
+        db.set_moderator_by_name("acme", "Ann", true).await.unwrap();
+        let now_moderator = db.get_account_by_id(&ann).await.unwrap().unwrap();
+        assert!(!now_moderator.is_admin);
+        assert!(now_moderator.is_moderator);
+        assert_eq!(now_moderator.role(), Role::Moderator);
+
+        // Revoking moderator (false) leaves the admin flag untouched.
+        db.set_admin_by_name("acme", "Ann", true).await.unwrap();
+        db.set_moderator_by_name("acme", "Ann", false)
+            .await
+            .unwrap();
+        let still_admin = db.get_account_by_id(&ann).await.unwrap().unwrap();
+        assert!(still_admin.is_admin);
+        assert!(!still_admin.is_moderator);
+
+        // Revoking admin (false) leaves the moderator flag untouched.
+        db.set_moderator_by_name("acme", "Ann", true).await.unwrap();
+        db.set_admin_by_name("acme", "Ann", false).await.unwrap();
+        let still_moderator = db.get_account_by_id(&ann).await.unwrap().unwrap();
+        assert!(!still_moderator.is_admin);
+        assert!(still_moderator.is_moderator);
     }
 
     #[tokio::test]
