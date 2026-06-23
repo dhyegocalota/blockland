@@ -30,3 +30,21 @@ export function relativeTime(sentAt: number, now: number): Localized {
   if (elapsed < MS_PER_DAY) return { key: 'report.hours_ago', vars: { hours: Math.floor(elapsed / MS_PER_HOUR) } };
   return { key: 'report.days_ago', vars: { days: Math.floor(elapsed / MS_PER_DAY) } };
 }
+
+export const REPORT_PAGE_SIZE = 12;
+
+export interface Page<T> {
+  items: T[];
+  page: number;
+  totalPages: number;
+}
+
+// One page of a report list. The chat backlog is bounded (the server caps it), so we fetch once and
+// page in the client. The requested page is clamped into range so prev/next can never run off either
+// end, and an empty list still resolves to a single (empty) page so the pager reads "1 / 1".
+export function paginate<T>(items: T[], requestedPage: number, pageSize = REPORT_PAGE_SIZE): Page<T> {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const page = Math.min(Math.max(1, requestedPage), totalPages);
+  const start = (page - 1) * pageSize;
+  return { items: items.slice(start, start + pageSize), page, totalPages };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPlaytime, relativeTime } from './report-format';
+import { formatPlaytime, paginate, relativeTime } from './report-format';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -36,5 +36,23 @@ describe('relativeTime', () => {
 
   it('clamps a future timestamp to just now instead of going negative', () => {
     expect(relativeTime(2_000, 1_000)).toEqual({ key: 'report.just_now', vars: {} });
+  });
+});
+
+describe('paginate', () => {
+  const items = Array.from({ length: 25 }, (_, index) => index);
+
+  it('slices the requested page and counts total pages', () => {
+    expect(paginate(items, 1, 10)).toEqual({ items: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], page: 1, totalPages: 3 });
+    expect(paginate(items, 3, 10)).toEqual({ items: [20, 21, 22, 23, 24], page: 3, totalPages: 3 });
+  });
+
+  it('clamps a page below the first or past the last into range', () => {
+    expect(paginate(items, 0, 10).page).toBe(1);
+    expect(paginate(items, 99, 10).page).toBe(3);
+  });
+
+  it('resolves an empty list to a single empty page', () => {
+    expect(paginate([], 1, 10)).toEqual({ items: [], page: 1, totalPages: 1 });
   });
 });

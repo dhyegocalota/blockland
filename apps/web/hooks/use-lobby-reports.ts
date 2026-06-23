@@ -10,6 +10,10 @@ import { debug } from '../lib/log';
 
 export type ReportKind = 'playtime' | 'chat';
 
+// The chat report lives at /api/admin/chatlog (not /chat); map each kind to its route segment so the
+// fetch path matches the handler folder. A wrong segment is a 404 the browser can't recover from.
+const REPORT_ROUTE: Record<ReportKind, string> = { playtime: 'playtime', chat: 'chatlog' };
+
 interface ReportState {
   kind: ReportKind;
   loading: boolean;
@@ -19,7 +23,7 @@ interface ReportState {
 }
 
 async function fetchReport(kind: ReportKind, tenant: string, claim: string): Promise<unknown[]> {
-  const res = await fetch(`/api/admin/${kind}/${encodeURIComponent(tenant)}`, {
+  const res = await fetch(`/api/admin/${REPORT_ROUTE[kind]}/${encodeURIComponent(tenant)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ claim }),

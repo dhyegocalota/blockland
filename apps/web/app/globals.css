@@ -363,6 +363,45 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 44px; left: 8
 }
 #updateOverlay button:active { transform: translateY(5px); box-shadow: 0 2px 0 #2a4dc4; }
 
+/* Lobby-admin report (hours played / chat log): the same kid-friendly overlay + panel as the
+   connecting/update screens, holding a paginated list. Rows reuse the #adminReports roster styles,
+   re-skinned for the light panel so the dark-on-glass text reads on cream. */
+#reportOverlay {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .72); backdrop-filter: blur(7px); padding: 16px;
+}
+#reportOverlay .panel {
+  background: linear-gradient(#ffffff, #fff3d6); border: 6px solid #fff; border-radius: 28px;
+  padding: 22px 24px; max-width: 460px; width: 100%; box-shadow: 0 24px 60px #0007;
+  display: flex; flex-direction: column; gap: 10px; max-height: 82vh; overflow-y: auto;
+  animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
+}
+#reportOverlay h2 { color: var(--ink); font-size: clamp(20px, 5vw, 27px); font-weight: 900; margin: 0; text-align: center; }
+#reportOverlay .reportWindow { color: #5a4a2a; font-weight: 800; font-size: 14px; text-align: center; }
+#reportOverlay #adminReports { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+#reportOverlay #adminReports li {
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(91,55,160,.08); border-radius: 12px; padding: 8px 11px;
+}
+#reportOverlay #adminReports .playerName { color: var(--ink); font-weight: 900; font-size: 14px; word-break: break-word; }
+#reportOverlay #adminReports .reportBy { color: #5a4a2a; font-weight: 700; font-size: 13px; word-break: break-word; }
+#reportOverlay .reportBy { color: #5a4a2a; font-weight: 800; font-size: 14px; text-align: center; }
+#reportOverlay .reportPager { display: flex; align-items: center; justify-content: center; gap: 10px; }
+#reportOverlay .reportPageOf { color: var(--ink); font-weight: 900; font-size: 14px; min-width: 96px; text-align: center; }
+#reportOverlay .reportPage {
+  font-family: inherit; font-size: 15px; font-weight: 900; color: #fff;
+  background: linear-gradient(#ff8a5b, #ff5d2e); border: 4px solid #fff; border-radius: 14px;
+  padding: 8px 14px; cursor: pointer; box-shadow: 0 5px 0 #c43d18; transition: transform .1s;
+}
+#reportOverlay .reportPage:active { transform: translateY(4px); box-shadow: 0 1px 0 #c43d18; }
+#reportOverlay .reportPage:disabled { filter: grayscale(.5); opacity: .6; cursor: not-allowed; }
+#reportOverlay #adminReportClose {
+  font-family: inherit; font-size: 18px; font-weight: 900; color: #fff;
+  background: linear-gradient(#5b9dff, #3d6dff); border: 5px solid #fff; border-radius: 18px;
+  padding: 10px 28px; cursor: pointer; box-shadow: 0 6px 0 #2a4dc4; transition: transform .1s; align-self: center;
+}
+#reportOverlay #adminReportClose:active { transform: translateY(4px); box-shadow: 0 2px 0 #2a4dc4; }
+
 /* ---------- Build menu ---------- */
 #buildMenu {
   position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
