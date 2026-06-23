@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{
-    BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerId,
-    PlayerMeta, PlayerState, ServerMsg,
+    BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, HeartDropState, InventoryItem,
+    PlayerId, PlayerMeta, PlayerState, ServerMsg,
 };
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
@@ -47,6 +47,11 @@ const MELEE_RANGE: f32 = 8.0;
 // hurt cooldown) so survival is identical, only now owned by the server.
 const MAX_HP: u8 = 3;
 const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
+// A defeated creature drops a heart pickup at its position: a player within PICKUP_RADIUS of it who is
+// below MAX_HP collects it for +1 hp. Drops expire after HEART_TTL so they never accumulate. Mirrors the
+// web rules (HEART_PICKUP_RADIUS, HEART_DROP_TTL_MS) so healing is identical online and offline.
+const PICKUP_RADIUS: f32 = 1.4;
+const HEART_TTL: Duration = Duration::from_millis(20_000);
 const HURT_RANGE: f32 = 1.2;
 const HURT_LEVEL_SLACK: f32 = 0.5;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
@@ -195,6 +200,10 @@ pub struct Room {
     // Server-authoritative creature population and the monotonic id counter that names each one.
     creatures: Vec<Creature>,
     next_creature_id: u32,
+    // Heart pickups dropped by defeated creatures, plus the monotonic id counter that names each one. A
+    // player within PICKUP_RADIUS below MAX_HP collects one for +1 hp; drops also expire after HEART_TTL.
+    heart_drops: Vec<HeartDrop>,
+    next_heart_drop_id: u32,
     // Per-tenant play-time budget, cached from the db (refreshed on join, written through on the admin
     // toggle; 0 = unlimited). A player (logged-in or anonymous) that exceeds `playtime_limit_ms` within
     // `playtime_window_ms` is sent to the lobby. The raw minutes/hours are kept to echo on RoomState.
@@ -209,6 +218,14 @@ pub struct Room {
     approval_required: bool,
     online_allowed: bool,
     offline_allowed: bool,
+}
+
+/// A heart pickup on the ground, dropped where a creature died. Collected by a damaged player who walks
+/// within PICKUP_RADIUS of it (for +1 hp), or removed once it has been alive longer than HEART_TTL.
+struct HeartDrop {
+    id: u32,
+    pos: [f32; 3],
+    spawned_at: Instant,
 }
 
 /// The server build identifier shown in the in-game debug panel: the deploy's `GIT_SHA` when set,
@@ -265,6 +282,8 @@ impl Room {
             chat_enabled: true,
             creatures: Vec::new(),
             next_creature_id: 1,
+            heart_drops: Vec::new(),
+            next_heart_drop_id: 1,
             playtime_limit_ms: 0,
             playtime_window_ms: 0,
             playtime_limit_min: 0,
@@ -1244,6 +1263,7 @@ impl Room {
         self.world = World::new();
         self.creatures.clear();
         self.next_creature_id = 1;
+        self.heart_drops.clear();
         self.dirty = true;
         self.flush();
         self.broadcast(&ServerMsg::Event {
@@ -1891,8 +1911,9 @@ impl Room {
             }
         }
 
-        // Maintain and advance the creature population before snapshotting it.
+        // Maintain and advance the creature population, then resolve heart pickups, before snapshotting.
         self.simulate_creatures(dt);
+        self.collect_hearts();
 
         // Broadcast the world snapshot. Each state is a fixed-order number array (see protocol) so the
         // hot per-tick payload carries no field names; coordinates are rounded to keep the digits small.
@@ -1929,10 +1950,23 @@ impl Room {
                 )
             })
             .collect();
+        let hearts: Vec<HeartDropState> = self
+            .heart_drops
+            .iter()
+            .map(|h| {
+                HeartDropState(
+                    h.id,
+                    round_snapshot(h.pos[0]),
+                    round_snapshot(h.pos[1]),
+                    round_snapshot(h.pos[2]),
+                )
+            })
+            .collect();
         let snap = ServerMsg::Snapshot {
             tick: self.tick,
             players: states,
             creatures,
+            hearts,
         };
         self.broadcast(&snap);
 
@@ -2219,7 +2253,9 @@ impl Room {
         if self.creatures[index].hp > 0 {
             return;
         }
+        let death_pos = self.creatures[index].pos;
         self.creatures.remove(index);
+        self.drop_heart(death_pos);
         let reward = kind.config().reward;
         let Some(attacker) = self.players.get_mut(&attacker_id) else {
             return;
@@ -2243,6 +2279,42 @@ impl Room {
                 tracing::error!(error = %e, "submit_score after kill failed");
             }
         });
+    }
+
+    /// Drop a heart pickup at a defeated creature's position, for a damaged player to collect.
+    fn drop_heart(&mut self, pos: [f32; 3]) {
+        let id = self.next_heart_drop_id;
+        self.next_heart_drop_id = self.next_heart_drop_id.wrapping_add(1);
+        self.heart_drops.push(HeartDrop {
+            id,
+            pos,
+            spawned_at: Instant::now(),
+        });
+        tracing::debug!(tenant = %self.key.0, id, "heart dropped");
+    }
+
+    /// Each tick: a damaged player (hp < MAX_HP) within PICKUP_RADIUS of a drop collects it for +1 hp;
+    /// the next Snapshot carries the new hp like every other health change. The drop is then consumed.
+    /// Any drop older than HEART_TTL is removed so they never accumulate.
+    fn collect_hearts(&mut self) {
+        let now = Instant::now();
+        let mut kept: Vec<HeartDrop> = Vec::with_capacity(self.heart_drops.len());
+        for drop in std::mem::take(&mut self.heart_drops) {
+            if now.duration_since(drop.spawned_at) > HEART_TTL {
+                continue;
+            }
+            let taker = self.players.values_mut().find(|p| {
+                p.hp < MAX_HP
+                    && distance(p.x, p.y - PLAYER_EYE_HEIGHT, p.z, drop.pos) <= PICKUP_RADIUS
+            });
+            let Some(taker) = taker else {
+                kept.push(drop);
+                continue;
+            };
+            taker.hp += 1;
+            tracing::debug!(tenant = %self.key.0, id = drop.id, player = %taker.id, "heart collected");
+        }
+        self.heart_drops = kept;
     }
 
     /// Save the world diff off the tick thread (only when it changed).
@@ -2336,6 +2408,11 @@ fn sanitize_color(raw: &str, default: &str) -> String {
 /// Round a snapshot coordinate to centimeter precision so the wire number stays short.
 fn round_snapshot(value: f32) -> f32 {
     (value * SNAPSHOT_DECIMALS).round() / SNAPSHOT_DECIMALS
+}
+
+/// 3D distance from a point to a position, used to test whether a player reaches a heart drop.
+fn distance(x: f32, y: f32, z: f32, pos: [f32; 3]) -> f32 {
+    ((x - pos[0]).powi(2) + (y - pos[1]).powi(2) + (z - pos[2]).powi(2)).sqrt()
 }
 
 /// Horizontal distance from a creature position to its nearest player; `f32::MAX` when none exist.
@@ -3232,6 +3309,91 @@ mod tests {
         assert_eq!(
             drain_kill_event(&mut rx),
             Some(("p1".into(), "chicken".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn killing_a_creature_drops_a_heart_at_its_position() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        let chicken = Creature::spawn(60, CreatureKind::Chicken, 0.0, 0.0, sim::height_at);
+        let death_pos = chicken.pos;
+        room.creatures.push(chicken);
+        room.players.get_mut(&1).unwrap().y = sim::height_at(0, 0) as f32 + 0.5;
+
+        room.on_input(1, ClientMsg::Hit { id: 60 });
+        assert_eq!(
+            room.heart_drops.len(),
+            1,
+            "a defeated creature drops one heart"
+        );
+        assert_eq!(room.heart_drops[0].pos, death_pos);
+    }
+
+    #[tokio::test]
+    async fn a_damaged_player_over_a_drop_gains_a_heart_and_consumes_it() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        let surface = sim::height_at(0, 0) as f32;
+        room.drop_heart([0.0, surface, 0.0]);
+        let p = room.players.get_mut(&1).unwrap();
+        p.hp = 1;
+        p.x = 0.0;
+        p.z = 0.0;
+        p.y = surface + PLAYER_EYE_HEIGHT;
+
+        room.collect_hearts();
+        assert_eq!(
+            room.players.get(&1).unwrap().hp,
+            2,
+            "the player heals by one"
+        );
+        assert!(room.heart_drops.is_empty(), "the drop is consumed");
+    }
+
+    #[tokio::test]
+    async fn a_full_hp_player_leaves_the_drop_on_the_ground() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        let surface = sim::height_at(0, 0) as f32;
+        room.drop_heart([0.0, surface, 0.0]);
+        let p = room.players.get_mut(&1).unwrap();
+        p.hp = MAX_HP;
+        p.x = 0.0;
+        p.z = 0.0;
+        p.y = surface + PLAYER_EYE_HEIGHT;
+
+        room.collect_hearts();
+        assert_eq!(
+            room.players.get(&1).unwrap().hp,
+            MAX_HP,
+            "a full player never overheals"
+        );
+        assert_eq!(
+            room.heart_drops.len(),
+            1,
+            "the drop stays for someone who needs it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_drop_expires_after_its_ttl() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 1, false);
+        room.players.get_mut(&1).unwrap().hp = 1;
+        // Far from the player so it can only leave via the TTL, and aged past HEART_TTL.
+        room.drop_heart([500.0, 0.0, 500.0]);
+        room.heart_drops[0].spawned_at = Instant::now() - HEART_TTL - Duration::from_secs(1);
+
+        room.collect_hearts();
+        assert!(
+            room.heart_drops.is_empty(),
+            "an old uncollected drop is removed"
+        );
+        assert_eq!(
+            room.players.get(&1).unwrap().hp,
+            1,
+            "an out-of-reach drop never heals"
         );
     }
 

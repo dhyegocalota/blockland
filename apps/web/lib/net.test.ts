@@ -119,6 +119,7 @@ describe('net client', () => {
       k: 5,
       p: [[1, 2.5, 3, 4, 0.1, 0.2, 30, 7, 3]],
       c: [[9, 3, 10, 11, 12, 1.5, 2, 4]],
+      h: [[2, 20, 21, 22]],
     });
     expect(snapshots).toEqual([
       {
@@ -126,6 +127,7 @@ describe('net client', () => {
         tick: 5,
         players: [{ id: 1, x: 2.5, y: 3, z: 4, yaw: 0.1, pitch: 0.2, ping_ms: 30, score: 7, hp: 3 }],
         creatures: [{ id: 9, kind: 'slime', x: 10, y: 11, z: 12, yaw: 1.5, hp: 2, max_hp: 4 }],
+        hearts: [{ id: 2, x: 20, y: 21, z: 22 }],
       },
     ]);
   });

@@ -56,6 +56,15 @@ export const BLUE_ID = 19;
 export const MAX_HEARTS = 3;
 // Invulnerability window after a monster bite (seconds), so a single touch can't drain every heart.
 export const HURT_COOLDOWN = 1.2;
+// A defeated creature drops a heart pickup: a player within this radius of it who is below MAX_HEARTS
+// collects it for +1 heart. Mirrors the Rust server's PICKUP_RADIUS.
+export const HEART_PICKUP_RADIUS = 1.4;
+// A dropped heart vanishes after this long if nobody collects it, so drops never accumulate. Mirrors
+// the Rust server's HEART_DROP_TTL_MS.
+export const HEART_DROP_TTL_MS = 20000;
+// A dropped heart hovers this far above its base position and bobs at this rate (radians/sec).
+export const HEART_BOB_HEIGHT = 0.18;
+export const HEART_BOB_SPEED = 3;
 // The spawn point sits this many cells south of the world centre (so the player faces the monument).
 export const SPAWN_OFFSET_Z = 4;
 // Fall below this Y (under the world floor) and the player is teleported back to spawn.

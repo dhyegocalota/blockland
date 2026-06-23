@@ -87,6 +87,11 @@ export interface CoopView {
   onCreaturePose(id: number, x: number, y: number, z: number, yaw: number): void;
   onCreatureFlash(id: number): void;
   onCreatureDespawn(id: number): void;
+  // A server-owned heart pickup appeared/moved/vanished in the snapshot; the view renders a bobbing
+  // red heart at its position and removes it when the drop is gone.
+  onHeartDropSpawn(id: number, x: number, y: number, z: number): void;
+  onHeartDropMove(id: number, x: number, y: number, z: number): void;
+  onHeartDropDespawn(id: number): void;
 }
 
 export interface CoopHud {
@@ -157,6 +162,9 @@ interface ServerCreature {
 // top *solid block index*). The walkable surface is one block higher (index + 1), so to sit a creature
 // on the ground like the local single-player model we lift it by (1 - offset) + half its height.
 const SERVER_GROUND_OFFSET = 0.5;
+// A heart drop's server y is the dead creature's body center (surface_y + SERVER_GROUND_OFFSET); lift it
+// onto the walkable surface and a touch above so it floats clear of the ground like the local hearts.
+const HEART_DROP_LIFT = 1 - SERVER_GROUND_OFFSET + 0.4;
 const PLAYER_HIT_COLOR = '#ff5555';
 
 // What the engine raycasts against to aim an attack: world position, the wire id to send in `hit`,
@@ -226,6 +234,9 @@ export function createCoop(opts: CoopOptions): CoopController {
   const { view } = opts;
   const avatars = new Map<number, Avatar>();
   const creatures = new Map<number, ServerCreature>();
+  // Server-owned heart drops, keyed by id. Static (no interpolation) — the snapshot is the source of
+  // truth: spawn a mesh when one first appears, drop it when it leaves the snapshot.
+  const heartDrops = new Set<number>();
   // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
   // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
   const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean }>();
@@ -340,6 +351,19 @@ export function createCoop(opts: CoopOptions): CoopController {
           const gone = creatures.get(id)!;
           opts.onCreaturePoof({ x: gone.x, y: gone.y, z: gone.z, color: creatureDefFor(gone.kind).color });
           removeCreature(id);
+        }
+        const liveHearts = new Set<number>();
+        for (const heart of msg.hearts) {
+          liveHearts.add(heart.id);
+          const y = heart.y + HEART_DROP_LIFT;
+          if (heartDrops.has(heart.id)) { view.onHeartDropMove(heart.id, heart.x, y, heart.z); continue; }
+          heartDrops.add(heart.id);
+          view.onHeartDropSpawn(heart.id, heart.x, y, heart.z);
+        }
+        for (const id of [...heartDrops]) {
+          if (liveHearts.has(id)) continue;
+          view.onHeartDropDespawn(id);
+          heartDrops.delete(id);
         }
         onlineCount = msg.players.length;
         opts.hud.onCount(onlineCount);
@@ -610,6 +634,7 @@ export function createCoop(opts: CoopOptions): CoopController {
     close(): void {
       for (const id of [...avatars.keys()]) removeAvatar(id);
       for (const id of [...creatures.keys()]) removeCreature(id);
+      for (const id of [...heartDrops]) { view.onHeartDropDespawn(id); heartDrops.delete(id); }
       net.close();
     },
   };
