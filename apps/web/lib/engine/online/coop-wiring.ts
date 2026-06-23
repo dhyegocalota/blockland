@@ -11,7 +11,7 @@ import { clearFeetAbove } from '../actors';
 import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
 import { debugReportRing, formatDebugReport } from '../debug-report';
 import { createCoop, MAIN_WORLD, type CoopHud, type RoomState } from '../../coop';
-import { offlineResetFeed } from '../offline/feed-events';
+import { offlineAdminFeed, offlineResetFeed } from '../offline/feed-events';
 import type { EditCell, EditOp } from '../../protocol';
 import type { GameRuntime } from '../runtime';
 
@@ -128,21 +128,40 @@ export function createCoopWiring(runtime: GameRuntime): void {
   };
 
   runtime.bindApi = function bindApi(): void {
+    // Offline there is no server to echo an admin toggle back as a feed event, so build + route the same
+    // FeedEvent locally — any admin config change shows in the feed in both modes.
+    const offlineAdmin = (action: string): void => {
+      if (!runtime.bridge) return;
+      runtime.bridge.hud.onEvent(offlineAdminFeed({ name: runtime.bridge.resolveName(), action }));
+    };
     runtime.bridge?.bind({
       sendChat: (text) => {
         if (!state.chatEnabled) return;
         if (runtime.coop) { runtime.coop.sendChat(text); return; }
         runtime.bridge?.hud.onChat(runtime.bridge.resolveName(), text);
       },
-      setAdminPeace: (on) => { if (runtime.coop) { runtime.coop.sendAdminSetPeace(on); return; } runtime.applyLocalRoom({ ...runtime.currentRoom(), peace: on }); },
+      setAdminPeace: (on) => {
+        if (runtime.coop) { runtime.coop.sendAdminSetPeace(on); return; }
+        runtime.applyLocalRoom({ ...runtime.currentRoom(), peace: on });
+        offlineAdmin(on ? 'peace_on' : 'peace_off');
+      },
       setAdminStructure: (kind, allowed) => {
         if (runtime.coop) { runtime.coop.sendAdminSetStructure(kind, allowed); return; }
         const blocked = new Set(runtime.blockedStructures);
         if (allowed) blocked.delete(kind); else blocked.add(kind);
         runtime.applyLocalRoom({ ...runtime.currentRoom(), blockedStructures: [...blocked] });
+        offlineAdmin(allowed ? 'structure_allowed' : 'structure_blocked');
       },
-      setAdminPvp: (on) => { if (runtime.coop) { runtime.coop.sendAdminSetPvp(on); return; } runtime.applyLocalRoom({ ...runtime.currentRoom(), pvp: on }); },
-      setAdminChat: (on) => { if (runtime.coop) { runtime.coop.sendAdminSetChat(on); return; } runtime.applyLocalRoom({ ...runtime.currentRoom(), chatEnabled: on }); },
+      setAdminPvp: (on) => {
+        if (runtime.coop) { runtime.coop.sendAdminSetPvp(on); return; }
+        runtime.applyLocalRoom({ ...runtime.currentRoom(), pvp: on });
+        offlineAdmin(on ? 'pvp_on' : 'pvp_off');
+      },
+      setAdminChat: (on) => {
+        if (runtime.coop) { runtime.coop.sendAdminSetChat(on); return; }
+        runtime.applyLocalRoom({ ...runtime.currentRoom(), chatEnabled: on });
+        offlineAdmin(on ? 'chat_on' : 'chat_off');
+      },
       kickPlayer: (id) => runtime.coop?.sendAdminKick(id),
       banPlayer: (id) => runtime.coop?.sendAdminBan(id),
       reportPlayer: (id) => runtime.coop?.sendAdminReport(id),

@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { offlineKillFeed, offlineResetFeed } from './feed-events';
+import { offlineAdminFeed, offlineKillFeed, offlineResetFeed } from './feed-events';
 import { t } from '../../i18n';
+
+describe('offlineAdminFeed', () => {
+  it('builds an admin feed event carrying the action so feedText renders feed.admin_<action>', () => {
+    expect(offlineAdminFeed({ name: 'Maria', action: 'peace_off' }))
+      .toEqual({ kind: 'admin', name: 'Maria', detail: 'peace_off' });
+  });
+
+  it('labels a nameless guest with feed.you', () => {
+    expect(offlineAdminFeed({ name: '', action: 'structure_blocked' }))
+      .toEqual({ kind: 'admin', name: t('feed.you'), detail: 'structure_blocked' });
+  });
+});
 
 describe('offlineKillFeed', () => {
   it('names the player and the defeated creature', () => {
