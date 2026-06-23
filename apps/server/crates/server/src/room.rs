@@ -2337,16 +2337,19 @@ impl Room {
             if now.duration_since(drop.spawned_at) > HEART_TTL {
                 continue;
             }
+            // A player standing on a drop picks it up regardless of health — it's collected (and gone)
+            // even at full hp; it only heals when below the max.
             let taker = self.players.values_mut().find(|p| {
-                p.hp < MAX_HP
-                    && distance(p.x, p.y - PLAYER_EYE_HEIGHT, p.z, drop.pos) <= PICKUP_RADIUS
+                distance(p.x, p.y - PLAYER_EYE_HEIGHT, p.z, drop.pos) <= PICKUP_RADIUS
             });
             let Some(taker) = taker else {
                 kept.push(drop);
                 continue;
             };
-            taker.hp += 1;
-            tracing::debug!(tenant = %self.key.0, id = drop.id, player = %taker.id, "heart collected");
+            if taker.hp < MAX_HP {
+                taker.hp += 1;
+            }
+            tracing::debug!(tenant = %self.key.0, id = drop.id, player = %taker.id, hp = taker.hp, "heart collected");
         }
         self.heart_drops = kept;
     }
@@ -3457,7 +3460,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_full_hp_player_leaves_the_drop_on_the_ground() {
+    async fn a_full_hp_player_still_picks_up_the_drop_without_overhealing() {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 1, false);
         let surface = sim::height_at(0, 0) as f32;
@@ -3474,10 +3477,9 @@ mod tests {
             MAX_HP,
             "a full player never overheals"
         );
-        assert_eq!(
-            room.heart_drops.len(),
-            1,
-            "the drop stays for someone who needs it"
+        assert!(
+            room.heart_drops.is_empty(),
+            "the drop is still picked up (collected) at full hp"
         );
     }
 

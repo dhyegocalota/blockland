@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canCollectHeart, heartBobOffset, heartDropExpired, type HeartDrop } from './heart-drop';
-import { HEART_DROP_TTL_MS, HEART_PICKUP_RADIUS, MAX_HEARTS } from './constants';
+import { HEART_DROP_TTL_MS, HEART_PICKUP_RADIUS } from './constants';
 import { Vec3 } from './vec3';
 
 function dropAt(x: number, y: number, z: number, spawnedAt = 0): HeartDrop {
@@ -8,19 +8,19 @@ function dropAt(x: number, y: number, z: number, spawnedAt = 0): HeartDrop {
 }
 
 describe('canCollectHeart', () => {
-  it('collects a heart within radius while below max', () => {
+  it('collects a heart within radius', () => {
     const drop = dropAt(0, 0, 0);
-    expect(canCollectHeart({ drop, playerPos: new Vec3(HEART_PICKUP_RADIUS - 0.1, 0, 0), hearts: MAX_HEARTS - 1 })).toBe(true);
+    expect(canCollectHeart({ drop, playerPos: new Vec3(HEART_PICKUP_RADIUS - 0.1, 0, 0) })).toBe(true);
   });
 
-  it('leaves the heart for a full-hearted player', () => {
+  it('collects within radius even for a full-hearted player (pickup is hp-independent)', () => {
     const drop = dropAt(0, 0, 0);
-    expect(canCollectHeart({ drop, playerPos: new Vec3(0, 0, 0), hearts: MAX_HEARTS })).toBe(false);
+    expect(canCollectHeart({ drop, playerPos: new Vec3(0, 0, 0) })).toBe(true);
   });
 
   it('ignores a drop out of radius', () => {
     const drop = dropAt(0, 0, 0);
-    expect(canCollectHeart({ drop, playerPos: new Vec3(HEART_PICKUP_RADIUS + 0.1, 0, 0), hearts: 1 })).toBe(false);
+    expect(canCollectHeart({ drop, playerPos: new Vec3(HEART_PICKUP_RADIUS + 0.1, 0, 0) })).toBe(false);
   });
 });
 

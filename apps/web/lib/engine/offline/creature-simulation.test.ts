@@ -125,7 +125,7 @@ describe('createCreatureSimulation', () => {
     expect(runtime.heartDrops).toHaveLength(0);
   });
 
-  it('updateHeartDrops leaves the heart for a full-hearted player', () => {
+  it('updateHeartDrops still picks up the heart for a full-hearted player without overhealing', () => {
     const { runtime } = makeRuntime();
     runtime.state.player.hearts = 3;
     const creature = fakeCreature('spider');
@@ -133,7 +133,7 @@ describe('createCreatureSimulation', () => {
     runtime.defeatCreature(creature);
     runtime.updateHeartDrops(performance.now());
     expect(runtime.state.player.hearts).toBe(3);
-    expect(runtime.heartDrops).toHaveLength(1);
+    expect(runtime.heartDrops).toHaveLength(0);
   });
 
   it('updateHeartDrops drops an out-of-radius heart only once its TTL expires', () => {

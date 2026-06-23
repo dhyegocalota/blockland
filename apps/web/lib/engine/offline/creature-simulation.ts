@@ -141,12 +141,14 @@ export function createCreatureSimulation(runtime: GameRuntime): void {
     const playerPos = new Vec3(player.pos.x, player.pos.y - EYE_HEIGHT, player.pos.z);
     for (let i = runtime.heartDrops.length - 1; i >= 0; i--) {
       const drop = runtime.heartDrops[i];
-      if (canCollectHeart({ drop, playerPos, hearts: player.hearts })) {
-        player.hearts += 1;
+      if (canCollectHeart({ drop, playerPos })) {
+        if (player.hearts < MAX_HEARTS) {
+          player.hearts += 1;
+          runtime.updateStats();
+        }
         runtime.heartDrops.splice(i, 1);
         runtime.heartDropRuntime.remove(drop.id);
         runtime.blip(990, 0.1);
-        runtime.updateStats();
         debug('engine', 'heart collected', { id: drop.id, hearts: player.hearts });
         continue;
       }

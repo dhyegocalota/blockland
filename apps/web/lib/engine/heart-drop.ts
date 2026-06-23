@@ -1,10 +1,10 @@
 // The pure rule behind the HEAL pickup: a defeated creature drops a heart on the ground, and a player
-// who walks over it (within HEART_PICKUP_RADIUS) while below MAX_HEARTS collects it for +1 heart. Drops
-// also expire after HEART_DROP_TTL_MS so they never accumulate. No three.js, no DOM — the server mirrors
-// this exact logic in Rust (room.rs), and the offline simulation drives its local drops through it.
+// who walks over it (within HEART_PICKUP_RADIUS) collects it — always, even at full hearts; it only
+// heals +1 when below MAX_HEARTS. Drops also expire after HEART_DROP_TTL_MS so they never accumulate.
+// No three.js, no DOM — the server mirrors this exact logic in Rust (room.rs).
 import { Vec3 } from './vec3';
 import {
-  HEART_BOB_HEIGHT, HEART_BOB_SPEED, HEART_DROP_TTL_MS, HEART_PICKUP_RADIUS, MAX_HEARTS,
+  HEART_BOB_HEIGHT, HEART_BOB_SPEED, HEART_DROP_TTL_MS, HEART_PICKUP_RADIUS,
 } from './constants';
 
 export interface HeartDrop {
@@ -14,10 +14,9 @@ export interface HeartDrop {
   spawnedAt: number;
 }
 
-// Whether a player at `playerPos` with `hearts` may collect the drop: it must be within reach and the
-// player must be below the cap. A full-hearted player leaves the heart on the ground.
-export function canCollectHeart(args: { drop: HeartDrop; playerPos: Vec3; hearts: number }): boolean {
-  if (args.hearts >= MAX_HEARTS) return false;
+// Whether a player at `playerPos` is close enough to pick up the drop. The pickup happens regardless of
+// the player's hearts (a full-hearted player still collects it); the caller heals only when below the cap.
+export function canCollectHeart(args: { drop: HeartDrop; playerPos: Vec3 }): boolean {
   return args.playerPos.distanceTo(args.drop.pos) <= HEART_PICKUP_RADIUS;
 }
 
