@@ -211,6 +211,52 @@ describe('net client', () => {
     expect(states).toEqual(['connecting', 'online', 'reconnecting', 'online']);
   });
 
+  it('reconnect backoff grows per attempt and a Welcome resets it', () => {
+    const { client, states } = makeClient();
+    client.connect();
+    MockWebSocket.instances[0].open();
+    MockWebSocket.instances[0].receive(welcome);
+
+    // First drop: reconnecting, reopen at the base backoff (500ms), not before.
+    MockWebSocket.instances[0].serverClose();
+    expect(client.state).toBe('reconnecting');
+    vi.advanceTimersByTime(499);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(2);
+
+    // The reopen fails to welcome and drops again: the backoff doubles to 1000ms.
+    MockWebSocket.instances[1].serverClose();
+    vi.advanceTimersByTime(999);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(3);
+
+    // A Welcome lands: back online and the attempt counter is reset, so the NEXT drop waits only the
+    // base 500ms again (not the doubled 2000ms it would be had the counter kept climbing).
+    MockWebSocket.instances[2].open();
+    MockWebSocket.instances[2].receive(welcome);
+    expect(client.state).toBe('online');
+    MockWebSocket.instances[2].serverClose();
+    vi.advanceTimersByTime(500);
+    expect(MockWebSocket.instances).toHaveLength(4);
+    // The mid-sequence re-drop stays in 'reconnecting' (setState dedupes), so it isn't pushed twice.
+    expect(states).toEqual(['connecting', 'online', 'reconnecting', 'online', 'reconnecting']);
+  });
+
+  it('a user-initiated close does not reconnect (offline, no reopen)', () => {
+    const { client, states } = makeClient();
+    client.connect();
+    MockWebSocket.instances[0].open();
+    MockWebSocket.instances[0].receive(welcome);
+
+    client.close();
+    expect(client.state).toBe('offline');
+    vi.runAllTimers();
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(states).toEqual(['connecting', 'online', 'offline']);
+  });
+
   it('ping/pong replies with pong and updates ping', () => {
     const { client, setClock } = makeClient();
     client.connect();

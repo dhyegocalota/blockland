@@ -97,6 +97,9 @@ export default function Game() {
   const bannerKey = netState ? BANNER_KEYS[netState] : null;
   const severe = netState ? SEVERE_STATES.includes(netState) : false;
   const showPing = netState === 'online';
+  // The friendly connecting/reconnecting overlay owns that status; suppress the small banner while it is
+  // up so a drop reads as one clear "reconnecting…" panel over the live world, not a doubled message.
+  const connectingOverlayShown = !!connectKey && !severe && netState !== 'needs_approval';
 
   if (updateRequired) {
     return (
@@ -144,8 +147,9 @@ export default function Game() {
         {rosterOpen && (
           <ul id="presenceList">
             {(room.pvp ? pvpRanked(roster) : roster).map((player) => (
-              <li key={player.id} className={player.self ? 'self' : undefined}>
+              <li key={player.id} className={player.self ? 'self' : player.away ? 'away' : undefined}>
                 {player.self ? t('presence.you', { name: player.name }) : player.name}
+                {!player.self && player.away && ` ${t('presence.away')}`}
                 {room.pvp && ` ${PVP_KILL_BADGE} ${player.pvpKills}`}
               </li>
             ))}
@@ -299,7 +303,7 @@ export default function Game() {
         </div>
       )}
 
-      {bannerKey && !severe && (
+      {bannerKey && !severe && !connectingOverlayShown && (
         <div id="netBanner" role="status">{t(bannerKey)}</div>
       )}
 
@@ -312,7 +316,7 @@ export default function Game() {
         </div>
       )}
 
-      {connectKey && !severe && netState !== 'needs_approval' && (
+      {connectingOverlayShown && (
         <div id="connectingOverlay" role="status" aria-live="polite">
           <div className="panel">
             <div className="connectingSpinner" aria-hidden="true">🧩</div>

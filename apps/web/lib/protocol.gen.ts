@@ -11,7 +11,12 @@ export type EditCell = { x: number, y: number, z: number, id: number, };
 
 export type InventoryItem = { id: number, count: number, };
 
-export type PlayerMeta = { id: number, name: string, skin: string, shirt: string, hair: string, admin: boolean, moderator: boolean, pvp_kills: number, };
+export type PlayerMeta = { id: number, name: string, skin: string, shirt: string, hair: string, admin: boolean, moderator: boolean, pvp_kills: number, 
+/**
+ * True while this player's socket has dropped and the room is holding their slot for a reconnect
+ * (avatar frozen). Lets the presence list mark them "away" instead of showing a false leave.
+ */
+away: boolean, };
 
 export type PlayerState = [number, number, number, number, number, number, number, number, number];
 

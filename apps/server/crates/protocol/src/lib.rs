@@ -325,6 +325,9 @@ pub struct PlayerMeta {
     pub admin: bool,
     pub moderator: bool,
     pub pvp_kills: u32,
+    /// True while this player's socket has dropped and the room is holding their slot for a reconnect
+    /// (avatar frozen). Lets the presence list mark them "away" instead of showing a false leave.
+    pub away: bool,
 }
 
 /// One player's per-tick dynamics as a fixed-order number array (no field names, to keep the hot

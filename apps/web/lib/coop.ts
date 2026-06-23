@@ -45,6 +45,9 @@ export interface RosterEntry extends RosterMember {
   admin: boolean;
   moderator: boolean;
   pvpKills: number;
+  // True while this player's socket dropped and the server is holding their slot for a reconnect, so the
+  // presence list reads them as "away" rather than removing them — they have not actually left.
+  away: boolean;
 }
 
 export interface RoomState {
@@ -246,7 +249,7 @@ export function createCoop(opts: CoopOptions): CoopController {
   const heartDrops = new Map<number, { x: number; y: number; z: number }>();
   // Static identity (name + look) per player id, fed by the Roster message. The per-tick Snapshot is
   // slim (dynamics only); avatars are spawned + the HUD roster is named from here.
-  const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean; pvpKills: number }>();
+  const identities = new Map<number, Appearance & { name: string; admin: boolean; moderator: boolean; pvpKills: number; away: boolean }>();
   let selfId: number | null = null;
   let backendVersion = '';
   let lastMoveSentAt = 0;
@@ -413,7 +416,7 @@ export function createCoop(opts: CoopOptions): CoopController {
             .filter((p) => identities.has(p.id))
             .map((p) => {
               const identity = identities.get(p.id)!;
-              return { id: p.id, name: identity.name, self: p.id === selfId, admin: identity.admin, moderator: identity.moderator, pvpKills: identity.pvpKills };
+              return { id: p.id, name: identity.name, self: p.id === selfId, admin: identity.admin, moderator: identity.moderator, pvpKills: identity.pvpKills, away: identity.away };
             }),
         );
         opts.hud.onPing(selfPing);
@@ -522,7 +525,7 @@ export function createCoop(opts: CoopOptions): CoopController {
       },
       onRoster: (msg) => {
         identities.clear();
-        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair, admin: p.admin, moderator: p.moderator, pvpKills: p.pvp_kills });
+        for (const p of msg.players) identities.set(p.id, { name: p.name, skin: p.skin, shirt: p.shirt, hair: p.hair, admin: p.admin, moderator: p.moderator, pvpKills: p.pvp_kills, away: p.away });
         debug('coop', 'roster', { players: msg.players.length });
       },
       onError: (code, message) => {

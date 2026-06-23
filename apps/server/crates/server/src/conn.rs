@@ -83,6 +83,9 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     };
 
     let (conn_tx, mut conn_rx) = mpsc::channel::<Outbound>(256);
+    // Kept so the Leave below can prove it is THIS connection going away (via `same_channel`): a slow,
+    // stale Leave from a socket the player already reconnected over must never freeze the live slot.
+    let leave_conn = conn_tx.clone();
     let (reply_tx, reply_rx) = oneshot::channel();
     if room_tx
         .send(RoomCmd::Join {
@@ -157,7 +160,12 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     }
 
     tracing::debug!(id = %pid, "player leaving");
-    let _ = room_tx.send(RoomCmd::Leave { id: pid }).await;
+    let _ = room_tx
+        .send(RoomCmd::Leave {
+            id: pid,
+            conn: leave_conn,
+        })
+        .await;
     writer.abort();
 }
 

@@ -69,6 +69,10 @@ const DIG_HITS: u8 = 2;
 // The client holds-to-attack at ATTACK_REPEAT_MS (250ms); this is kept a touch more lenient to tolerate
 // network jitter, so a modified client can't spam faster than a legit hold.
 const ATTACK_MIN_INTERVAL: Duration = Duration::from_millis(200);
+// When a player's socket drops, their slot is kept (avatar frozen in place) for this long so a brief
+// internet blip lets them RESUME the same id/position/score/inventory instead of blinking out and back
+// as a brand-new player. Only once a disconnected slot outlives the window is it pruned with a `Left`.
+const RECONNECT_GRACE: Duration = Duration::from_secs(8);
 
 /// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
 pub struct Appearance {
@@ -113,6 +117,10 @@ pub enum RoomCmd {
     },
     Leave {
         id: PlayerId,
+        /// The departing socket's outbound channel, so the room can prove this Leave belongs to the
+        /// player's CURRENT connection (`same_channel`) and ignore a stale one from a socket already
+        /// replaced by a reconnect — without it, a late Leave would freeze a live, resumed player.
+        conn: mpsc::Sender<Outbound>,
     },
     /// A logged-in account renamed itself: update the live player and broadcast the timeline event.
     Rename {
@@ -177,6 +185,10 @@ struct Player {
     // Roster so the presence list can rank players when pvp is on; never affects the leaderboard.
     pvp_kills: u32,
     conn: mpsc::Sender<Outbound>,
+    // When the player's socket dropped, if it currently is. `Some` freezes the avatar in place and holds
+    // the slot for RECONNECT_GRACE: a rejoin with the same identity resumes it; otherwise the tick prunes
+    // it (a single `Left`). `None` is a live, connected player. A resume clears it back to `None`.
+    disconnected_at: Option<Instant>,
     last_seen: Instant,
     last_move: Instant,
     // False until the player's first in-world move is accepted. That first move is taken verbatim as the
@@ -411,11 +423,7 @@ impl Room {
                 reply,
             } => self.on_join(name, claim, look, ip, conn, reply).await,
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
-            RoomCmd::Leave { id } => {
-                if self.players.remove(&id).is_some() {
-                    self.broadcast(&ServerMsg::Left { id });
-                }
-            }
+            RoomCmd::Leave { id, conn } => self.on_leave(id, &conn),
             RoomCmd::Rename {
                 account_id,
                 new_name,
@@ -509,6 +517,14 @@ impl Room {
         conn: mpsc::Sender<Outbound>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
+        // Reconnect resume: a player whose socket dropped within RECONNECT_GRACE rejoins straight back
+        // into their held slot (same id, position, score, inventory, hp) — no Left/Join churn, others
+        // saw at most a brief freeze. They already cleared every gate at the original join, so resume
+        // skips them. Matched by identity: account for a logged-in player, IP for a guest.
+        if let Some(id) = self.try_resume(&account_id, ip, &look, &conn) {
+            let _ = reply.send(Ok(id));
+            return;
+        }
         // Role-aware ban gate: a banned IP is turned away here (the claim has resolved to a role) UNLESS
         // the account is an admin or moderator — they must still get in to moderate, even from a shared
         // home IP that someone got banned on. A banned guest/ordinary player stays refused.
@@ -655,6 +671,7 @@ impl Room {
             score: 0,
             pvp_kills: 0,
             conn: conn.clone(),
+            disconnected_at: None,
             last_seen: now,
             last_move: now,
             move_synced: false,
@@ -747,6 +764,91 @@ impl Room {
         self.empty_since = None;
         let _ = reply.send(Ok(id));
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player joined");
+    }
+
+    /// A socket dropped: instead of removing the player and blinking them out for everyone, freeze their
+    /// slot (avatar held in place) and start the reconnect grace, so a quick rejoin RESUMES them. The
+    /// tick prunes the slot (with a single `Left`) only if the grace expires. Ignores a stale Leave from
+    /// a socket the player has already reconnected over (`same_channel` no longer matches the live conn).
+    fn on_leave(&mut self, id: PlayerId, conn: &mpsc::Sender<Outbound>) {
+        let Some(player) = self.players.get_mut(&id) else {
+            return;
+        };
+        if !player.conn.same_channel(conn) {
+            return;
+        }
+        if player.disconnected_at.is_some() {
+            return;
+        }
+        player.disconnected_at = Some(Instant::now());
+        tracing::debug!(tenant = %self.key.0, %id, "player disconnected, holding slot for reconnect");
+    }
+
+    /// Find a slot currently within its reconnect grace whose identity matches this rejoin, and resume
+    /// it on the fresh connection: swap in the new socket, refresh the look, clear the disconnect mark,
+    /// and replay Welcome + the world + settings (the new socket has nothing) so the player drops back
+    /// where they froze with their score/inventory/hp intact. Returns the resumed id, or `None` when
+    /// there is no matching held slot (a normal fresh join). Matched by account for a logged-in player,
+    /// by IP for a guest — mirroring `playtime_key`'s identity rule.
+    fn try_resume(
+        &mut self,
+        account_id: &str,
+        ip: IpAddr,
+        look: &Appearance,
+        conn: &mpsc::Sender<Outbound>,
+    ) -> Option<PlayerId> {
+        let now = Instant::now();
+        let id = self.players.values().find_map(|p| {
+            let held = p.disconnected_at?;
+            if now.duration_since(held) > RECONNECT_GRACE {
+                return None;
+            }
+            let matches = if account_id.is_empty() {
+                p.account_id.is_empty() && p.ip == ip
+            } else {
+                p.account_id == account_id
+            };
+            matches.then_some(p.id)
+        })?;
+        let (spawn, role_admin, role_moderator) = {
+            let p = self.players.get_mut(&id)?;
+            p.conn = conn.clone();
+            p.disconnected_at = None;
+            p.last_seen = now;
+            p.skin = sanitize_color(&look.skin, "#f2c18b");
+            p.shirt = sanitize_color(&look.shirt, "#ff5d2e");
+            p.hair = sanitize_color(&look.hair, "#3a2a1a");
+            ([p.x, p.y, p.z], p.is_admin, p.is_moderator)
+        };
+        conn.send_one(ServerMsg::Welcome {
+            you: id,
+            tenant: self.key.0.clone(),
+            world: self.key.1.clone(),
+            brand: self.brand.clone(),
+            tick_hz: self.tick_hz,
+            spawn,
+            admin: role_admin,
+            moderator: role_moderator,
+            version: server_version(),
+        });
+        let edits: Vec<EditCell> = self
+            .world
+            .snapshot()
+            .into_iter()
+            .map(|(x, y, z, block)| EditCell { x, y, z, id: block })
+            .collect();
+        for chunk in edits.chunks(BATCH_CHUNK_SIZE) {
+            conn.send_one(ServerMsg::EditBatch {
+                edits: chunk.to_vec(),
+                by: 0,
+            });
+        }
+        conn.send_one(self.room_state());
+        self.send_inventory(id);
+        let roster = self.roster_msg();
+        self.broadcast(&roster);
+        tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player resumed");
+        Some(id)
     }
 
     /// Apply a server-authoritative rename to the matching live player (matched by account_id, so a
@@ -1918,6 +2020,7 @@ impl Room {
                     admin: p.is_admin,
                     moderator: p.is_moderator,
                     pvp_kills: p.pvp_kills,
+                    away: p.disconnected_at.is_some(),
                 })
                 .collect(),
         }
@@ -1952,9 +2055,28 @@ impl Room {
         // The ban/reclaim/idle sweep (DashMap lookups per player) runs at ~2Hz, not every tick.
         let now = Instant::now();
         if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
+            // Prune slots whose reconnect grace expired: the player never came back, so remove them and
+            // broadcast a single `Left` now (the only point the avatar blinks out for everyone else).
+            let expired: Vec<PlayerId> = self
+                .players
+                .values()
+                .filter_map(|p| p.disconnected_at.map(|at| (p.id, at)))
+                .filter(|(_, at)| now.duration_since(*at) > RECONNECT_GRACE)
+                .map(|(id, _)| id)
+                .collect();
+            for id in expired {
+                self.players.remove(&id);
+                self.broadcast(&ServerMsg::Left { id });
+                tracing::debug!(tenant = %self.key.0, %id, "reconnect grace expired, pruned");
+            }
+
             let idle = Duration::from_secs(self.hub.limits.idle_secs);
             let mut kicked: Vec<PlayerId> = Vec::new();
             for p in self.players.values() {
+                // A slot held for reconnect is left alone here; the grace prune above owns its lifetime.
+                if p.disconnected_at.is_some() {
+                    continue;
+                }
                 // An admin/moderator is exempt from the ban (same rule as the join gate): a ban on their
                 // shared IP must never expel them mid-session, or they couldn't moderate.
                 if self.hub.bans.is_banned(p.ip) && !p.is_admin && !p.is_moderator {
@@ -2161,7 +2283,14 @@ impl Room {
     /// Keep a capped creature population near active players and advance each one. Despawn creatures
     /// no player is close to; spawn up to the cap around a random player on a slow cadence.
     fn simulate_creatures(&mut self, dt: f32) {
-        let player_xz: Vec<[f32; 2]> = self.players.values().map(|p| [p.x, p.z]).collect();
+        // A slot held for reconnect (avatar frozen) is invisible to the creatures: it neither anchors the
+        // population nor draws bites, so a player mid-blip isn't swarmed or hurt while away.
+        let player_xz: Vec<[f32; 2]> = self
+            .players
+            .values()
+            .filter(|p| p.disconnected_at.is_none())
+            .map(|p| [p.x, p.z])
+            .collect();
         if player_xz.is_empty() {
             self.creatures.clear();
             return;
@@ -2213,6 +2342,9 @@ impl Room {
         let now = Instant::now();
         let mut dead: Vec<PlayerId> = Vec::new();
         for p in self.players.values_mut() {
+            if p.disconnected_at.is_some() {
+                continue;
+            }
             if now.duration_since(p.hurt_at) < HURT_COOLDOWN {
                 continue;
             }
@@ -2767,6 +2899,7 @@ mod tests {
             score: 0,
             pvp_kills: 0,
             conn,
+            disconnected_at: None,
             last_seen: now,
             last_move: now,
             move_synced: false,
@@ -4690,6 +4823,132 @@ mod tests {
             ServerMsg::Error { code, .. } => Some(code),
             _ => None,
         })
+    }
+
+    /// The `you` id of the first Welcome a connection received (resume re-sends one), or None.
+    fn first_welcome_id(rx: &mut mpsc::Receiver<Outbound>) -> Option<PlayerId> {
+        std::iter::from_fn(|| rx.try_recv_msg().ok()).find_map(|m| match m {
+            ServerMsg::Welcome { you, .. } => Some(you),
+            _ => None,
+        })
+    }
+
+    /// Whether any `Left { id }` for the given player was broadcast on this connection.
+    fn saw_left(rx: &mut mpsc::Receiver<Outbound>, target: PlayerId) -> bool {
+        std::iter::from_fn(|| rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Left { id } if id == target))
+    }
+
+    #[tokio::test]
+    async fn a_dropped_socket_freezes_the_slot_without_an_immediate_left() {
+        let mut room = test_room().await;
+        // A peer stays connected so it can observe (or not) a Left for the dropped player.
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _dropped_rx = add_player(&mut room, 2, false);
+        let conn2 = room.players.get(&2).unwrap().conn.clone();
+        room.on_leave(2, &conn2);
+        // The slot is held (avatar frozen), not removed, and no Left went out within the grace.
+        assert!(
+            room.players.contains_key(&2),
+            "the slot is kept during grace"
+        );
+        assert!(
+            room.players.get(&2).unwrap().disconnected_at.is_some(),
+            "the slot is marked disconnected"
+        );
+        assert!(!saw_left(&mut peer_rx, 2), "no Left is broadcast on a blip");
+    }
+
+    #[tokio::test]
+    async fn a_stale_leave_from_a_replaced_socket_is_ignored() {
+        let mut room = test_room().await;
+        let _rx = add_player(&mut room, 2, false);
+        // Swap in a fresh connection (as a resume would), then deliver the OLD socket's late Leave.
+        let (stale_conn, _stale_rx) = mpsc::channel::<Outbound>(64);
+        let (live_conn, _live_rx) = mpsc::channel::<Outbound>(64);
+        room.players.get_mut(&2).unwrap().conn = live_conn;
+        room.on_leave(2, &stale_conn);
+        assert!(
+            room.players.get(&2).unwrap().disconnected_at.is_none(),
+            "a Leave from a replaced socket never freezes the live slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejoin_within_grace_resumes_the_same_slot_intact() {
+        let mut room = test_room().await;
+        // A guest joins from an IP, builds up score + inventory, then their socket drops.
+        let (admitted, mut first_rx) =
+            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
+        let id = admitted.expect("guest admitted");
+        {
+            let p = room.players.get_mut(&id).unwrap();
+            p.x = 12.0;
+            p.y = 34.0;
+            p.z = 56.0;
+            p.score = 7;
+            p.hp = 2;
+            p.inventory.insert(3, 9);
+        }
+        let dropped_conn = room.players.get(&id).unwrap().conn.clone();
+        room.on_leave(id, &dropped_conn);
+        assert!(room.players.get(&id).unwrap().disconnected_at.is_some());
+
+        // The same guest rejoins (same IP) within the grace.
+        let (resumed, mut second_rx) =
+            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
+        assert_eq!(resumed, Ok(id), "the rejoin resumes the same player id");
+        assert_eq!(room.players.len(), 1, "no duplicate slot is created");
+        let p = room.players.get(&id).unwrap();
+        assert!(p.disconnected_at.is_none(), "the slot is live again");
+        assert_eq!((p.x, p.y, p.z), (12.0, 34.0, 56.0), "position is intact");
+        assert_eq!(p.score, 7, "score is intact");
+        assert_eq!(p.hp, 2, "hp is intact");
+        assert_eq!(p.inventory.get(&3), Some(&9), "inventory is intact");
+        // The resuming connection gets a Welcome for the SAME id; no Left was ever broadcast.
+        assert_eq!(first_welcome_id(&mut second_rx), Some(id));
+        assert!(
+            !saw_left(&mut first_rx, id),
+            "resume causes no Left/Join churn"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_slot_still_gone_after_the_grace_is_pruned_with_one_left() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _dropped_rx = add_player(&mut room, 2, false);
+        let conn2 = room.players.get(&2).unwrap().conn.clone();
+        room.on_leave(2, &conn2);
+        // Backdate the disconnect beyond the grace so the next status sweep prunes it.
+        room.players.get_mut(&2).unwrap().disconnected_at =
+            Some(Instant::now() - RECONNECT_GRACE - Duration::from_secs(1));
+        room.tick = STATUS_EVERY_TICKS - 1;
+        room.tick(0.05);
+        assert!(!room.players.contains_key(&2), "the expired slot is pruned");
+        assert!(
+            saw_left(&mut peer_rx, 2),
+            "exactly the prune broadcasts Left"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_authed_player_resumes_by_account_not_ip() {
+        let mut room = test_room().await;
+        // A logged-in player on one IP drops; they reconnect from a DIFFERENT IP (e.g. wifi → cellular).
+        let (admitted, _first_rx) =
+            admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "198.51.100.1").await;
+        let id = admitted.expect("authed player admitted");
+        let dropped_conn = room.players.get(&id).unwrap().conn.clone();
+        room.on_leave(id, &dropped_conn);
+        let (resumed, _second_rx) =
+            admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "203.0.113.9").await;
+        assert_eq!(
+            resumed,
+            Ok(id),
+            "the account resumes its slot across an IP change"
+        );
+        assert_eq!(room.players.len(), 1, "no duplicate slot");
     }
 
     #[test]

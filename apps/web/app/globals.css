@@ -511,6 +511,7 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 44px; left: 8
 }
 #presenceList li { color: #fff; font-weight: 700; font-size: 14px; word-break: break-word; }
 #presenceList li.self { color: var(--gold); }
+#presenceList li.away { color: #cfd3da; opacity: 0.65; }
 
 /* ---------- In-game admin panel ---------- */
 #adminPanel {

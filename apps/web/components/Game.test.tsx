@@ -62,6 +62,40 @@ describe('Game', () => {
     expect(document.getElementById('connectingOverlay')).toBeNull();
   });
 
+  it('shows the reconnecting overlay (and suppresses the small banner) while a live game drops', () => {
+    useGame.mockReturnValue(gameState({ netState: 'reconnecting', connectKey: 'coop.connect_reconnecting' }));
+    render(<Game />);
+    expect(document.getElementById('connectingOverlay')).toBeInTheDocument();
+    expect(screen.getByText('📡 Reconectando…')).toBeInTheDocument();
+    // The overlay owns the status; the small netBanner must not double up with its own reconnecting copy.
+    expect(document.getElementById('netBanner')).toBeNull();
+  });
+
+  it('clears the reconnecting overlay the instant Welcome returns (online)', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
+    render(<Game />);
+    expect(document.getElementById('connectingOverlay')).toBeNull();
+    expect(document.getElementById('netBanner')).toBeNull();
+  });
+
+  it('marks an away peer in the presence roster instead of dropping them', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online',
+        connectKey: null,
+        rosterOpen: true,
+        roster: [
+          { id: 1, name: 'Ana', self: false, admin: false, moderator: false, pvpKills: 0, away: false },
+          { id: 2, name: 'Bia', self: false, admin: false, moderator: false, pvpKills: 0, away: true },
+        ],
+      }),
+    );
+    render(<Game />);
+    const items = within(document.getElementById('presenceList')!).getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual(['Ana', 'Bia 💤 ausente']);
+    expect(items[1].className).toBe('away');
+  });
+
   it('shows the waiting-for-approval overlay (not the connecting one) when held for approval', () => {
     useGame.mockReturnValue(gameState({ netState: 'needs_approval', connectKey: 'coop.connect_connecting' }));
     render(<Game />);

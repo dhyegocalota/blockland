@@ -3,7 +3,7 @@ import type { RosterEntry } from './coop';
 import { ADMIN_BADGE, MODERATOR_BADGE, badgedNames, pvpRanked, roleBadge } from './roster-roles';
 
 function entry(over: Partial<RosterEntry>): RosterEntry {
-  return { id: 1, name: 'Maria', self: false, admin: false, moderator: false, pvpKills: 0, ...over };
+  return { id: 1, name: 'Maria', self: false, admin: false, moderator: false, pvpKills: 0, away: false, ...over };
 }
 
 describe('roleBadge', () => {
