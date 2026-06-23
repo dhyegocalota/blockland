@@ -162,7 +162,7 @@ export function useGame() {
 
   // Keep the chosen mode valid: if the picked mode is blocked, fall to the allowed one. When online is
   // blocked the player is pushed to solo; when offline is blocked (and online is fine) to multiplayer. A
-  // lobby admin/moderator is never pushed — they bypass disabled modes and must keep the panel connected.
+  // lobby admin/moderator is never pushed — they keep the panel connected to re-enable a disabled mode.
   useEffect(() => {
     const isLobbyAdmin = lobbyAdmin || lobbyModerator;
     if (shouldPushToSolo({ gates: modeGates, alreadySolo: soloRef.current, isLobbyAdmin })) {

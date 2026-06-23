@@ -24,9 +24,10 @@ export interface LobbyModeGates {
 }
 
 // `offline` here means the game server is unreachable (the lobby fell back to the bundled tenant).
-// An admin bypasses an admin-disabled mode (mirrors the server, which still admits an admin to an
-// online-blocked world — room.rs) so they can always pick a mode and re-enable it from the panel;
-// an unreachable server still blocks online for everyone, admin included.
+// When online is admin-disabled NOBODY may pick online to PLAY — admin and moderator included; the
+// admin re-enables it from the lobby admin panel (a management connection the server still admits via
+// room.rs), not by starting an online game. An admin still bypasses an admin-disabled OFFLINE mode so
+// they can always reach a playable mode. An unreachable server blocks online for everyone, admin too.
 export function lobbyModeGates({
   tenant,
   serverUnreachable,
@@ -36,7 +37,7 @@ export function lobbyModeGates({
   serverUnreachable: boolean;
   isAdmin: boolean;
 }): LobbyModeGates {
-  const onlineReason = onlineBlockReason({ allowed: tenant.online_allowed, serverUnreachable, isAdmin });
+  const onlineReason = onlineBlockReason({ allowed: tenant.online_allowed, serverUnreachable });
   const offlineReason = tenant.offline_allowed || isAdmin ? ModeBlockReason.Allowed : ModeBlockReason.AdminDisabled;
   return {
     online: { disabled: onlineReason !== ModeBlockReason.Allowed, reason: onlineReason },
@@ -47,14 +48,12 @@ export function lobbyModeGates({
 function onlineBlockReason({
   allowed,
   serverUnreachable,
-  isAdmin,
 }: {
   allowed: boolean;
   serverUnreachable: boolean;
-  isAdmin: boolean;
 }): ModeBlockReason {
   if (serverUnreachable) return ModeBlockReason.Unreachable;
-  if (!allowed && !isAdmin) return ModeBlockReason.AdminDisabled;
+  if (!allowed) return ModeBlockReason.AdminDisabled;
   return ModeBlockReason.Allowed;
 }
 
@@ -73,8 +72,8 @@ export function lobbyAdminPanelActive({
 }
 
 // The lobby auto-push that keeps a player's chosen mode valid must never move a lobby admin/moderator:
-// they bypass disabled modes (so they can re-enable them) and forcing them to solo would tear down the
-// lobby-admin connection. A non-admin is still pushed to the only mode the tenant allows.
+// forcing them to solo would tear down the lobby-admin connection that powers the panel they use to
+// re-enable a disabled mode. A non-admin is still pushed to the only mode the tenant allows.
 export function shouldPushToSolo({
   gates,
   alreadySolo,
