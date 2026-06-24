@@ -15,6 +15,7 @@ import { moveVector } from './movement';
 import { nextFrame, smoothFps } from './frame-cap';
 import { attackTick } from './attack';
 import { bindWindowInput, clampPitch } from './binds';
+import { getSettings, lookDelta } from '../settings';
 import type { GameRuntime } from './runtime';
 
 const SECONDS_TO_MS = 1000;
@@ -108,8 +109,9 @@ export function createGameLoop(runtime: GameRuntime): void {
     keyUp: (code) => { keys[code] = false; },
     hotkey: runtime.handleHotkey,
     look: (movementX, movementY) => {
-      player.yaw -= movementX * MOUSE_LOOK_SENSITIVITY;
-      player.pitch = clampPitch(player.pitch - movementY * MOUSE_LOOK_SENSITIVITY);
+      const multiplier = getSettings().mouseSensitivity;
+      player.yaw -= lookDelta(movementX, MOUSE_LOOK_SENSITIVITY, multiplier);
+      player.pitch = clampPitch(player.pitch - lookDelta(movementY, MOUSE_LOOK_SENSITIVITY, multiplier));
     },
     attackDown: runtime.attackDown,
     attackUp: runtime.attackUp,

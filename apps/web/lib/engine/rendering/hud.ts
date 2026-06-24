@@ -7,13 +7,14 @@ import { t } from '../../i18n';
 import { debug } from '../../log';
 import { BLOCKS, blockById } from '../blocks';
 import {
-  CHIME_GAP_MS, CHIME_HIGH_FREQ, CHIME_LOW_FREQ, CHIME_NOTE_DURATION, FACE_ID,
+  BLIP_BASE_GAIN, CHIME_GAP_MS, CHIME_HIGH_FREQ, CHIME_LOW_FREQ, CHIME_NOTE_DURATION, FACE_ID,
   TOAST_DURATION_MS, TOUCH_LOOK_SENSITIVITY,
 } from '../constants';
 import { renderBlockCanvas } from './textures';
 import { hotbarCountLabel } from '../inventory';
 import { readJoystick } from '../joystick';
 import { clampPitch } from '../binds';
+import { getSettings, lookDelta, scaledGain, shouldOpenOnLockLost, shouldResumeOnEscape } from '../../settings';
 import type { StructureKind } from '../structures';
 import type { GameRuntime } from '../runtime';
 
@@ -30,6 +31,10 @@ export function createHud(runtime: GameRuntime): void {
 
   // ---------- Sound ----------
   runtime.blip = function blip(freq: number, dur: number): void {
+    // Muted or volume 0 → no cue at all (and never even opens the AudioContext); the exponential ramp
+    // also requires a strictly positive peak, so silence must short-circuit here.
+    const gain = scaledGain(BLIP_BASE_GAIN, getSettings());
+    if (gain <= 0) return;
     if (!runtime.audio) {
       const Ctor = window.AudioContext || win.webkitAudioContext;
       if (!Ctor) throw new Error('AudioContext unsupported');
@@ -38,7 +43,7 @@ export function createHud(runtime: GameRuntime): void {
     const audio = runtime.audio;
     const o = audio.createOscillator(), g = audio.createGain();
     o.type = 'square'; o.frequency.value = freq;
-    g.gain.value = 0.06; o.connect(g); g.connect(audio.destination);
+    g.gain.value = gain; o.connect(g); g.connect(audio.destination);
     o.start(); g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
     o.stop(audio.currentTime + dur);
   };
@@ -129,10 +134,11 @@ export function createHud(runtime: GameRuntime): void {
       if (lookId === null) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; }
     }, { passive: true, signal });
     canvas.addEventListener('touchmove', (e) => {
+      const multiplier = getSettings().touchSensitivity;
       for (const t of e.changedTouches) {
         if (t.identifier !== lookId) continue;
-        player.yaw -= (t.clientX - lx) * TOUCH_LOOK_SENSITIVITY;
-        player.pitch = clampPitch(player.pitch - (t.clientY - ly) * TOUCH_LOOK_SENSITIVITY);
+        player.yaw -= lookDelta(t.clientX - lx, TOUCH_LOOK_SENSITIVITY, multiplier);
+        player.pitch = clampPitch(player.pitch - lookDelta(t.clientY - ly, TOUCH_LOOK_SENSITIVITY, multiplier));
         lx = t.clientX; ly = t.clientY;
       }
     }, { passive: true, signal });
@@ -190,7 +196,14 @@ export function createHud(runtime: GameRuntime): void {
   };
 
   runtime.handleHotkey = function handleHotkey(e: KeyboardEvent): void {
-    if (e.code === 'Escape') { runtime.hideControls(); runtime.hideBuildMenu(); return; }
+    // Escape for the settings panel is owned by the dedicated cursor-mode keydown handler (it must
+    // TOGGLE without re-locking); here Esc only dismisses the blocking controls/build modals, and only
+    // when one is actually open (else hideControls/hideBuildMenu would wrongly unpause + re-lock).
+    if (e.code === 'Escape') {
+      if (!controlsEl.hidden) runtime.hideControls();
+      if (!buildMenuEl.hidden) runtime.hideBuildMenu();
+      return;
+    }
     const b = BLOCKS.find((bl) => bl && bl.key === e.key);
     if (b) runtime.selectSlot(b.id);
     if (e.code === 'KeyF') runtime.toggleFly();
@@ -231,6 +244,66 @@ export function createHud(runtime: GameRuntime): void {
   el('buildBtn').addEventListener('click', (e) => { e.stopPropagation(); runtime.showBuildMenu(); }, { signal });
   el('closeBuild').addEventListener('click', (e) => { e.stopPropagation(); runtime.hideBuildMenu(); }, { signal });
   buildMenuEl.addEventListener('click', (e) => { if (e.target === buildMenuEl) runtime.hideBuildMenu(); }, { signal });
+
+  // ---------- Settings menu (audio + look sensitivity) ----------
+  // PLAYING (pointer locked) ↔ PAUSED (pointer unlocked, the full HUD clickable). Pressing Esc from
+  // PLAYING unlocks the pointer (browser) → PAUSED + the settings panel opens; pressing Esc again CLOSES
+  // the panel and re-locks → PLAYING (refocus the game), the round-trip the player expects. Clicking the
+  // world (lock regained) or the explicit Resume button also returns to PLAYING. While PAUSED with the
+  // panel closed, HUD buttons without hotkeys (admin ⚙, build, chat) stay reachable. React renders the
+  // panel contents (the sliders read/write the live settings store).
+  const settingsEl = el('settings');
+  runtime.showSettings = function showSettings(): void {
+    runtime.state.paused = true;
+    settingsEl.hidden = false;
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    debug('engine', 'settings opened');
+  };
+  // Close the panel but STAY in PAUSED (unlocked, HUD clickable) — never re-lock here.
+  runtime.hideSettings = function hideSettings(): void {
+    settingsEl.hidden = true;
+    debug('engine', 'settings closed', { paused: runtime.state.paused });
+  };
+  runtime.toggleSettings = function toggleSettings(): void { settingsEl.hidden ? runtime.showSettings() : runtime.hideSettings(); };
+  // Leave PAUSED entirely: close the panel, unpause, and re-lock back to PLAYING (Resume button + world click).
+  runtime.resumeGame = function resumeGame(): void {
+    settingsEl.hidden = true;
+    runtime.state.paused = false;
+    if (runtime.state.started && !isTouch) runtime.lockPointer();
+    debug('engine', 'resumed from pause');
+  };
+  el('settingsBtn').addEventListener('click', (e) => { e.stopPropagation(); runtime.toggleSettings(); }, { signal });
+  el('closeSettings').addEventListener('click', (e) => { e.stopPropagation(); runtime.resumeGame(); }, { signal });
+  settingsEl.addEventListener('click', (e) => { if (e.target === settingsEl) runtime.hideSettings(); }, { signal });
+
+  // The cursor-mode state machine driven by pointer lock. Esc natively drops the lock (can't be
+  // preventDefault'd in an FPS), so a lock LOST while playing is the pause signal → PAUSED + open settings;
+  // a lock REGAINED (clicking the world / Resume) → PLAYING (close panel + unpause).
+  const anyModalOpen = (): boolean => !controlsEl.hidden || !buildMenuEl.hidden || !settingsEl.hidden;
+  document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement === canvas) {
+      if (runtime.state.paused) runtime.resumeGame();
+      return;
+    }
+    if (!shouldOpenOnLockLost({ started: runtime.state.started, isTouch, anyModalOpen: anyModalOpen() })) return;
+    runtime.showSettings();
+  }, { signal });
+
+  // The 2nd (and further) Esc presses fire as keydown while UNLOCKED — they TOGGLE the settings panel
+  // without ever re-locking (so closing it reveals the clickable HUD, staying in PAUSED). The first open
+  // comes from pointerlockchange above (Escape keydown is unreliable while the pointer is locked).
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape') return;
+    if (runtime.typingInField()) return;
+    const toggle = shouldToggleOnEscape({
+      started: runtime.state.started,
+      isTouch,
+      pointerLocked: document.pointerLockElement === canvas,
+      blockingModalOpen: !controlsEl.hidden || !buildMenuEl.hidden,
+    });
+    if (!toggle) return;
+    runtime.toggleSettings();
+  }, { signal });
   buildMenuEl.querySelectorAll<HTMLButtonElement>('.buildCard').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();

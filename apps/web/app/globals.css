@@ -107,6 +107,14 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 28px; left: 8
 .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #00000033; }
 .btn.on { background: linear-gradient(#b6f5b6, #6bd06b); }
 
+/* Small key-cap shown on a desktop HUD button so kids learn the shortcut (hidden on touch). */
+.hotkeyHint {
+  display: inline-flex; align-items: center; justify-content: center; margin-left: 7px;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 6px; vertical-align: middle;
+  font-family: inherit; font-size: 11px; font-weight: 900; line-height: 1; color: #2a1a4a;
+  background: #ffffffcc; border: 2px solid #00000018; box-shadow: 0 2px 0 #00000018;
+}
+
 /* ---------- Start screen ---------- */
 #start {
   position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
@@ -487,6 +495,57 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 28px; left: 8
   background: #fff; border: 4px solid #d6ecff; border-radius: 16px; padding: 10px 28px; cursor: pointer;
 }
 #closeBuild:active { transform: translateY(2px); }
+
+/* ---------- Settings menu (audio + look sensitivity) ---------- */
+#settings {
+  position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .55); backdrop-filter: blur(6px); pointer-events: auto; padding: 16px;
+}
+#settings[hidden] { display: none; }
+#settings .panel {
+  background: linear-gradient(#ffffff, #e8f4ff); border: 6px solid #fff; border-radius: 28px;
+  padding: 24px 26px; max-width: 460px; width: 100%; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 24px 60px #0007; text-align: center;
+  animation: pop .35s cubic-bezier(.2,1.4,.5,1) both;
+}
+#settings h2 { color: var(--ink); font-size: clamp(22px, 5vw, 30px); font-weight: 900; margin-bottom: 18px; }
+#settings .settingsGroup {
+  background: #fff; border: 3px solid #d6ecff; border-radius: 18px; padding: 14px 16px; margin-bottom: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+#settings .settingsLabel { font-weight: 900; font-size: 15px; color: #ff5d2e; text-align: left; }
+#settings .settingsRow {
+  display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 15px; color: #2a1a4a;
+}
+#settings .settingsRow > span { min-width: 64px; text-align: left; }
+#settings .settingsValue { margin-left: auto; min-width: 52px; text-align: right; color: var(--ink); }
+#settings input[type="range"] {
+  flex: 1; height: 10px; -webkit-appearance: none; appearance: none; cursor: pointer;
+  background: linear-gradient(#ffe9a8, #ffd23f); border: 3px solid #fff; border-radius: 999px;
+  box-shadow: inset 0 1px 0 #00000010;
+}
+#settings input[type="range"]:disabled { opacity: .45; cursor: not-allowed; }
+#settings input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(#fff, #ffe9a8); border: 4px solid var(--gold); box-shadow: 0 3px 0 #00000022; cursor: pointer;
+}
+#settings input[type="range"]::-moz-range-thumb {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(#fff, #ffe9a8); border: 4px solid var(--gold); box-shadow: 0 3px 0 #00000022; cursor: pointer;
+}
+#settingsMute {
+  font-family: inherit; font-weight: 900; color: var(--ink); align-self: flex-start;
+  background: linear-gradient(#fff, #ffe9a8); border: 3px solid #fff; border-radius: 14px;
+  padding: 8px 16px; font-size: 15px; cursor: pointer; box-shadow: 0 4px 0 #00000022; transition: transform .08s;
+}
+#settingsMute:active { transform: translateY(3px); box-shadow: 0 1px 0 #00000022; }
+#settingsMute.on { background: linear-gradient(#ffb3a3, #ff5d2e); color: #fff; }
+#closeSettings {
+  font-family: inherit; font-size: 22px; font-weight: 900; color: #fff;
+  background: linear-gradient(#ff8a3d, #ff5d2e); border: 5px solid #fff; border-radius: 20px;
+  padding: 12px 38px; cursor: pointer; box-shadow: 0 7px 0 #c43d18; transition: transform .1s;
+}
+#closeSettings:active { transform: translateY(5px); box-shadow: 0 2px 0 #c43d18; }
 
 #toast {
   position: fixed; left: 50%; top: 70px; transform: translateX(-50%) translateY(-20px);

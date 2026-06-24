@@ -15,6 +15,30 @@ import { loaderVisible } from '../lib/engine/loader-state';
 import { useGame } from '../hooks/use-game';
 import { PVP_KILL_BADGE, pvpRanked, roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
+import { SENSITIVITY_MAX, SENSITIVITY_MIN, VOLUME_MAX, VOLUME_MIN } from '../lib/settings';
+
+const SENSITIVITY_STEP = 0.05;
+const VOLUME_STEP = 0.05;
+const PERCENT = 100;
+
+// The keyboard shortcut shown succinctly on each desktop HUD button (key caps are universal, not i18n).
+// Mobile (touch) has no keyboard, so the hint is hidden there. Exit has no shortcut (it reloads the page).
+const HUD_HOTKEYS = {
+  controls: 'V',
+  build: 'B',
+  fly: 'F',
+  spawn: 'H',
+  chat: 'T',
+  settings: 'Esc',
+  players: 'Tab',
+  admin: 'M',
+} as const;
+
+// A small key-cap badge rendered inside a desktop HUD button; nothing on touch devices.
+function HotkeyHint({ keyCap, isTouch }: { keyCap: string; isTouch: boolean }) {
+  if (isTouch) return null;
+  return <kbd className="hotkeyHint">{keyCap}</kbd>;
+}
 
 const AUTHOR_URL = 'https://dhyegocalota.com.br';
 
@@ -84,6 +108,7 @@ export default function Game() {
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
+    settings, onSettingChange,
     lobby,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
@@ -143,18 +168,19 @@ export default function Game() {
         <div id="toast"></div>
         <div id="hotbar"></div>
         <div id="actionRow">
-          <button className="btn" id="helpBtn">{t('hud.controls')}</button>
-          <button className="btn" id="buildBtn">{t('hud.build')}</button>
-          <button className="btn" id="flyBtn">{t('hud.fly')}</button>
-          <button className="btn" id="spawnBtn" onClick={() => gameApiRef.current?.returnToSpawn()}>{t('hud.spawn')}</button>
-          {room.chatEnabled && <button className="btn" id="chatBtn" onClick={openChat}>{t('hud.chat')}</button>}
+          <button className="btn" id="helpBtn">{t('hud.controls')}<HotkeyHint keyCap={HUD_HOTKEYS.controls} isTouch={isTouch} /></button>
+          <button className="btn" id="buildBtn">{t('hud.build')}<HotkeyHint keyCap={HUD_HOTKEYS.build} isTouch={isTouch} /></button>
+          <button className="btn" id="flyBtn">{t('hud.fly')}<HotkeyHint keyCap={HUD_HOTKEYS.fly} isTouch={isTouch} /></button>
+          <button className="btn" id="spawnBtn" onClick={() => gameApiRef.current?.returnToSpawn()}>{t('hud.spawn')}<HotkeyHint keyCap={HUD_HOTKEYS.spawn} isTouch={isTouch} /></button>
+          {room.chatEnabled && <button className="btn" id="chatBtn" onClick={openChat}>{t('hud.chat')}<HotkeyHint keyCap={HUD_HOTKEYS.chat} isTouch={isTouch} /></button>}
+          <button className="btn" id="settingsBtn">{t('hud.settings')}<HotkeyHint keyCap={HUD_HOTKEYS.settings} isTouch={isTouch} /></button>
           <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}</button>
         </div>
       </div>
 
       <div id="presence" className={rosterOpen ? 'open' : undefined}>
         <button id="presenceToggle" onClick={() => setRosterOpen((open) => !open)} aria-expanded={rosterOpen}>
-          👥 {online}
+          👥 {online}<HotkeyHint keyCap={HUD_HOTKEYS.players} isTouch={isTouch} />
         </button>
         {rosterOpen && (
           <ul id="presenceList">
@@ -172,7 +198,7 @@ export default function Game() {
       {(isAdmin || isModerator) && (
         <div id="adminPanel" className={adminOpen ? 'open' : undefined}>
           <button id="adminToggle" onClick={() => setAdminOpen((open) => !open)} aria-expanded={adminOpen}>
-            {isAdmin ? '🛡️' : '🧒'} {t(isAdmin ? 'game_admin.title' : 'game_admin.title_mod')}
+            {isAdmin ? '🛡️' : '🧒'} {t(isAdmin ? 'game_admin.title' : 'game_admin.title_mod')}<HotkeyHint keyCap={HUD_HOTKEYS.admin} isTouch={isTouch} />
           </button>
           {adminOpen && (
             <div id="adminBody">
@@ -520,7 +546,6 @@ export default function Game() {
               <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
               <div className="card"><b>{t('controls.collect')}</b> {t('controls.collect_keys')}</div>
               <div className="card"><b>{t('controls.your_face')}</b> {t('controls.your_face_keys')}</div>
-              <div className="card"><b>{t('controls.peace_mode')}</b> {t('controls.peace_mode_keys')}</div>
               <div className="card"><b>{t('controls.structures')}</b> {t('controls.structures_keys')}</div>
               <div className="card"><b>{t('controls.show_controls')}</b> {t('controls.show_controls_keys')}</div>
             </div>
@@ -542,6 +567,66 @@ export default function Game() {
             ))}
           </div>
           <button id="closeBuild">{t('build.close')}</button>
+        </div>
+      </div>
+
+      <div id="settings" hidden>
+        <div className="panel">
+          <h2>{t('settings.title')}</h2>
+          <div className="settingsGroup">
+            <span className="settingsLabel">{t('settings.audio')}</span>
+            <label className="settingsRow">
+              <span>{t('settings.volume')}</span>
+              <input
+                id="settingsVolume"
+                type="range"
+                min={VOLUME_MIN}
+                max={VOLUME_MAX}
+                step={VOLUME_STEP}
+                value={settings.volume}
+                disabled={settings.muted}
+                onChange={(e) => onSettingChange({ volume: Number(e.target.value) })}
+              />
+              <b className="settingsValue">{Math.round(settings.volume * PERCENT)}%</b>
+            </label>
+            <button
+              id="settingsMute"
+              className={settings.muted ? 'on' : undefined}
+              onClick={() => onSettingChange({ muted: !settings.muted })}
+            >
+              {t('settings.mute')}
+            </button>
+          </div>
+          <div className="settingsGroup">
+            <span className="settingsLabel">{t('settings.look')}</span>
+            <label className="settingsRow">
+              <span>{t('settings.mouse')}</span>
+              <input
+                id="settingsMouse"
+                type="range"
+                min={SENSITIVITY_MIN}
+                max={SENSITIVITY_MAX}
+                step={SENSITIVITY_STEP}
+                value={settings.mouseSensitivity}
+                onChange={(e) => onSettingChange({ mouseSensitivity: Number(e.target.value) })}
+              />
+              <b className="settingsValue">{settings.mouseSensitivity.toFixed(2)}x</b>
+            </label>
+            <label className="settingsRow">
+              <span>{t('settings.touch')}</span>
+              <input
+                id="settingsTouch"
+                type="range"
+                min={SENSITIVITY_MIN}
+                max={SENSITIVITY_MAX}
+                step={SENSITIVITY_STEP}
+                value={settings.touchSensitivity}
+                onChange={(e) => onSettingChange({ touchSensitivity: Number(e.target.value) })}
+              />
+              <b className="settingsValue">{settings.touchSensitivity.toFixed(2)}x</b>
+            </label>
+          </div>
+          <button id="closeSettings">{t('settings.resume')}</button>
         </div>
       </div>
 
