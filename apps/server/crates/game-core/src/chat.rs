@@ -3,13 +3,22 @@
 //! `is_allowed` on the already-trimmed text. This is a safety floor for a children's product, not a
 //! complete profanity engine.
 
-// A small, case-insensitive blocklist (en-US + pt-BR). Matched on word boundaries so common words that
-// merely contain a blocked substring (e.g. pt-BR "disputa" containing "puta") are not flagged.
-const BLOCKED_WORDS: &[&str] = &[
-    "fuck", "fucking", "shit", "bitch", "asshole", "bastard", "dick", "pussy", "cunt", "slut",
-    "whore", "fag", "faggot", "nigger", "retard", "merda", "porra", "caralho", "puta", "buceta",
-    "viado", "piranha", "corno", "foder", "cuzao",
-];
+// The case-insensitive blocklist (en-US + pt-BR) lives in blocked-words.txt — one word per line, '#'
+// comments allowed — embedded at compile time so it ships natively AND in the WASM build (no runtime file
+// read). Matched on word boundaries so common words that merely contain a blocked substring (e.g. pt-BR
+// "disputa" containing "puta") are not flagged.
+static BLOCKED_WORDS_TXT: &str = include_str!("blocked-words.txt");
+
+fn blocked_words() -> &'static [&'static str] {
+    static WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+        BLOCKED_WORDS_TXT
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect()
+    });
+    &WORDS
+}
 
 /// Whether a chat message is safe to broadcast: it must carry no link and no blocked word.
 pub fn is_allowed(text: &str) -> bool {
@@ -19,7 +28,7 @@ pub fn is_allowed(text: &str) -> bool {
     }
     !lower
         .split(|c: char| !c.is_alphanumeric())
-        .any(|token| BLOCKED_WORDS.contains(&token))
+        .any(|token| blocked_words().contains(&token))
 }
 
 fn contains_link(lower: &str) -> bool {
@@ -54,5 +63,12 @@ mod tests {
         assert!(!is_allowed("join me at http://evil.example"));
         assert!(!is_allowed("see www.example.com"));
         assert!(!is_allowed("HTTPS://Example.Com"));
+    }
+
+    #[test]
+    fn loads_the_blocklist_from_the_txt_skipping_comments_and_blanks() {
+        let words = blocked_words();
+        assert!(words.contains(&"fuck") && words.contains(&"merda"));
+        assert!(words.iter().all(|word| !word.is_empty() && !word.starts_with('#')));
     }
 }

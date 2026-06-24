@@ -1,0 +1,32 @@
+# Chat moderation blocklist for the kids' room (case-insensitive, matched on word boundaries).
+# One word per line; blank lines and lines starting with '#' are ignored. A safety floor, not a
+# complete profanity engine. Embedded at compile time (include_str!) so it ships natively AND in WASM.
+
+# en-US
+fuck
+fucking
+shit
+bitch
+asshole
+bastard
+dick
+pussy
+cunt
+slut
+whore
+fag
+faggot
+nigger
+retard
+
+# pt-BR
+merda
+porra
+caralho
+puta
+buceta
+viado
+piranha
+corno
+foder
+cuzao
