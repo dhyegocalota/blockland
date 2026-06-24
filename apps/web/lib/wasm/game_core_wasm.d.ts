@@ -21,6 +21,22 @@ export class OutboundMessage {
   readonly binary: Uint8Array;
 }
 
+export class SnapshotDecoder {
+  free(): void;
+  [Symbol.dispose](): void;
+  /**
+   * A fresh decoder with no baseline yet — the first frame must be a keyframe (a delta before any
+   * keyframe yields the empty "emit nothing" buffer, exactly like the old TS reconstructor).
+   */
+  constructor();
+  /**
+   * Decode one binary frame and return the full reconstructed snapshot packed into a `Float64Array`
+   * (layout above), updating the held baseline. Returns an EMPTY array for a delta that can't be applied
+   * yet (stale baseline / no keyframe). Throws on a corrupt or stale-version frame.
+   */
+  decode(bytes: Uint8Array): Float64Array;
+}
+
 export class WasmCore {
   free(): void;
   [Symbol.dispose](): void;
@@ -79,10 +95,13 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
   readonly __wbg_outboundmessage_free: (a: number, b: number) => void;
+  readonly __wbg_snapshotdecoder_free: (a: number, b: number) => void;
   readonly __wbg_wasmcore_free: (a: number, b: number) => void;
   readonly outboundmessage_binary: (a: number) => any;
   readonly outboundmessage_json: (a: number) => [number, number];
   readonly outboundmessage_kind: (a: number) => number;
+  readonly snapshotdecoder_decode: (a: number, b: number, c: number) => [number, number, number];
+  readonly snapshotdecoder_new: () => number;
   readonly wasmcore_add_local_player: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
   readonly wasmcore_chunk_edits: (a: number, b: number, c: number) => [number, number];
   readonly wasmcore_drain_outbound: (a: number) => [number, number];
@@ -94,11 +113,11 @@ export interface InitOutput {
   readonly __wbindgen_exn_store: (a: number) => void;
   readonly __externref_table_alloc: () => number;
   readonly __wbindgen_externrefs: WebAssembly.Table;
+  readonly __wbindgen_malloc: (a: number, b: number) => number;
+  readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __externref_drop_slice: (a: number, b: number) => void;
-  readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-  readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_start: () => void;
 }
 

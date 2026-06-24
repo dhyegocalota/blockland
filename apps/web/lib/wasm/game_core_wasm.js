@@ -6,6 +6,11 @@ function addToExternrefTable0(obj) {
     return idx;
 }
 
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
 function getArrayI32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
@@ -33,6 +38,14 @@ function getDataViewMemory0() {
         cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
     }
     return cachedDataViewMemory0;
+}
+
+let cachedFloat64ArrayMemory0 = null;
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
 }
 
 let cachedInt32ArrayMemory0 = null;
@@ -67,6 +80,13 @@ function handleError(f, args) {
 
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -145,6 +165,10 @@ const OutboundMessageFinalization = (typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_outboundmessage_free(ptr >>> 0, 1));
 
+const SnapshotDecoderFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_snapshotdecoder_free(ptr >>> 0, 1));
+
 const WasmCoreFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmcore_free(ptr >>> 0, 1));
@@ -212,6 +236,51 @@ export class OutboundMessage {
     }
 }
 if (Symbol.dispose) OutboundMessage.prototype[Symbol.dispose] = OutboundMessage.prototype.free;
+
+/**
+ * A stateful decoder for one connection's snapshot stream. Holds the running baseline (via the protocol
+ * reconstructor) so deltas reconstruct against the last full frame. STANDALONE — no Room/WasmCore needed;
+ * both the online socket path and the offline core-drain build one and feed it bytes.
+ */
+export class SnapshotDecoder {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SnapshotDecoderFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_snapshotdecoder_free(ptr, 0);
+    }
+    /**
+     * A fresh decoder with no baseline yet — the first frame must be a keyframe (a delta before any
+     * keyframe yields the empty "emit nothing" buffer, exactly like the old TS reconstructor).
+     */
+    constructor() {
+        const ret = wasm.snapshotdecoder_new();
+        this.__wbg_ptr = ret >>> 0;
+        SnapshotDecoderFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Decode one binary frame and return the full reconstructed snapshot packed into a `Float64Array`
+     * (layout above), updating the held baseline. Returns an EMPTY array for a delta that can't be applied
+     * yet (stale baseline / no keyframe). Throws on a corrupt or stale-version frame.
+     * @param {Uint8Array} bytes
+     * @returns {Float64Array}
+     */
+    decode(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.snapshotdecoder_decode(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+}
+if (Symbol.dispose) SnapshotDecoder.prototype[Symbol.dispose] = SnapshotDecoder.prototype.free;
 
 /**
  * The browser-facing offline core: a `game-core::Room` wired to the in-memory sink/host/persistence,
@@ -433,12 +502,20 @@ function __wbg_get_imports() {
         const ret = arg0.msCrypto;
         return ret;
     };
+    imports.wbg.__wbg_new_from_slice_9a48ef80d2a51f94 = function(arg0, arg1) {
+        const ret = new Float64Array(getArrayF64FromWasm0(arg0, arg1));
+        return ret;
+    };
     imports.wbg.__wbg_new_from_slice_f9c22b9153b26992 = function(arg0, arg1) {
         const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
         return ret;
     };
     imports.wbg.__wbg_new_no_args_cb138f77cf6151ee = function(arg0, arg1) {
         const ret = new Function(getStringFromWasm0(arg0, arg1));
+        return ret;
+    };
+    imports.wbg.__wbg_new_with_length_806b9e5b8290af7c = function(arg0) {
+        const ret = new Float64Array(arg0 >>> 0);
         return ret;
     };
     imports.wbg.__wbg_new_with_length_aa5eaf41d35235e5 = function(arg0) {
@@ -521,6 +598,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     __wbg_init.__wbindgen_wasm_module = module;
     cachedDataViewMemory0 = null;
+    cachedFloat64ArrayMemory0 = null;
     cachedInt32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 

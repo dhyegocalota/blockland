@@ -5,7 +5,8 @@
 
 import { debug, warn } from './log';
 import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from './engine/debug-report';
-import { SnapshotReconstructor } from './snapshot-delta';
+import { createSnapshotDecoder, type WasmSnapshotDecoder } from './engine/online/wasm-core-loader';
+import { decodeSnapshot } from './engine/online/wasm-snapshot-decoder';
 import type { SnapshotMsg } from './net-snapshot';
 import {
   adminApprove,
@@ -64,9 +65,10 @@ export type NetState =
   | 'rejected';
 
 // The per-tick Snapshot is the one message that travels as a compact BINARY frame (every other message
-// stays JSON text). `snapshot-codec.ts` decodes the bytes back into the named shape the rest of the
-// client consumes; `net-snapshot.ts` owns the shared shapes + kind table. We re-export them here so the
-// engine keeps importing snapshot types from `net` unchanged.
+// stays JSON text). The wasm `SnapshotDecoder` (the single Rust decode in `protocol::snapshot_codec`)
+// reconstructs each keyframe/delta into the named shape the rest of the client consumes;
+// `net-snapshot.ts` owns the shared shapes + kind table. We re-export them here so the engine keeps
+// importing snapshot types from `net` unchanged.
 export type {
   SnapshotPlayer,
   SnapshotCreature,
@@ -137,6 +139,10 @@ export interface NetOptions {
   claim: string;
   handlers: NetHandlers;
   socketFactory?: (url: string) => WebSocketLike;
+  // Builds the stateful binary snapshot decoder (the wasm `SnapshotDecoder` over the Rust codec). Default:
+  // the real wasm decoder, which is already inited before connect (the engine awaits the wasm load at
+  // boot). Injectable so tests drive decode with a fake without the wasm.
+  decoderFactory?: () => Promise<WasmSnapshotDecoder>;
   now?: () => number;
   reconnect?: boolean;
   // Source of browser connectivity events (default: window online/offline). The browser flips these the
@@ -214,6 +220,7 @@ const defaultSocketFactory = (url: string): WebSocketLike =>
 
 export function createNet(opts: NetOptions): NetClient {
   const socketFactory = opts.socketFactory ?? defaultSocketFactory;
+  const decoderFactory = opts.decoderFactory ?? createSnapshotDecoder;
   const now = opts.now ?? Date.now;
   const reconnect = opts.reconnect ?? true;
   const connectivity = opts.connectivity ?? windowConnectivity();
@@ -231,9 +238,11 @@ export function createNet(opts: NetOptions): NetClient {
   let lastMessageAt: number | null = null;
   let lastPingAt: number | null = null;
   let snapshotCount = 0;
-  // Keeps the authoritative full entity state and reconstructs each full snapshot from the server's
-  // keyframe + delta stream, so `onSnapshot` still receives the SAME full object every tick.
-  const reconstructor = new SnapshotReconstructor();
+  // The wasm snapshot decoder (the Rust codec): holds the authoritative full entity state and reconstructs
+  // each full snapshot from the server's keyframe + delta stream, so `onSnapshot` still receives the SAME
+  // full object every tick. Built once on connect (the wasm is already inited at boot — see `open`); null
+  // only in the sub-millisecond window before that resolves, during which no binary frame can yet arrive.
+  let decoder: WasmSnapshotDecoder | null = null;
   // The freshest client player position the engine has thrown out as a Move; we stamp every recorded
   // Dig/Hit/Edit with it so the diagnostics ring shows where the client believed it was aiming from.
   let lastMovePos: Vec3Like = { x: 0, y: 0, z: 0 };
@@ -323,12 +332,16 @@ export function createNet(opts: NetOptions): NetClient {
   }
 
   // A binary frame is always the per-tick snapshot (the only message that goes binary): a keyframe or a
-  // delta. The reconstructor keeps the full state and returns the reconstructed full snapshot to emit, or
+  // delta. The wasm decoder keeps the full state and returns the reconstructed full snapshot to emit, or
   // null for a delta it can't safely apply yet (wait for the next keyframe). A Blob (a socket that ignored
   // `binaryType`) is read to an ArrayBuffer first.
   function handleBinary(buffer: ArrayBuffer): void {
     lastMessageAt = now();
-    const snapshot: SnapshotMsg | null = reconstructor.apply(buffer);
+    if (decoder === null) {
+      warn('net', 'snapshot dropped (decoder not ready)', { count: snapshotCount });
+      return;
+    }
+    const snapshot: SnapshotMsg | null = decodeSnapshot(decoder, new Uint8Array(buffer));
     if (snapshot === null) {
       debug('net', 'snapshot delta dropped (stale baseline)', { count: snapshotCount });
       return;
@@ -489,6 +502,14 @@ export function createNet(opts: NetOptions): NetClient {
   function open(): void {
     clearReconnectTimer();
     snapshotCount = 0;
+    // A fresh decoder per (re)connect so its baseline starts empty — the server sends a keyframe on join,
+    // which the decoder needs as the first frame. The wasm is already inited at boot, so this resolves in a
+    // microtask, long before the join→welcome→first-snapshot roundtrip. Free the prior one's wasm handle.
+    decoder?.free();
+    decoder = null;
+    decoderFactory()
+      .then((built) => { decoder = built; debug('net', 'snapshot decoder ready'); })
+      .catch((error) => warn('net', 'snapshot decoder init failed', { error: String(error) }));
     debug('net', 'opening socket', { url: opts.url, tenant: opts.tenant, attempt, waitingApproval });
     const next = socketFactory(opts.url);
     socket = next;
@@ -540,6 +561,8 @@ export function createNet(opts: NetOptions): NetClient {
       }
       clearReconnectTimer();
       clearLivenessTimer();
+      decoder?.free();
+      decoder = null;
       socket?.close();
       if (socket === null) setState('offline');
     },

@@ -205,6 +205,273 @@ pub fn encode_delta(baseline: SnapshotView, next: SnapshotView) -> Vec<u8> {
     writer.bytes
 }
 
+/// A decoded full snapshot at one tick — the keyframe payload and the running state the reconstructor
+/// holds. Mirrors the four `Snapshot` fields the wire carries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullSnapshot {
+    pub tick: u64,
+    pub players: Vec<PlayerState>,
+    pub creatures: Vec<CreatureState>,
+    pub hearts: Vec<HeartDropState>,
+}
+
+/// A decoded delta: per category the changed/added full records and the ids removed since `baseline_tick`.
+/// An entity absent from a list is unchanged; `tick` is this frame's tick, `baseline_tick` the state it
+/// applies onto.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeltaFrame {
+    pub tick: u64,
+    pub baseline_tick: u64,
+    pub changed_players: Vec<PlayerState>,
+    pub removed_players: Vec<u32>,
+    pub changed_creatures: Vec<CreatureState>,
+    pub removed_creatures: Vec<u32>,
+    pub changed_hearts: Vec<HeartDropState>,
+    pub removed_hearts: Vec<u32>,
+}
+
+/// A decoded wire frame: a full keyframe or a baseline-relative delta.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Frame {
+    Keyframe(FullSnapshot),
+    Delta(DeltaFrame),
+}
+
+/// Why a frame could not be decoded — a stale or corrupt byte stream, surfaced to the caller rather than
+/// silently swallowed (the wasm decoder turns these into a JS error the net layer logs).
+#[derive(Debug, Clone, PartialEq)]
+pub enum DecodeError {
+    /// The version byte did not match `SNAPSHOT_BINARY_VERSION` — a decoder out of step with the encoder.
+    UnsupportedVersion(u8),
+    /// The frame-kind byte was neither `FRAME_KEYFRAME` nor `FRAME_DELTA`.
+    UnknownKind(u8),
+    /// The buffer ended mid-record (a truncated frame).
+    Truncated,
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::UnsupportedVersion(v) => {
+                write!(f, "unsupported snapshot binary version {v}")
+            }
+            DecodeError::UnknownKind(k) => write!(f, "unknown snapshot frame kind {k}"),
+            DecodeError::Truncated => write!(f, "truncated snapshot frame"),
+        }
+    }
+}
+
+struct Reader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take<const N: usize>(&mut self) -> Result<[u8; N], DecodeError> {
+        let end = self.offset + N;
+        if end > self.bytes.len() {
+            return Err(DecodeError::Truncated);
+        }
+        let chunk: [u8; N] = self.bytes[self.offset..end]
+            .try_into()
+            .expect("slice fits N");
+        self.offset = end;
+        Ok(chunk)
+    }
+
+    fn u8(&mut self) -> Result<u8, DecodeError> {
+        Ok(self.take::<1>()?[0])
+    }
+
+    fn u16(&mut self) -> Result<u16, DecodeError> {
+        Ok(u16::from_le_bytes(self.take::<2>()?))
+    }
+
+    fn u32(&mut self) -> Result<u32, DecodeError> {
+        Ok(u32::from_le_bytes(self.take::<4>()?))
+    }
+
+    fn u64(&mut self) -> Result<u64, DecodeError> {
+        Ok(u64::from_le_bytes(self.take::<8>()?))
+    }
+
+    fn cm(&mut self) -> Result<f32, DecodeError> {
+        Ok(i32::from_le_bytes(self.take::<4>()?) as f32 / CM_SCALE)
+    }
+
+    fn player(&mut self) -> Result<PlayerState, DecodeError> {
+        Ok(PlayerState(
+            self.u32()?,
+            self.cm()?,
+            self.cm()?,
+            self.cm()?,
+            self.cm()?,
+            self.cm()?,
+            self.u32()?,
+            self.u32()?,
+            self.u8()?,
+        ))
+    }
+
+    fn creature(&mut self) -> Result<CreatureState, DecodeError> {
+        Ok(CreatureState(
+            self.u32()?,
+            self.u8()?,
+            self.cm()?,
+            self.cm()?,
+            self.cm()?,
+            self.cm()?,
+            self.u8()?,
+            self.u8()?,
+        ))
+    }
+
+    fn heart(&mut self) -> Result<HeartDropState, DecodeError> {
+        Ok(HeartDropState(
+            self.u32()?,
+            self.cm()?,
+            self.cm()?,
+            self.cm()?,
+        ))
+    }
+
+    fn list<T>(
+        &mut self,
+        read: impl Fn(&mut Self) -> Result<T, DecodeError>,
+    ) -> Result<Vec<T>, DecodeError> {
+        let count = self.u16()?;
+        (0..count).map(|_| read(self)).collect()
+    }
+
+    fn ids(&mut self) -> Result<Vec<u32>, DecodeError> {
+        self.list(Self::u32)
+    }
+}
+
+/// Decode one binary frame into a typed keyframe or delta — the single Rust decode the web client now runs
+/// (via the wasm `SnapshotDecoder`) instead of a re-implemented TS codec. The version byte is checked so a
+/// stale decoder rejects rather than misreads.
+pub fn decode_frame(bytes: &[u8]) -> Result<Frame, DecodeError> {
+    let mut reader = Reader::new(bytes);
+    let version = reader.u8()?;
+    if version != SNAPSHOT_BINARY_VERSION {
+        return Err(DecodeError::UnsupportedVersion(version));
+    }
+    let kind = reader.u8()?;
+    let tick = reader.u64()?;
+    if kind == FRAME_KEYFRAME {
+        return Ok(Frame::Keyframe(FullSnapshot {
+            tick,
+            players: reader.list(Reader::player)?,
+            creatures: reader.list(Reader::creature)?,
+            hearts: reader.list(Reader::heart)?,
+        }));
+    }
+    if kind != FRAME_DELTA {
+        return Err(DecodeError::UnknownKind(kind));
+    }
+    let baseline_tick = reader.u64()?;
+    Ok(Frame::Delta(DeltaFrame {
+        tick,
+        baseline_tick,
+        changed_players: reader.list(Reader::player)?,
+        removed_players: reader.ids()?,
+        changed_creatures: reader.list(Reader::creature)?,
+        removed_creatures: reader.ids()?,
+        changed_hearts: reader.list(Reader::heart)?,
+        removed_hearts: reader.ids()?,
+    }))
+}
+
+/// Stateful reconstruction of the full per-tick snapshot from the server's keyframe + delta stream. Holds
+/// the running full state: a KEYFRAME replaces it; a DELTA whose baseline matches the current tick mutates
+/// it in place; a DELTA against a stale baseline (a missed frame on an ordered socket — shouldn't happen,
+/// but be safe) is dropped, leaving the state untouched until the next keyframe.
+///
+/// The single source of truth for the client decode: the wasm `SnapshotDecoder` wraps one of these, so the
+/// browser reconstructs frames with the exact Rust logic the server encodes against.
+#[derive(Default)]
+pub struct SnapshotReconstructor {
+    current: Option<FullSnapshot>,
+}
+
+impl SnapshotReconstructor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Apply one binary frame; returns the reconstructed full snapshot to emit, or `None` for a delta we
+    /// can't safely apply yet (wait for the next keyframe). Errors on a corrupt/stale-version frame.
+    pub fn apply(&mut self, bytes: &[u8]) -> Result<Option<FullSnapshot>, DecodeError> {
+        match decode_frame(bytes)? {
+            Frame::Keyframe(snapshot) => {
+                self.current = Some(snapshot.clone());
+                Ok(Some(snapshot))
+            }
+            Frame::Delta(delta) => Ok(self.apply_delta(delta)),
+        }
+    }
+
+    fn apply_delta(&mut self, delta: DeltaFrame) -> Option<FullSnapshot> {
+        let current = self.current.as_ref()?;
+        if delta.baseline_tick != current.tick {
+            return None;
+        }
+        let next = FullSnapshot {
+            tick: delta.tick,
+            players: apply_changes(
+                &current.players,
+                delta.changed_players,
+                &delta.removed_players,
+                |p| p.0,
+            ),
+            creatures: apply_changes(
+                &current.creatures,
+                delta.changed_creatures,
+                &delta.removed_creatures,
+                |c| c.0,
+            ),
+            hearts: apply_changes(
+                &current.hearts,
+                delta.changed_hearts,
+                &delta.removed_hearts,
+                |h| h.0,
+            ),
+        };
+        self.current = Some(next.clone());
+        Some(next)
+    }
+}
+
+/// Upsert the changed/added records and drop the removed ids, keeping every other entity (and the baseline
+/// order, with new ids appended) — the same apply rules the TS reconstructor used.
+fn apply_changes<T: Clone, Id: Fn(&T) -> u32>(
+    base: &[T],
+    changed: Vec<T>,
+    removed: &[u32],
+    id_of: Id,
+) -> Vec<T> {
+    let mut out: Vec<T> = base
+        .iter()
+        .filter(|item| !removed.contains(&id_of(item)))
+        .cloned()
+        .collect();
+    for item in changed {
+        match out
+            .iter_mut()
+            .find(|existing| id_of(existing) == id_of(&item))
+        {
+            Some(existing) => *existing = item,
+            None => out.push(item),
+        }
+    }
+    out
+}
+
 fn changed<'a, T, Id, Eq>(next: &'a [T], baseline: &[T], id_of: Id, equal: Eq) -> Vec<&'a T>
 where
     Id: Fn(&T) -> u32,
@@ -344,7 +611,7 @@ mod tests {
                 hearts: &next_hearts,
             },
         );
-        let Frame::Delta(d) = decode_frame(&bytes) else {
+        let Frame::Delta(d) = decode_frame(&bytes).expect("decodes") else {
             panic!("expected a delta frame");
         };
         assert_eq!(d.tick, 8);
@@ -382,15 +649,15 @@ mod tests {
                 hearts: &[],
             },
         );
-        let Frame::Delta(d) = decode_frame(&bytes) else {
+        let Frame::Delta(d) = decode_frame(&bytes).expect("decodes") else {
             panic!("expected a delta frame");
         };
         assert!(d.changed_players.is_empty());
     }
 
-    /// A decoder that reconstructs the exact original sequence from a keyframe followed by deltas — the
-    /// Rust-side mirror of the client apply loop. Proves the byte stream is self-sufficient to rebuild
-    /// every full snapshot.
+    /// Reconstruct the exact original sequence from a keyframe followed by deltas, driving the SAME public
+    /// `SnapshotReconstructor` the wasm decoder wraps. Proves the byte stream is self-sufficient to rebuild
+    /// every full snapshot AND that the production reconstructor's apply rules are correct.
     #[test]
     fn keyframe_then_deltas_reconstruct_the_exact_sequence() {
         let frames = [
@@ -417,28 +684,79 @@ mod tests {
             ),
         ];
 
-        let mut state = decode_full(&encode_keyframe(
-            frames[0].0,
-            &frames[0].1,
-            &frames[0].2,
-            &frames[0].3,
-        ));
+        let mut reconstructor = SnapshotReconstructor::new();
+        let mut state = reconstructor
+            .apply(&encode_keyframe(
+                frames[0].0,
+                &frames[0].1,
+                &frames[0].2,
+                &frames[0].3,
+            ))
+            .expect("decodes")
+            .expect("a keyframe always emits");
         assert!(full_eq(&state, &frames[0]));
 
         for pair in frames.windows(2) {
             let (base, next) = (&pair[0], &pair[1]);
             let bytes = encode_delta(view(base), view(next));
-            let Frame::Delta(d) = decode_frame(&bytes) else {
-                panic!("expected a delta frame");
-            };
-            assert_eq!(d.baseline_tick, state.0);
-            state = apply_delta(state, d);
+            state = reconstructor
+                .apply(&bytes)
+                .expect("decodes")
+                .expect("the delta's baseline matches the held tick");
             assert!(
                 full_eq(&state, next),
                 "reconstructed tick {} mismatch",
                 next.0
             );
         }
+    }
+
+    /// A delta against a stale baseline (the held tick already moved on) is dropped, not misapplied — the
+    /// reconstructor waits for the next keyframe rather than corrupting state.
+    #[test]
+    fn stale_baseline_delta_is_dropped() {
+        let (tick, players, creatures, hearts) = fixture();
+        let keyframe = encode_keyframe(tick, &players, &creatures, &hearts);
+        let next_players = vec![PlayerState(1, 3.0, 64.25, -8.0, 0.31, 0.05, 20, 6, 3)];
+        // A delta whose baseline is tick+99 — not the keyframe's tick the reconstructor now holds.
+        let stale = encode_delta(
+            SnapshotView {
+                tick: tick + 99,
+                players: &players,
+                creatures: &creatures,
+                hearts: &hearts,
+            },
+            SnapshotView {
+                tick: tick + 100,
+                players: &next_players,
+                creatures: &creatures,
+                hearts: &[],
+            },
+        );
+        let mut reconstructor = SnapshotReconstructor::new();
+        reconstructor.apply(&keyframe).expect("decodes");
+        assert_eq!(
+            reconstructor.apply(&stale).expect("decodes"),
+            None,
+            "a stale-baseline delta emits nothing"
+        );
+    }
+
+    /// A corrupt frame surfaces a typed `DecodeError` rather than silently returning a wrong frame.
+    #[test]
+    fn rejects_unsupported_version_and_unknown_kind() {
+        assert_eq!(
+            decode_frame(&[9, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(DecodeError::UnsupportedVersion(9))
+        );
+        assert_eq!(
+            decode_frame(&[SNAPSHOT_BINARY_VERSION, 7, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(DecodeError::UnknownKind(7))
+        );
+        assert_eq!(
+            decode_frame(&[SNAPSHOT_BINARY_VERSION]),
+            Err(DecodeError::Truncated)
+        );
     }
 
     fn view(full: &Full) -> SnapshotView<'_> {
@@ -476,183 +794,33 @@ mod tests {
     /// it onto the keyframe baseline and asserts the reconstructed full snapshot.
     const DELTA_FIXTURE_HEX: &str = "0101d304000000000000d2040000000000000100010000002c01000019190000e0fcffff1f0000000500000014000000060000000300000000000000000100c8000000";
 
-    fn full_eq(a: &Full, b: &Full) -> bool {
-        a.0 == b.0
-            && a.1.len() == b.1.len()
-            && a.1
+    fn full_eq(a: &FullSnapshot, b: &Full) -> bool {
+        a.tick == b.0
+            && a.players.len() == b.1.len()
+            && a.players
                 .iter()
                 .zip(&b.1)
                 .all(|(x, y)| x.0 == y.0 && player_eq(x, y))
-            && a.2.len() == b.2.len()
-            && a.2
+            && a.creatures.len() == b.2.len()
+            && a.creatures
                 .iter()
                 .zip(&b.2)
                 .all(|(x, y)| x.0 == y.0 && creature_eq(x, y))
-            && a.3.len() == b.3.len()
-            && a.3
+            && a.hearts.len() == b.3.len()
+            && a.hearts
                 .iter()
                 .zip(&b.3)
                 .all(|(x, y)| x.0 == y.0 && heart_eq(x, y))
     }
 
-    // --- in-test reconstruction helpers (mirror the client apply loop) ---
-
+    // A full snapshot as a loose tuple, only to build the encoder's fixture inputs + compare reconstructed
+    // state field-for-field. The decode path under test is the production `decode_frame`/reconstructor.
     type Full = (
         u64,
         Vec<PlayerState>,
         Vec<CreatureState>,
         Vec<HeartDropState>,
     );
-
-    struct DeltaFrame {
-        tick: u64,
-        baseline_tick: u64,
-        changed_players: Vec<PlayerState>,
-        removed_players: Vec<u32>,
-        changed_creatures: Vec<CreatureState>,
-        removed_creatures: Vec<u32>,
-        changed_hearts: Vec<HeartDropState>,
-        removed_hearts: Vec<u32>,
-    }
-
-    enum Frame {
-        Keyframe(Full),
-        Delta(DeltaFrame),
-    }
-
-    struct TestReader<'a> {
-        bytes: &'a [u8],
-        offset: usize,
-    }
-
-    impl<'a> TestReader<'a> {
-        fn u8(&mut self) -> u8 {
-            let v = self.bytes[self.offset];
-            self.offset += 1;
-            v
-        }
-        fn u16(&mut self) -> u16 {
-            let v =
-                u16::from_le_bytes(self.bytes[self.offset..self.offset + 2].try_into().unwrap());
-            self.offset += 2;
-            v
-        }
-        fn u32(&mut self) -> u32 {
-            let v =
-                u32::from_le_bytes(self.bytes[self.offset..self.offset + 4].try_into().unwrap());
-            self.offset += 4;
-            v
-        }
-        fn u64(&mut self) -> u64 {
-            let v =
-                u64::from_le_bytes(self.bytes[self.offset..self.offset + 8].try_into().unwrap());
-            self.offset += 8;
-            v
-        }
-        fn cm(&mut self) -> f32 {
-            let v =
-                i32::from_le_bytes(self.bytes[self.offset..self.offset + 4].try_into().unwrap());
-            self.offset += 4;
-            v as f32 / CM_SCALE
-        }
-        fn player(&mut self) -> PlayerState {
-            PlayerState(
-                self.u32(),
-                self.cm(),
-                self.cm(),
-                self.cm(),
-                self.cm(),
-                self.cm(),
-                self.u32(),
-                self.u32(),
-                self.u8(),
-            )
-        }
-        fn creature(&mut self) -> CreatureState {
-            CreatureState(
-                self.u32(),
-                self.u8(),
-                self.cm(),
-                self.cm(),
-                self.cm(),
-                self.cm(),
-                self.u8(),
-                self.u8(),
-            )
-        }
-        fn heart(&mut self) -> HeartDropState {
-            HeartDropState(self.u32(), self.cm(), self.cm(), self.cm())
-        }
-        fn ids(&mut self) -> Vec<u32> {
-            let n = self.u16();
-            (0..n).map(|_| self.u32()).collect()
-        }
-    }
-
-    fn decode_frame(bytes: &[u8]) -> Frame {
-        let mut r = TestReader { bytes, offset: 0 };
-        assert_eq!(r.u8(), SNAPSHOT_BINARY_VERSION);
-        let kind = r.u8();
-        let tick = r.u64();
-        if kind == FRAME_KEYFRAME {
-            let players = (0..r.u16()).map(|_| r.player()).collect();
-            let creatures = (0..r.u16()).map(|_| r.creature()).collect();
-            let hearts = (0..r.u16()).map(|_| r.heart()).collect();
-            return Frame::Keyframe((tick, players, creatures, hearts));
-        }
-        let baseline_tick = r.u64();
-        let changed_players = (0..r.u16()).map(|_| r.player()).collect();
-        let removed_players = r.ids();
-        let changed_creatures = (0..r.u16()).map(|_| r.creature()).collect();
-        let removed_creatures = r.ids();
-        let changed_hearts = (0..r.u16()).map(|_| r.heart()).collect();
-        let removed_hearts = r.ids();
-        Frame::Delta(DeltaFrame {
-            tick,
-            baseline_tick,
-            changed_players,
-            removed_players,
-            changed_creatures,
-            removed_creatures,
-            changed_hearts,
-            removed_hearts,
-        })
-    }
-
-    fn decode_full(bytes: &[u8]) -> Full {
-        let Frame::Keyframe(full) = decode_frame(bytes) else {
-            panic!("expected a keyframe");
-        };
-        full
-    }
-
-    fn apply_delta(state: Full, delta: DeltaFrame) -> Full {
-        let (tick, mut players, mut creatures, mut hearts) = state;
-        assert_eq!(delta.baseline_tick, tick);
-        upsert(&mut players, delta.changed_players, |p| p.0);
-        drop_ids(&mut players, &delta.removed_players, |p| p.0);
-        upsert(&mut creatures, delta.changed_creatures, |c| c.0);
-        drop_ids(&mut creatures, &delta.removed_creatures, |c| c.0);
-        upsert(&mut hearts, delta.changed_hearts, |h| h.0);
-        drop_ids(&mut hearts, &delta.removed_hearts, |h| h.0);
-        (delta.tick, players, creatures, hearts)
-    }
-
-    fn upsert<T, Id: Fn(&T) -> u32>(into: &mut Vec<T>, changed: Vec<T>, id_of: Id) {
-        for item in changed {
-            match into
-                .iter_mut()
-                .find(|existing| id_of(existing) == id_of(&item))
-            {
-                Some(existing) => *existing = item,
-                None => into.push(item),
-            }
-        }
-    }
-
-    fn drop_ids<T, Id: Fn(&T) -> u32>(from: &mut Vec<T>, ids: &[u32], id_of: Id) {
-        from.retain(|item| !ids.contains(&id_of(item)));
-    }
 }
 
 /// Bandwidth-gain benchmark: how many wire bytes/tick each snapshot optimisation saves, for two

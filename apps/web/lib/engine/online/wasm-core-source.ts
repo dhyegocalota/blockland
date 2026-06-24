@@ -6,10 +6,10 @@
 // The driver mirrors the WebSocket split exactly: every `send*` becomes a `core.input(playerId, ClientMsg
 // JSON, now)`; an internal rAF loop ticks the core and drains its outbound queue; each drained message is
 // routed to the matching handler — JSON `ServerMsg` through `parseServerMsg` + the same `t`-switch net.ts
-// uses, binary snapshots through the same `SnapshotReconstructor`. The first Welcome flips state to online.
+// uses, binary snapshots through the same wasm `SnapshotDecoder`. The first Welcome flips state to online.
 
 import { debug, warn } from '../../log';
-import { SnapshotReconstructor } from '../../snapshot-delta';
+import { decodeSnapshot } from './wasm-snapshot-decoder';
 import type { NetClient, NetHandlers, NetState } from '../../net';
 import {
   adminApprove, adminBan, adminBanPending, adminKick, adminReject, adminResetScores, adminResetWorld,
@@ -17,7 +17,10 @@ import {
   adminSetPvp, adminSetRole, adminSetStructure, adminSuspend, adminUnban, attackPlayer, chat, dig, edit,
   editBatch, encodeClientMsg, hit, move, respawn, type ClientMsg, type EditCell, type EditOp, type Role,
 } from '../../protocol';
-import { createWasmCore, OutboundKind, type WasmCore, type WasmCoreInit } from './wasm-core-loader';
+import {
+  createSnapshotDecoder, createWasmCore, OutboundKind, type WasmCore, type WasmCoreInit,
+  type WasmSnapshotDecoder,
+} from './wasm-core-loader';
 
 // Cells per EditBatch input; matches net.ts so the server-side batch handling sees identical-sized frames.
 const BATCH_CHUNK = 256;
@@ -98,6 +101,8 @@ export interface WasmCoreSourceOptions {
   wall?: () => number;
   // Builds + inits the WasmCore (default: load the real wasm). Injected as a fake in tests.
   createCore?: (init: WasmCoreInit) => Promise<WasmCore>;
+  // Builds the wasm snapshot decoder (default: the real wasm `SnapshotDecoder`). Injected as a fake in tests.
+  createDecoder?: () => Promise<WasmSnapshotDecoder>;
 }
 
 function defaultSchedule(step: () => void): () => void {
@@ -111,9 +116,10 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
   const now = opts.now ?? (() => performance.now());
   const wall = opts.wall ?? Date.now;
   const createCore = opts.createCore ?? createWasmCore;
-  const reconstructor = new SnapshotReconstructor();
+  const createDecoder = opts.createDecoder ?? createSnapshotDecoder;
 
   let core: WasmCore | null = null;
+  let decoder: WasmSnapshotDecoder | null = null;
   let playerId: number | null = null;
   let state: NetState = 'offline';
   let ping = 0;
@@ -128,14 +134,15 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
     handlers.onState?.(next);
   }
 
-  // Route one drained outbound message exactly like net.ts splits a socket frame: binary → the snapshot
-  // reconstructor → onSnapshot; JSON → parseServerMsg → the same `t`-switch. The first Welcome onlines us.
+  // Route one drained outbound message exactly like net.ts splits a socket frame: binary → the wasm snapshot
+  // decoder → onSnapshot; JSON → parseServerMsg → the same `t`-switch. The first Welcome onlines us.
   function dispatch(json: string, binary: Uint8Array, kind: OutboundKind): void {
     if (kind === OutboundKind.Binary) {
-      // Copy into a fresh ArrayBuffer (the wasm view may alias the module's memory) for the decoder.
+      if (decoder === null) { warn('wasmcore', 'snapshot dropped (decoder not ready)'); return; }
+      // Copy out of the wasm view (it may alias the module's memory) before handing it to the decoder.
       const bytes = new Uint8Array(binary.byteLength);
       bytes.set(binary);
-      const snapshot = reconstructor.apply(bytes.buffer);
+      const snapshot = decodeSnapshot(decoder, bytes);
       if (snapshot === null) return;
       handlers.onSnapshot?.(snapshot);
       return;
@@ -186,11 +193,14 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
       closed = false;
       setState('connecting');
       debug('wasmcore', 'connecting', { name: opts.name });
-      createCore({ ...opts.init, nowMs: now(), wallMs: wall() })
-        .then((built) => {
-          if (closed) { built.free(); return; }
-          core = built;
-          playerId = built.add_local_player(opts.name, JSON.stringify(opts.look));
+      // Build the core AND the snapshot decoder before the first step drains the core's snapshots, so the
+      // very first keyframe the core emits is decoded (no dropped frame). Both run on the inited wasm.
+      Promise.all([createCore({ ...opts.init, nowMs: now(), wallMs: wall() }), createDecoder()])
+        .then(([builtCore, builtDecoder]) => {
+          if (closed) { builtCore.free(); builtDecoder.free(); return; }
+          core = builtCore;
+          decoder = builtDecoder;
+          playerId = builtCore.add_local_player(opts.name, JSON.stringify(opts.look));
           debug('wasmcore', 'local player admitted', { playerId });
           lastStepAt = now();
           cancelStep = schedule(step);
@@ -207,6 +217,8 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
       cancelStep = null;
       core?.free();
       core = null;
+      decoder?.free();
+      decoder = null;
       playerId = null;
       setState('offline');
     },
