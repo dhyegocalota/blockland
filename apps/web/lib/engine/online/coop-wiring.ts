@@ -11,7 +11,9 @@ import { blockById } from '../blocks';
 import { clearFeetAbove } from '../actors';
 import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
 import { debugReportRing, formatDebugReport } from '../debug-report';
-import { createCoop, MAIN_WORLD, type CoopHud, type RoomState } from '../../coop';
+import { createCoop, MAIN_WORLD, type Appearance, type CoopHud, type CoopOptions, type RoomState } from '../../coop';
+import { createWasmCoreNet, wasmOfflineConfig, wasmOfflineDebug, wasmOfflineSeed } from './wasm-core-source';
+import { wasmOfflineEnabled } from './wasm-offline-flag';
 import { offlineAdminFeed, offlineResetFeed, offlineResetScoresFeed } from '../offline/feed-events';
 import type { EditCell, EditOp } from '../../protocol';
 import type { GameRuntime } from '../runtime';
@@ -205,20 +207,11 @@ export function createCoopWiring(runtime: GameRuntime): void {
     });
   };
 
-  runtime.startCoop = function startCoop(): void {
-    const serverUrl = runtime.serverUrl;
-    if (runtime.coop) return;
-    if (!serverUrl) { debug('coop', 'single-player (no server url)'); runtime.grantOfflineAdmin(); return; }
-    if (!runtime.bridge) { debug('coop', 'single-player (no hud bridge)'); return; }
-    if (runtime.bridge.resolveOffline()) {
-      debug('coop', 'single-player (chosen)');
-      runtime.enterOfflineMode();
-      return;
-    }
-    const bridge = runtime.bridge;
-    const name = bridge.resolveName();
-    const look = bridge.resolveAppearance();
-    const claim = bridge.resolveClaim(name);
+  // The shared createCoop options every coop source uses (online socket OR the offline wasm core). The
+  // renderer/HUD/admin wiring below is identical for both — only `url`/`netFactory` differ — so a coop
+  // session renders + admin-panels the same whether its `ServerMsg`s come from the wire or the local core.
+  function coopOptions(args: { url: string; name: string; look: Appearance; claim: string; netFactory?: CoopOptions['netFactory'] }): CoopOptions {
+    const bridge = runtime.bridge!;
     // The authoritative score arrives in every snapshot; paint it into the engine-owned topbar
     // (stars + record) before forwarding to the React HUD.
     const hud: CoopHud = {
@@ -231,17 +224,18 @@ export function createCoopWiring(runtime: GameRuntime): void {
       },
       onRole: (role) => bridge.hud.onRole(role),
     };
-    runtime.coop = createCoop({
+    return {
       view: runtime.coopView,
-      url: serverUrl,
+      url: args.url,
       tenant: brand.id,
       world: MAIN_WORLD,
-      name,
-      skin: look.skin,
-      shirt: look.shirt,
-      hair: look.hair,
-      claim,
+      name: args.name,
+      skin: args.look.skin,
+      shirt: args.look.shirt,
+      hair: args.look.hair,
+      claim: args.claim,
       hud,
+      netFactory: args.netFactory,
       applyRemoteEdit: runtime.applyRemoteEdit,
       applyRemoteEditBatch: runtime.applyRemoteEditBatch,
       applyRoomState: runtime.applyRoomState,
@@ -267,7 +261,48 @@ export function createCoopWiring(runtime: GameRuntime): void {
       // The server pushed this player's authoritative inventory (counts + infinite flag): repaint the
       // hotbar from it.
       onInventory: runtime.updateHotbarCounts,
+    };
+  }
+
+  // Offline-via-core (behind the `?wasmoffline=1` flag): run the single-player game on the local WasmCore
+  // instead of the TS offline engine. The core IS the admin authority (the lone player joins as admin), so
+  // the SAME createCoop wiring drives the renderer + admin panel — just sourced from the in-process core.
+  function startWasmOffline(): void {
+    const bridge = runtime.bridge!;
+    const name = bridge.resolveName();
+    const look = bridge.resolveAppearance();
+    const config = wasmOfflineConfig({ tenant: brand.id, world: MAIN_WORLD, brand });
+    const netFactory: CoopOptions['netFactory'] = (netOptions) => createWasmCoreNet({
+      handlers: netOptions.handlers,
+      name,
+      look,
+      init: { seed: wasmOfflineSeed(), config: JSON.stringify(config), debug: wasmOfflineDebug() },
     });
+    runtime.coop = createCoop(coopOptions({ url: '', name, look, claim: '', netFactory }));
+    debug('coop', 'offline-via-core (wasm)', { tenant: brand.id, name });
+  }
+
+  runtime.startCoop = function startCoop(): void {
+    const serverUrl = runtime.serverUrl;
+    if (runtime.coop) return;
+    if (!runtime.bridge) {
+      if (!serverUrl) { debug('coop', 'single-player (no hud bridge, no server url)'); runtime.grantOfflineAdmin(); }
+      else debug('coop', 'single-player (no hud bridge)');
+      return;
+    }
+    const wantsOffline = !serverUrl || runtime.bridge.resolveOffline();
+    if (wantsOffline && wasmOfflineEnabled()) { startWasmOffline(); return; }
+    if (!serverUrl) { debug('coop', 'single-player (no server url)'); runtime.grantOfflineAdmin(); return; }
+    if (runtime.bridge.resolveOffline()) {
+      debug('coop', 'single-player (chosen)');
+      runtime.enterOfflineMode();
+      return;
+    }
+    const bridge = runtime.bridge;
+    const name = bridge.resolveName();
+    const look = bridge.resolveAppearance();
+    const claim = bridge.resolveClaim(name);
+    runtime.coop = createCoop(coopOptions({ url: serverUrl, name, look, claim }));
     debug('coop', 'connecting', { url: serverUrl, tenant: brand.id, name });
   };
 }

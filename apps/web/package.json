@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "build:wasm": "../server/crates/game-core-wasm/build-wasm.sh",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

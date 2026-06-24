@@ -14,7 +14,7 @@ import { debug, warn } from './log';
 import {
   DebugEventDir, DebugEventKind, DivergenceTracker, debugReportRing, positionDivergence, type Vec3Like,
 } from './engine/debug-report';
-import { createNet, type NetClient, type NetState } from './net';
+import { createNet, type NetClient, type NetOptions, type NetState } from './net';
 import type { EditCell, EditOp, Role } from './protocol';
 import type { FeedEvent, RosterMember } from './feed';
 import { creatureDefFor, creatureNameKey, type CreatureDef } from './engine/online/creature-snapshot';
@@ -145,6 +145,10 @@ export interface CoopOptions {
   // The server owns block resources in co-op: it pushes this player's authoritative counts + infinite
   // flag on join and on every change. The engine repaints the hotbar from coop's stored counts.
   onInventory(): void;
+  // Builds the network source from the handlers coop wired. Default: `createNet` (the WebSocket client).
+  // The offline-via-core path injects a `WasmCore`-backed NetClient here, so every handler below routes
+  // identically whether its `ServerMsg`s come from the wire or the local core.
+  netFactory?(opts: NetOptions): NetClient;
 }
 
 interface Avatar {
@@ -329,7 +333,8 @@ export function createCoop(opts: CoopOptions): CoopController {
     debug('coop', 'creature removed', { id });
   }
 
-  const net: NetClient = createNet({
+  const netFactory = opts.netFactory ?? createNet;
+  const net: NetClient = netFactory({
     url: opts.url,
     tenant: opts.tenant,
     world: opts.world,
