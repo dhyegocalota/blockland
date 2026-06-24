@@ -1,18 +1,33 @@
-// All pure engine constants — world dimensions, physics, block ids, and the engine-local tuning
+// Pure engine constants — world dimensions, physics, block ids, and the engine-local tuning
 // (player hearts, spawn offset, look sensitivity, HUD timings, audio cues, loop cadence, structure
 // reach). No three.js, no DOM; the three.js/DOM glue used to spell these inline.
+//
+// The gameplay/physics/world values the authoritative Rust server also owns are NOT defined here:
+// they are generated into `constants.gen.ts` from the Rust source (sim + game-core) and re-exported
+// below, so client and server can never silently drift. Regenerate with `cargo test -p game-core`.
 
-// ---------- World dimensions ----------
-// SIZE_X / SIZE_Z mirror the Rust sim's WORLD_SIZE so client bounds match the authoritative server.
-export const SIZE_X = 163840;
-export const SIZE_Z = 163840;
-export const SIZE_Y = 48;
-export const CHUNK = 32;
-export const GROUND = 10;
-export const WATER_LEVEL = GROUND - 1;
-// Hard flight ceiling enforced on both client and server so a flying player can never leave the
-// playable column and bug the simulation.
-export const MAX_FLY_Y = SIZE_Y + 32;
+export {
+  CHUNK,
+  CREATURE_ORBIT_FLIP_TICKS,
+  CREATURE_ORBIT_SPEED,
+  CREATURE_SEPARATION,
+  CREATURE_STOP_DISTANCE,
+  DIG_HITS,
+  GROUND,
+  HEART_DROP_TTL_MS,
+  HEART_PICKUP_RADIUS,
+  HURT_COOLDOWN,
+  MAX_FLY_Y,
+  MAX_HEARTS,
+  SIZE_X,
+  SIZE_Y,
+  SIZE_Z,
+  SPAWN_AREA_RADIUS,
+  SPAWN_CLEARANCE_GAP,
+  SPAWN_OFFSET_Z,
+  SPAWN_SEARCH_RADIUS,
+  WATER_LEVEL,
+} from './constants.gen';
 
 // ---------- Physics ----------
 export const GRAVITY = -26;
@@ -23,11 +38,8 @@ export const PLAYER_RADIUS = 0.3;
 export const PLAYER_HEIGHT = 1.7;
 export const EYE_HEIGHT = 1.55;
 export const REACH = 7;
-// Taps on the same block before it breaks — digging takes a little effort. Mirrors the Rust server's
-// DIG_HITS so an offline dig takes exactly as many taps as a co-op dig.
-export const DIG_HITS = 2;
 // Cadence of hold-to-attack: while the attack button is held, primaryAction() fires this often (4/sec).
-// The Rust server enforces the same cadence (ATTACK_MIN_INTERVAL, slightly more lenient for jitter) so a
+// The Rust server enforces a matching cadence (ATTACK_MIN_INTERVAL, slightly more lenient for jitter) so a
 // modified client can't spam faster than a legit hold.
 export const ATTACK_REPEAT_MS = 250;
 
@@ -60,43 +72,10 @@ export const RED_ID = 18;
 export const BLUE_ID = 19;
 
 // ---------- Player ----------
-export const MAX_HEARTS = 3;
-// Invulnerability window after a monster bite (seconds), so a single touch can't drain every heart.
-export const HURT_COOLDOWN = 1.2;
-// A defeated creature drops a heart pickup: a player within this radius of it who is below MAX_HEARTS
-// collects it for +1 heart. Mirrors the Rust server's PICKUP_RADIUS.
-export const HEART_PICKUP_RADIUS = 1.4;
-// A dropped heart vanishes after this long if nobody collects it, so drops never accumulate. Mirrors
-// the Rust server's HEART_DROP_TTL_MS.
-export const HEART_DROP_TTL_MS = 20000;
-// A dropped heart hovers this far above its base position and bobs at this rate (radians/sec).
+// A defeated creature drops a heart pickup that hovers this far above its base position and bobs at this
+// rate (radians/sec); the drop's radius/ttl come from the generated server constants.
 export const HEART_BOB_HEIGHT = 0.18;
 export const HEART_BOB_SPEED = 3;
-// Two creatures closer than this on the ground push apart so they never stack or overlap into one
-// blob. Mirrors the Rust server's CREATURE_SEPARATION so online truth and offline prediction agree.
-export const CREATURE_SEPARATION = 0.9;
-// A chasing hostile stops closing once this near the player and instead orbits it; just inside bite
-// range so a circling creature still touches and bites. Mirrors the Rust server's CREATURE_STOP_DISTANCE.
-export const CREATURE_STOP_DISTANCE = 0.65;
-// Tangential strafe speed (blocks/sec) of a hostile circling the player at the stop distance, and how
-// often (in ticks) its orbit direction flips so the menacing circle isn't a perfect loop. Deterministic
-// per creature (direction from its id); mirrors the Rust server so online and offline circle identically.
-export const CREATURE_ORBIT_SPEED = 2.4;
-export const CREATURE_ORBIT_FLIP_TICKS = 80;
-// The spawn point sits this many cells south of the world centre (so the player faces the monument).
-export const SPAWN_OFFSET_Z = 4;
-// Each spawn picks a random base column within this many cells of the centre before the slot search,
-// so players land scattered around the monument area instead of stacked on the exact centre. Mirrors
-// the Rust server's SPAWN_AREA_RADIUS.
-export const SPAWN_AREA_RADIUS = 12;
-// When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
-// player), the spiral search nudges to the nearest clear column within this many cells. Mirrors the
-// Rust server's SPAWN_SEARCH_RADIUS.
-export const SPAWN_SEARCH_RADIUS = 6;
-// A spawn column counts as occupied if a creature or other player is within this horizontal distance
-// of it, so a player never materialises on top of a monster or another player. Mirrors the Rust
-// server's SPAWN_CLEARANCE_GAP.
-export const SPAWN_CLEARANCE_GAP = 1.2;
 // Fall below this Y (under the world floor) and the player is teleported back to spawn.
 export const VOID_FALL_Y = -8;
 

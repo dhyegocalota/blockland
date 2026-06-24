@@ -179,14 +179,14 @@ impl Creature {
 
 /// How close a chasing creature presses before it stops closing and orbits the player instead — just
 /// inside bite range, so a circling creature still touches and bites rather than overrunning the player
-/// and oscillating at their feet. Mirrors the web `CREATURE_STOP_DISTANCE`.
-const STOP_DISTANCE: f32 = 0.65;
+/// and oscillating at their feet. Exported to the web as `CREATURE_STOP_DISTANCE`.
+pub const STOP_DISTANCE: f32 = 0.65;
 /// Tangential strafe speed (blocks/sec) of a hostile circling the player at the stop distance, and how
 /// often (in ticks) its orbit reverses so the menacing circle isn't a perfect loop. The circle direction
-/// is deterministic per id (no RNG), so server and client orbit identically. Mirrors the web
+/// is deterministic per id (no RNG), so server and client orbit identically. Exported to the web as
 /// `CREATURE_ORBIT_SPEED` / `CREATURE_ORBIT_FLIP_TICKS`.
-const ORBIT_SPEED: f32 = 2.4;
-const ORBIT_FLIP_TICKS: u64 = 80;
+pub const ORBIT_SPEED: f32 = 2.4;
+pub const ORBIT_FLIP_TICKS: u64 = 80;
 /// Tallest step a creature may climb in a single move (one block).
 const MAX_CLIMB: f32 = 1.0;
 /// How fast a creature falls when it walks off a ledge (blocks per second), so drops are smooth

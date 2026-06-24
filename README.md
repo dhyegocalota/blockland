@@ -539,13 +539,14 @@ See `.env.sample` for the full list.
 
 ## Build, test, deploy & CI
 
-**Committed generated artifacts.** `protocol.gen.ts` and the entire `lib/wasm/` (the offline-core
-`.wasm` + JS bindings + d.ts) are committed to git — "committed like protocol.gen.ts so the web
-build needs no Rust toolchain." The web build (and Vercel/CI) therefore needs no Rust/wasm
-toolchain. Regenerate on source change:
+**Committed generated artifacts.** `protocol.gen.ts`, `engine/constants.gen.ts`, and the entire
+`lib/wasm/` (the offline-core `.wasm` + JS bindings + d.ts) are committed to git — "committed like
+protocol.gen.ts so the web build needs no Rust toolchain." The web build (and Vercel/CI) therefore
+needs no Rust/wasm toolchain. Regenerate on source change:
 
 ```bash
 cargo test -p protocol                          # rewrites apps/web/lib/protocol.gen.ts
+cargo test -p game-core                         # rewrites apps/web/lib/engine/constants.gen.ts
 apps/server/crates/game-core-wasm/build-wasm.sh # cargo wasm32 + wasm-bindgen → apps/web/lib/wasm/
 ```
 
@@ -553,9 +554,11 @@ The wasm-bindgen crate↔CLI version (`=0.2.106`) is pinned in three places (cra
 `Dockerfile.wasm`); a reproducible `Dockerfile.wasm` emits the artifacts to a mounted volume.
 
 **Cross-language safety nets.** Wire shapes can't regress silently: ts-rs generates the client types
-from Rust, a `snapshot_size` test asserts the compact snapshot stays small, shared **hex fixtures**
-pin the binary codec byte-for-byte across Rust↔TS, and a golden HMAC vector locks both directions of
-the Next↔Rust channel. The offline core can't diverge from online (shared crate + shared `NetClient`
+from Rust, the gameplay/physics/world constants are generated from the Rust source into
+`engine/constants.gen.ts` (a `committed_web_constants_are_up_to_date` test fails CI if the committed
+file is stale, so the client can never hand-mirror a server number that drifts), a `snapshot_size`
+test asserts the compact snapshot stays small, shared **hex fixtures** pin the binary codec
+byte-for-byte across Rust↔TS, and a golden HMAC vector locks both directions of the Next↔Rust channel. The offline core can't diverge from online (shared crate + shared `NetClient`
 routing + same room limits).
 
 **Tests.** Colocated everywhere: TS `*.test.ts(x)` next to each module (vitest, jsdom available; ~68

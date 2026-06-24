@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CREATURE_ORBIT_FLIP_TICKS,
+  CREATURE_ORBIT_SPEED,
+  CREATURE_SEPARATION,
+  CREATURE_STOP_DISTANCE,
+  DIG_HITS,
+  HEART_DROP_TTL_MS,
+  HEART_PICKUP_RADIUS,
+  SPAWN_AREA_RADIUS,
+  SPAWN_CLEARANCE_GAP,
+  SPAWN_SEARCH_RADIUS,
+} from './constants.gen';
+import {
   AIR,
   BEDROCK_ID,
   BLACK_ID,
@@ -197,5 +209,38 @@ describe('engine-local tuning', () => {
     expect(DIG_BLIP_FREQ).toBe(180);
     expect(DIG_BLIP_DURATION).toBe(0.05);
     expect(STRUCTURE_REACH_DIST).toBe(90);
+  });
+});
+
+// Guards the Rust→TS dedup migration: the values generated from the Rust source (constants.gen.ts) MUST
+// equal the numbers the client hand-mirrored before, so the codegen is a pure refactor with zero
+// behaviour change. If Rust changes one of these on purpose, regenerate and update the expectation here.
+describe('generated server constants', () => {
+  it('match the pre-migration client values exactly', () => {
+    expect(SIZE_X).toBe(163840);
+    expect(SIZE_Z).toBe(163840);
+    expect(SIZE_Y).toBe(48);
+    expect(CHUNK).toBe(32);
+    expect(GROUND).toBe(10);
+    expect(WATER_LEVEL).toBe(9);
+    expect(MAX_FLY_Y).toBe(80);
+    expect(DIG_HITS).toBe(2);
+    expect(MAX_HEARTS).toBe(3);
+    expect(HURT_COOLDOWN).toBe(1.2);
+    expect(HEART_PICKUP_RADIUS).toBe(1.4);
+    expect(HEART_DROP_TTL_MS).toBe(20000);
+    expect(CREATURE_SEPARATION).toBe(0.9);
+    expect(CREATURE_STOP_DISTANCE).toBe(0.65);
+    expect(CREATURE_ORBIT_SPEED).toBe(2.4);
+    expect(CREATURE_ORBIT_FLIP_TICKS).toBe(80);
+    expect(SPAWN_OFFSET_Z).toBe(4);
+    expect(SPAWN_AREA_RADIUS).toBe(12);
+    expect(SPAWN_SEARCH_RADIUS).toBe(6);
+    expect(SPAWN_CLEARANCE_GAP).toBe(1.2);
+  });
+
+  it('keeps the derived relationships the old literals encoded', () => {
+    expect(WATER_LEVEL).toBe(GROUND - 1);
+    expect(MAX_FLY_Y).toBe(SIZE_Y + 32);
   });
 });

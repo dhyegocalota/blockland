@@ -63,15 +63,15 @@ const SPAWN_EVERY_TICKS: u64 = 5;
 // at/above the client's aim reach (REACH = 7) so a hit the client lets you land is never silently
 // rejected here — that mismatch was why creatures "wouldn't die" when struck from a few blocks away.
 const MELEE_RANGE: f32 = 8.0;
-// Player health + how a hostile creature bites it. Mirrors the web rules (MAX_HEARTS, hurt.ts, the 1.2s
-// hurt cooldown) so survival is identical, only now owned by the server.
-const MAX_HP: u8 = 3;
-const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
+// Player health + how a hostile creature bites it. Exported to the web as MAX_HEARTS / HURT_COOLDOWN
+// so survival is identical, owned here by the server.
+pub const MAX_HP: u8 = 3;
+pub const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
 // A defeated creature drops a heart pickup at its position: a player within PICKUP_RADIUS of it who is
-// below MAX_HP collects it for +1 hp. Drops expire after HEART_TTL so they never accumulate. Mirrors the
-// web rules (HEART_PICKUP_RADIUS, HEART_DROP_TTL_MS) so healing is identical online and offline.
-const PICKUP_RADIUS: f32 = 1.4;
-const HEART_TTL: Duration = Duration::from_millis(20_000);
+// below MAX_HP collects it for +1 hp. Drops expire after HEART_TTL so they never accumulate. Exported to
+// the web as HEART_PICKUP_RADIUS / HEART_DROP_TTL_MS so healing is identical online and offline.
+pub const PICKUP_RADIUS: f32 = 1.4;
+pub const HEART_TTL: Duration = Duration::from_millis(20_000);
 // Horizontal bite reach: only a creature essentially touching the player bites. Kept just above the
 // chaser's stop/orbit distance (creatures::STOP_DISTANCE) so a creature pressed up against — or circling
 // — the player still lands the bite, but one ~1.5 blocks out does not. Mirrors the web HIT_RANGE.
@@ -83,7 +83,8 @@ const HURT_RANGE: f32 = 0.9;
 const HURT_VERTICAL_GAP: f32 = 1.3;
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
-const DIG_HITS: u8 = 2;
+// Exported to the web as DIG_HITS so an offline dig takes exactly as many taps as a co-op dig.
+pub const DIG_HITS: u8 = 2;
 // Minimum gap between two accepted primary actions (dig / creature hit / pvp attack) from one player.
 // The client holds-to-attack at ATTACK_REPEAT_MS (250ms); this is kept a touch more lenient to tolerate
 // network jitter, so a modified client can't spam faster than a legit hold.

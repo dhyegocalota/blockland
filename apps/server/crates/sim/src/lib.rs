@@ -12,21 +12,21 @@ pub const GROUND: i32 = 10;
 pub const WATER_LEVEL: i32 = GROUND - 1;
 pub const WORLD_SIZE: i32 = 163840;
 /// Blocks the spawn sits north of the exact world center so a player never lands inside the welcome
-/// monument (which the shared worldgen builds at the center). Mirrors the web `spawnPoint` z offset.
-const SPAWN_MONUMENT_CLEARANCE: i32 = 4;
+/// monument (which the shared worldgen builds at the center). Exported to the web as `SPAWN_OFFSET_Z`.
+pub const SPAWN_MONUMENT_CLEARANCE: i32 = 4;
 /// Each spawn picks a random base column within this many cells of the centre before the slot search,
-/// so players land scattered around the monument area instead of stacked on the exact centre. Mirrors
-/// the web `SPAWN_AREA_RADIUS`.
+/// so players land scattered around the monument area instead of stacked on the exact centre. Exported
+/// to the web as `SPAWN_AREA_RADIUS`.
 pub const SPAWN_AREA_RADIUS: i32 = 12;
 /// When the spawn column is blocked (terrain, the monument, built blocks) or occupied (a creature or
-/// player), the spiral search nudges to the nearest clear column within this many cells. Mirrors the
-/// web `SPAWN_SEARCH_RADIUS`.
+/// player), the spiral search nudges to the nearest clear column within this many cells. Exported to the
+/// web as `SPAWN_SEARCH_RADIUS`.
 pub const SPAWN_SEARCH_RADIUS: i32 = 6;
 /// A spawn column counts as occupied if a creature or other player is within this horizontal distance
-/// of it, so a player never materialises on top of a monster or another player. Mirrors the web
+/// of it, so a player never materialises on top of a monster or another player. Exported to the web as
 /// `SPAWN_CLEARANCE_GAP`.
 pub const SPAWN_CLEARANCE_GAP: f32 = 1.2;
-/// Horizontal chunk edge for procedural decoration (trees + plants). Mirrors the TS `CHUNK`: the
+/// Horizontal chunk edge for procedural decoration (trees + plants). Exported to the web as `CHUNK`: the
 /// decoration RNG is seeded per chunk so every player and a post-reset regen see the same world.
 pub const CHUNK: i32 = 32;
 /// Horizontal edge of an EDIT-streaming chunk: the world's player edits are grouped into square
@@ -38,7 +38,7 @@ pub const CHUNK: i32 = 32;
 /// chunk carries ONLY its sparse edits — nothing when nobody has built there.
 pub const EDIT_CHUNK_SIZE: i32 = 128;
 /// Hard flight ceiling: a player may never go above this Y. Enforced in move validation so flying
-/// can never leave the playable column and bug the simulation. Mirrors the TS `MAX_FLY_Y`.
+/// can never leave the playable column and bug the simulation. Exported to the web as `MAX_FLY_Y`.
 pub const MAX_FLY_Y: i32 = SIZE_Y + 32;
 
 // Final terrain top is clamped into this band so it always fits inside the column with headroom.
