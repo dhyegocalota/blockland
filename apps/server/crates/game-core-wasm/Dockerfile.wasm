@@ -1,0 +1,21 @@
+# Reproducible builder for the offline game-core WASM module + JS bindings. Build with the REPO ROOT as
+# context so it can COPY the whole `apps/server` workspace:
+#
+#   docker build -f apps/server/crates/game-core-wasm/Dockerfile.wasm -t blockland-wasm .
+#   docker run --rm -v "$PWD/apps/web/lib/wasm:/out" blockland-wasm
+#
+# The container builds for wasm32 and emits the bindings into /out (mount it to apps/web/lib/wasm/).
+FROM rust:1-slim-bookworm
+
+# The wasm target + a wasm-bindgen-cli whose version MUST match the `wasm-bindgen` crate pin in
+# crates/game-core-wasm/Cargo.toml (`=0.2.106`), or binding generation errors.
+RUN rustup target add wasm32-unknown-unknown \
+ && cargo install wasm-bindgen-cli --version 0.2.106
+
+WORKDIR /app
+COPY apps/server ./apps/server
+
+WORKDIR /app/apps/server
+RUN cargo build -p game-core-wasm --target wasm32-unknown-unknown --release
+
+CMD ["bash", "-c", "mkdir -p /out && wasm-bindgen --target web --out-dir /out --out-name game_core_wasm target/wasm32-unknown-unknown/release/game_core_wasm.wasm && ls -la /out"]

@@ -13,6 +13,7 @@ pub mod role;
 pub mod room;
 pub mod spatial_grid;
 pub mod stats;
+pub mod time;
 
 pub use conn::{next_conn_id, Appearance, Conn, Outbound, OutboundSink, NEXT_CONN_ID};
 pub use host::{RoomConfig, RoomHost, TenantFlag};

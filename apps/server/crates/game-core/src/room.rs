@@ -6,7 +6,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+
+use crate::time::Instant;
 
 use protocol::{
     snapshot_codec::{encode_delta, encode_keyframe, SnapshotView},
@@ -384,6 +386,13 @@ impl Room {
         }
     }
 
+    /// Reseed the simulation RNG deterministically. The native server leaves the from-entropy seed in
+    /// place (spawns stay effectively random); the wasm/offline core calls this with a JS-provided seed
+    /// so the same seed + inputs reproduce the same spawns.
+    pub fn reseed(&mut self, seed: u64) {
+        self.rng = StdRng::seed_from_u64(seed);
+    }
+
     /// The room's fixed tick rate, so the server driver can size its interval + persist cadence.
     pub fn tick_hz(&self) -> u32 {
         self.tick_hz
@@ -402,6 +411,12 @@ impl Room {
     /// Encode the current world diff for the server driver's final save on room close.
     pub fn world_snapshot_blob(&self) -> Vec<u8> {
         sim::encode_edits(&self.world.snapshot())
+    }
+
+    /// The current built-structure edits in one edit chunk, for an offline renderer to overlay on the
+    /// procedural base it generates locally (the same per-chunk data the room streams to a joiner).
+    pub fn world_edits_in_chunk(&self, chunk_x: i32, chunk_z: i32) -> Vec<(i32, i32, i32, u8)> {
+        self.world.edits_in_chunk(chunk_x, chunk_z)
     }
 
     /// Apply restored world edits onto the procedural base. The server driver loads the blob and decodes
@@ -3063,10 +3078,7 @@ fn aoi_view(
 }
 
 fn epoch_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    crate::time::epoch_ms()
 }
 
 /// The `playtime` table key for a player: their account id when logged in, else their IP (prefixed so
