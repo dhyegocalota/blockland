@@ -2651,7 +2651,8 @@ impl Room {
             .and_then(|v| v.parse::<i32>().ok())
             .filter(|r| *r > sim::SPAWN_AREA_RADIUS)
             .unwrap_or(sim::SPAWN_AREA_RADIUS);
-        let (base_x, base_z) = sim::random_spawn_base_with_radius(rng.gen(), rng.gen(), spawn_radius);
+        let (base_x, base_z) =
+            sim::random_spawn_base_with_radius(rng.gen(), rng.gen(), spawn_radius);
         let (x, z) = sim::find_spawn_slot(base_x, base_z, sim::SPAWN_SEARCH_RADIUS, |x, z| {
             sim::spawn_column_clear(x, z, sim::SPAWN_CLEARANCE_GAP, &self.world, &actors)
         });
