@@ -29,6 +29,14 @@ pub const SPAWN_CLEARANCE_GAP: f32 = 1.2;
 /// Horizontal chunk edge for procedural decoration (trees + plants). Mirrors the TS `CHUNK`: the
 /// decoration RNG is seeded per chunk so every player and a post-reset regen see the same world.
 pub const CHUNK: i32 = 32;
+/// Horizontal edge of an EDIT-streaming chunk: the world's player edits are grouped into square
+/// `(x, z)` columns of this width (full Y), and a player is streamed only the chunks near them.
+/// 128 is intentionally a fraction of the AOI reach (`aoi::AOI_RADIUS + AOI_HYSTERESIS` ≈ 576 on the
+/// server), so a player's load radius spans only a handful of chunks and each chunk's edits are tiny
+/// to scan + send (fine-grained pop-in, like ordinary chunk loading). A multiple of the decoration
+/// `CHUNK` (32) too, so an edit chunk tiles whole decoration chunks. Base terrain is procedural, so a
+/// chunk carries ONLY its sparse edits — nothing when nobody has built there.
+pub const EDIT_CHUNK_SIZE: i32 = 128;
 /// Hard flight ceiling: a player may never go above this Y. Enforced in move validation so flying
 /// can never leave the playable column and bug the simulation. Mirrors the TS `MAX_FLY_Y`.
 pub const MAX_FLY_Y: i32 = SIZE_Y + 32;
@@ -393,6 +401,17 @@ impl World {
         }
     }
 
+    /// All edits whose column falls inside edit-chunk `(chunk_x, chunk_z)` (full Y), as a flat list.
+    /// The edit map is sparse, so a single filtering pass over it is cheap and order-free; an empty
+    /// list means nobody has built in that chunk (its base terrain is procedural and needs no stream).
+    pub fn edits_in_chunk(&self, chunk_x: i32, chunk_z: i32) -> Vec<(i32, i32, i32, u8)> {
+        self.edits
+            .iter()
+            .filter(|((x, _, z), _)| edit_chunk_of(*x, *z) == (chunk_x, chunk_z))
+            .map(|((x, y, z), &id)| (*x, *y, *z, id))
+            .collect()
+    }
+
     /// A reasonable spawn near the center of the world, offset a few blocks off the exact centre so the
     /// player never lands inside the welcome monument (built at the center) and gets wedged.
     pub fn spawn() -> [f32; 3] {
@@ -407,6 +426,13 @@ impl World {
     pub fn spawn_base() -> (i32, i32) {
         (WORLD_SIZE / 2, WORLD_SIZE / 2 + SPAWN_MONUMENT_CLEARANCE)
     }
+}
+
+/// The edit-streaming chunk a column `(x, z)` belongs to (floor division, so negative coordinates
+/// bucket correctly). Used both to group the world's edits and to map a player's position to the
+/// chunk at its centre.
+pub fn edit_chunk_of(x: i32, z: i32) -> (i32, i32) {
+    (x.div_euclid(EDIT_CHUNK_SIZE), z.div_euclid(EDIT_CHUNK_SIZE))
 }
 
 /// A column is a clear spawn slot when its body — the two cells just above the surface, where the
@@ -942,6 +968,74 @@ mod tests {
             "expected compact blob, got {}",
             blob.len()
         );
+    }
+
+    #[test]
+    fn edit_chunk_of_buckets_by_edit_chunk_size() {
+        assert_eq!(edit_chunk_of(0, 0), (0, 0));
+        assert_eq!(
+            edit_chunk_of(EDIT_CHUNK_SIZE - 1, EDIT_CHUNK_SIZE - 1),
+            (0, 0)
+        );
+        assert_eq!(edit_chunk_of(EDIT_CHUNK_SIZE, 0), (1, 0));
+        assert_eq!(edit_chunk_of(0, EDIT_CHUNK_SIZE), (0, 1));
+        // Negative coordinates floor-divide into negative chunks (never collapse onto chunk 0).
+        assert_eq!(edit_chunk_of(-1, -1), (-1, -1));
+        assert_eq!(edit_chunk_of(-EDIT_CHUNK_SIZE, -EDIT_CHUNK_SIZE), (-1, -1));
+    }
+
+    #[test]
+    fn edits_in_chunk_returns_exactly_that_chunks_edits() {
+        let mut w = World::new();
+        // Two edits in chunk (0,0), one in (1,0), one in (0,1) — at varied Y to prove the whole column.
+        w.set(5, 3, 7, STONE);
+        w.set(100, 40, 12, GOLD);
+        w.set(EDIT_CHUNK_SIZE + 4, 8, 9, WOOD);
+        w.set(2, 8, EDIT_CHUNK_SIZE + 1, LEAF);
+
+        let mut here = w.edits_in_chunk(0, 0);
+        here.sort_unstable();
+        assert_eq!(here, vec![(5, 3, 7, STONE), (100, 40, 12, GOLD)]);
+
+        assert_eq!(
+            w.edits_in_chunk(1, 0),
+            vec![(EDIT_CHUNK_SIZE + 4, 8, 9, WOOD)]
+        );
+        assert_eq!(
+            w.edits_in_chunk(0, 1),
+            vec![(2, 8, EDIT_CHUNK_SIZE + 1, LEAF)]
+        );
+        assert!(
+            w.edits_in_chunk(9, 9).is_empty(),
+            "a chunk nobody built in has no edits to stream"
+        );
+    }
+
+    #[test]
+    fn every_edit_maps_into_exactly_one_chunks_list() {
+        // The union of per-chunk lists reproduces the full snapshot (each edit in exactly one chunk).
+        let mut w = World::new();
+        let cells = [
+            (5, 3, 7, STONE),
+            (100, 40, 12, GOLD),
+            (EDIT_CHUNK_SIZE + 4, 8, 9, WOOD),
+            (2, 8, EDIT_CHUNK_SIZE + 1, LEAF),
+            (-3, 6, -9, DIRT),
+        ];
+        for &(x, y, z, id) in &cells {
+            w.set(x, y, z, id);
+        }
+        let mut chunks: HashSet<(i32, i32)> = HashSet::new();
+        for &(x, _, z, _) in &cells {
+            chunks.insert(edit_chunk_of(x, z));
+        }
+        let regrouped = sorted(
+            chunks
+                .into_iter()
+                .flat_map(|(cx, cz)| w.edits_in_chunk(cx, cz))
+                .collect(),
+        );
+        assert_eq!(regrouped, sorted(w.snapshot()));
     }
 
     // Deterministic sample grid shared with the web worldgen parity test. The web test must

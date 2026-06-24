@@ -2,7 +2,7 @@
 //! state, validates every client input, and broadcasts snapshots. The server is the
 //! single source of truth; clients predict locally and reconcile from snapshots.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -30,6 +30,18 @@ const MAX_BATCH_EDITS: usize = 8192;
 const BATCH_RADIUS: f32 = 48.0;
 // Cells per outgoing EditBatch frame, matching the client; keeps each message under the text cap.
 const BATCH_CHUNK_SIZE: usize = 256;
+// Chebyshev radius (in EDIT chunks) of the world a player has streamed: every chunk within this many
+// chunks of the one under the player is loaded for them. Sized so the loaded square always covers the
+// AOI reach (`aoi::AOI_RADIUS`) regardless of where in its chunk the player stands: the farthest
+// in-AOI column is AOI_RADIUS away, and the player may sit a full chunk-edge from the near boundary, so
+// ceil((AOI_RADIUS + EDIT_CHUNK_SIZE) / EDIT_CHUNK_SIZE) chunks of reach are needed. With AOI_RADIUS=512
+// and EDIT_CHUNK_SIZE=128 that is 5 — every edit a player could see is in a chunk they have loaded.
+const LOAD_CHUNK_RADIUS: i32 = 5;
+
+const _: () = assert!(
+    (LOAD_CHUNK_RADIUS * sim::EDIT_CHUNK_SIZE) as f32
+        >= crate::aoi::AOI_RADIUS + sim::EDIT_CHUNK_SIZE as f32
+);
 
 // --- Creatures ---
 // The live population scales with how many players are around (so everyone has creatures nearby) but
@@ -219,6 +231,11 @@ struct Player {
     // Server-owned health: hearts left, and when the player last took damage (for the hurt cooldown).
     hp: u8,
     hurt_at: Instant,
+    // The edit chunks this connection has been streamed (and so renders the built structures for). The
+    // join seeds it with the chunks around spawn; the tick adds each newly-entered chunk as the player
+    // moves. A live block Edit is broadcast ONLY to players whose set contains its chunk; a far player
+    // without it gets the chunk's full current state when they later enter (so they never miss an edit).
+    loaded_chunks: HashSet<(i32, i32)>,
     // The block currently being chipped and how many taps have landed, so the server decides the break.
     dig_block: Option<[i32; 3]>,
     dig_hits: u8,
@@ -720,6 +737,7 @@ impl Room {
             move_synced: false,
             hp: MAX_HP,
             hurt_at: now,
+            loaded_chunks: HashSet::new(),
             dig_block: None,
             dig_hits: 0,
             last_action: now - ATTACK_MIN_INTERVAL,
@@ -747,19 +765,12 @@ impl Room {
             version: server_version(),
         };
         conn.send_one(welcome);
-        // Hand the joining player the world that has already been built.
-        let edits: Vec<EditCell> = self
-            .world
-            .snapshot()
-            .into_iter()
-            .map(|(x, y, z, block)| EditCell { x, y, z, id: block })
-            .collect();
-        for chunk in edits.chunks(BATCH_CHUNK_SIZE) {
-            conn.send_one(ServerMsg::EditBatch {
-                edits: chunk.to_vec(),
-                by: 0,
-            });
-        }
+        // Register the player (with an empty loaded set), then stream only the edit chunks around their
+        // spawn — NOT the whole world. The base terrain is procedural (the client regenerates it for any
+        // position), so a joiner sees correct terrain at once; only the chunks near spawn need their
+        // built structures streamed, and the per-tick stream feeds the rest in as they move.
+        self.players.insert(id, player);
+        self.stream_chunks(id);
         // Replay the recent timeline so the history echoes even for events that happened while
         // nobody was online. Sent to this connection only, after Welcome + the world.
         match self
@@ -795,7 +806,6 @@ impl Room {
             send_pending(&self.hub.db, &self.key.0, std::slice::from_ref(&conn)).await;
             conn.send_one(self.bans_msg());
         }
-        self.players.insert(id, player);
         // The fresh player's inventory (empty + infinite by default), sent after it is registered.
         self.send_inventory(id);
         // Everyone gets the refreshed identity roster so the new player's avatar can render at once
@@ -874,6 +884,10 @@ impl Room {
             // held connection's stored view too, so the keyframe (and later deltas) start from an empty set.
             p.needs_keyframe = true;
             p.snapshot_baseline = SnapshotBaseline::default();
+            // The fresh socket holds no world — clear the loaded set so the re-stream below hands it the
+            // CURRENT chunks around the frozen position (folding in any edits made while it was away),
+            // instead of trusting a baseline the new connection never received.
+            p.loaded_chunks.clear();
             p.disconnected_at = None;
             p.last_seen = now;
             p.skin = sanitize_color(&look.skin, "#f2c18b");
@@ -892,18 +906,7 @@ impl Room {
             moderator: role_moderator,
             version: server_version(),
         });
-        let edits: Vec<EditCell> = self
-            .world
-            .snapshot()
-            .into_iter()
-            .map(|(x, y, z, block)| EditCell { x, y, z, id: block })
-            .collect();
-        for chunk in edits.chunks(BATCH_CHUNK_SIZE) {
-            conn.send_one(ServerMsg::EditBatch {
-                edits: chunk.to_vec(),
-                by: 0,
-            });
-        }
+        self.stream_chunks(id);
         conn.send_one(self.room_state());
         self.send_inventory(id);
         let roster = self.roster_msg();
@@ -1252,7 +1255,11 @@ impl Room {
             tracing::debug!(x = *x, y = *y, z = *z, id = *nid, by = %id, "edit applied");
         }
         if let Some(m) = edit_out {
-            self.broadcast(&m);
+            // AOI-filtered: only players who have this edit's chunk loaded get the live Edit; a far player
+            // gets the chunk's current state (with this edit folded in) when they later enter it.
+            if let ServerMsg::Edit { x, z, .. } = m {
+                self.broadcast_edit_in_chunk(sim::edit_chunk_of(x, z), &m);
+            }
             // Placing is an arm action too: swing the placer's avatar for the nearby players who could see
             // it (a break in co-op comes through Dig, which already swings via accept_primary_action).
             if let Some(p) = self.players.get(&id) {
@@ -1267,8 +1274,8 @@ impl Room {
             self.dirty = true;
             tracing::debug!(count = edits.len(), by = %id, "edit batch applied");
         }
-        if let Some(m) = batch_out {
-            self.broadcast(&m);
+        if let Some(ServerMsg::EditBatch { edits, by }) = batch_out {
+            self.broadcast_edit_batch_by_chunk(&edits, by);
             self.lift_stuck_players();
         }
         if let Some(m) = chat_out {
@@ -2219,6 +2226,19 @@ impl Room {
             }
         }
 
+        // Stream each connected player the edit chunks they have newly entered since last tick, so built
+        // structures pop in as they move (the join only seeded the chunks around spawn). A frozen slot
+        // held for reconnect is skipped — its dead socket gets the current chunks on resume instead.
+        let streaming: Vec<PlayerId> = self
+            .players
+            .values()
+            .filter(|p| p.disconnected_at.is_none())
+            .map(|p| p.id)
+            .collect();
+        for id in streaming {
+            self.stream_chunks(id);
+        }
+
         // Maintain and advance the creature population, then resolve heart pickups, before snapshotting.
         self.simulate_creatures(dt);
         self.collect_hearts();
@@ -2402,6 +2422,94 @@ impl Room {
                 continue;
             }
             let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
+        }
+    }
+
+    /// Send one edit chunk's CURRENT edits to a connection as one or more `EditBatch` frames, and mark it
+    /// loaded for the player so a later live Edit in that chunk reaches them. An empty chunk (nobody built
+    /// there) is still marked loaded but sends nothing — its base terrain is procedural, so there is
+    /// nothing to stream. Used by the join seed and the per-tick stream as the player moves.
+    fn load_chunk_for(&mut self, id: PlayerId, chunk: (i32, i32)) {
+        let edits = self.world.edits_in_chunk(chunk.0, chunk.1);
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        if !p.loaded_chunks.insert(chunk) {
+            return;
+        }
+        let conn = p.conn.clone();
+        for batch in edits.chunks(BATCH_CHUNK_SIZE) {
+            conn.send_one(ServerMsg::EditBatch {
+                edits: batch
+                    .iter()
+                    .map(|&(x, y, z, block)| EditCell { x, y, z, id: block })
+                    .collect(),
+                by: 0,
+            });
+        }
+    }
+
+    /// The edit chunks within `LOAD_CHUNK_RADIUS` (Chebyshev) of the column `(x, z)`. The loaded square
+    /// is sized to always cover the AOI reach, so every block a player could see lives in one of these.
+    fn chunks_in_load_radius(x: f32, z: f32) -> Vec<(i32, i32)> {
+        let (cx, cz) = sim::edit_chunk_of(x.floor() as i32, z.floor() as i32);
+        let mut chunks = Vec::new();
+        for dx in -LOAD_CHUNK_RADIUS..=LOAD_CHUNK_RADIUS {
+            for dz in -LOAD_CHUNK_RADIUS..=LOAD_CHUNK_RADIUS {
+                chunks.push((cx + dx, cz + dz));
+            }
+        }
+        chunks
+    }
+
+    /// Stream every edit chunk now within a player's load radius that they have NOT already received,
+    /// sending each chunk's current edits once and marking it loaded. Loaded chunks are never unloaded:
+    /// the edit map is sparse and base terrain is procedural, so re-entry costs nothing and keeping them
+    /// guarantees a player who re-enters never has to re-receive — and never misses an interim edit.
+    fn stream_chunks(&mut self, id: PlayerId) {
+        let Some(p) = self.players.get(&id) else {
+            return;
+        };
+        let new_chunks: Vec<(i32, i32)> = Self::chunks_in_load_radius(p.x, p.z)
+            .into_iter()
+            .filter(|chunk| !p.loaded_chunks.contains(chunk))
+            .collect();
+        for chunk in new_chunks {
+            self.load_chunk_for(id, chunk);
+        }
+    }
+
+    /// Fan a live block Edit out only to the players who have its edit chunk loaded — i.e. who already
+    /// hold that chunk's full state and so can correctly apply the delta. A player without the chunk
+    /// loaded is intentionally NOT sent the live edit: when they later move into the chunk they receive
+    /// its CURRENT state (which already folds this edit in) via the per-tick stream, so they always
+    /// converge to the correct block state regardless of edits made while they were away.
+    fn broadcast_edit_in_chunk(&self, chunk: (i32, i32), msg: &ServerMsg) {
+        let Some(frame) = serialize_frame(msg) else {
+            return;
+        };
+        for p in self.players.values() {
+            if !p.loaded_chunks.contains(&chunk) {
+                continue;
+            }
+            let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
+        }
+    }
+
+    /// Fan a live EditBatch (a placed structure) out per chunk: group its cells by edit chunk and send
+    /// each chunk's cells only to the players who have THAT chunk loaded. A structure may straddle a
+    /// chunk boundary, so a player holding one of its chunks but not the other gets exactly the cells in
+    /// the chunk they hold; the rest reach them via the stream when they enter the other chunk.
+    fn broadcast_edit_batch_by_chunk(&self, edits: &[EditCell], by: PlayerId) {
+        let mut by_chunk: HashMap<(i32, i32), Vec<EditCell>> = HashMap::new();
+        for &cell in edits {
+            by_chunk
+                .entry(sim::edit_chunk_of(cell.x, cell.z))
+                .or_default()
+                .push(cell);
+        }
+        for (chunk, cells) in by_chunk {
+            self.broadcast_edit_in_chunk(chunk, &ServerMsg::EditBatch { edits: cells, by });
         }
     }
 
@@ -2632,13 +2740,17 @@ impl Room {
         let removed = self.world.get(x, y, z);
         self.world.set(x, y, z, sim::AIR);
         self.dirty = true;
-        self.broadcast(&ServerMsg::Edit {
-            x,
-            y,
-            z,
-            id: sim::AIR,
-            by: id,
-        });
+        // AOI-filtered: only players who have this block's chunk loaded get the live break.
+        self.broadcast_edit_in_chunk(
+            sim::edit_chunk_of(x, z),
+            &ServerMsg::Edit {
+                x,
+                y,
+                z,
+                id: sim::AIR,
+                by: id,
+            },
+        );
         // Banking the dug block to the digger's inventory is the authoritative break path (the client
         // sends Dig, not Edit::Break, for in-world digging).
         if removed != sim::AIR {
@@ -3171,6 +3283,9 @@ mod tests {
             move_synced: false,
             hp: MAX_HP,
             hurt_at: now,
+            // Seed the loaded set the way a real join does (the chunks around the player's spawn column),
+            // so a test player at the origin already holds chunk (0,0) and receives live edits there.
+            loaded_chunks: Room::chunks_in_load_radius(0.0, 0.0).into_iter().collect(),
             dig_block: None,
             dig_hits: 0,
             last_action: now - ATTACK_MIN_INTERVAL,
@@ -3777,6 +3892,185 @@ mod tests {
 
         assert!(received_swing(&mut a_rx), "A near the actor sees the swing");
         assert!(!received_swing(&mut b_rx), "B 50000 away does not");
+    }
+
+    /// Every edit cell a connection received across all EditBatch/Edit frames it got, as a flat set —
+    /// the chunk-streaming tests assert on which built blocks reached a player.
+    fn received_edits(rx: &mut mpsc::Receiver<Outbound>) -> Vec<(i32, i32, i32, u8)> {
+        let mut out = Vec::new();
+        while let Ok(msg) = rx.try_recv_msg() {
+            match msg {
+                ServerMsg::EditBatch { edits, .. } => {
+                    out.extend(edits.into_iter().map(|c| (c.x, c.y, c.z, c.id)))
+                }
+                ServerMsg::Edit { x, y, z, id, .. } => out.push((x, y, z, id)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Insert a player WITHOUT seeding any loaded chunks (a fresh slot the join stream will populate), at
+    /// the given position. Used by the streaming tests so they exercise `stream_chunks` from empty.
+    fn add_unloaded_player_at(
+        room: &mut Room,
+        id: PlayerId,
+        x: f32,
+        z: f32,
+    ) -> mpsc::Receiver<Outbound> {
+        let rx = add_player(room, id, false);
+        let p = room.players.get_mut(&id).unwrap();
+        p.x = x;
+        p.z = z;
+        p.loaded_chunks.clear();
+        rx
+    }
+
+    #[tokio::test]
+    async fn stream_chunks_sends_only_near_chunks_not_the_whole_world() {
+        let mut room = test_room().await;
+        // A far structure outside the player's load radius, and a near one inside it.
+        let near = (50, 8, 60, sim::STONE);
+        let far_x = sim::EDIT_CHUNK_SIZE * (LOAD_CHUNK_RADIUS + 3);
+        let far = (far_x, 8, 0, sim::GOLD);
+        room.world.set(near.0, near.1, near.2, near.3);
+        room.world.set(far.0, far.1, far.2, far.3);
+
+        let mut rx = add_unloaded_player_at(&mut room, 1, 64.0, 64.0);
+        room.stream_chunks(1);
+
+        let got = received_edits(&mut rx);
+        assert!(
+            got.contains(&near),
+            "the near structure is streamed on join"
+        );
+        assert!(
+            !got.contains(&far),
+            "a structure beyond the load radius is NOT streamed"
+        );
+    }
+
+    #[tokio::test]
+    async fn moving_into_a_new_chunk_streams_it_once_and_marks_it_loaded() {
+        let mut room = test_room().await;
+        // A built block far enough that the origin player does not initially load its chunk.
+        let far_x = sim::EDIT_CHUNK_SIZE * (LOAD_CHUNK_RADIUS + 2);
+        let built = (far_x, 8, 0, sim::WOOD);
+        room.world.set(built.0, built.1, built.2, built.3);
+
+        let mut rx = add_unloaded_player_at(&mut room, 1, 0.0, 0.0);
+        room.stream_chunks(1);
+        assert!(
+            !received_edits(&mut rx).contains(&built),
+            "the far chunk is not loaded from the origin"
+        );
+
+        // Walk next to the built block; its chunk now enters the load radius and is streamed once.
+        room.players.get_mut(&1).unwrap().x = far_x as f32;
+        room.stream_chunks(1);
+        assert!(
+            received_edits(&mut rx).contains(&built),
+            "entering the chunk streams its edits"
+        );
+        let chunk = sim::edit_chunk_of(far_x, 0);
+        assert!(
+            room.players.get(&1).unwrap().loaded_chunks.contains(&chunk),
+            "the entered chunk is marked loaded"
+        );
+
+        // Staying in the chunk does not re-send it.
+        room.stream_chunks(1);
+        assert!(
+            received_edits(&mut rx).is_empty(),
+            "an already-loaded chunk is never re-streamed while staying in it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_live_edit_reaches_an_in_range_player_and_not_a_far_one() {
+        let mut room = test_room().await;
+        // Near player loads the edit's chunk on join; far player is many chunks away.
+        let mut near_rx = add_unloaded_player_at(&mut room, 1, 10.0, 10.0);
+        let far_x = sim::EDIT_CHUNK_SIZE as f32 * (LOAD_CHUNK_RADIUS + 5) as f32;
+        let mut far_rx = add_unloaded_player_at(&mut room, 2, far_x, 0.0);
+        room.stream_chunks(1);
+        room.stream_chunks(2);
+        let _ = received_edits(&mut near_rx);
+        let _ = received_edits(&mut far_rx);
+
+        // A third player places a block in the near player's chunk (id 3 at the same spot, infinite).
+        let mut placer_rx = add_unloaded_player_at(&mut room, 3, 11.0, 10.0);
+        room.stream_chunks(3);
+        let _ = received_edits(&mut placer_rx);
+        room.players.get_mut(&3).unwrap().y = 12.0;
+        room.on_input(
+            3,
+            ClientMsg::Edit {
+                op: EditOp::Place,
+                x: 11,
+                y: 12,
+                z: 10,
+                id: sim::STONE,
+            },
+        );
+
+        assert!(
+            received_edits(&mut near_rx).contains(&(11, 12, 10, sim::STONE)),
+            "the in-range player receives the live edit"
+        );
+        assert!(
+            !received_edits(&mut far_rx).contains(&(11, 12, 10, sim::STONE)),
+            "the far player does NOT receive the live edit"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_far_player_who_enters_a_chunk_edited_while_away_ends_with_the_correct_state() {
+        // The CONSISTENCY INVARIANT: a player who was nowhere near an edit, made while they were out of
+        // range, still ends up with the correct current block state when they later move into the chunk.
+        let mut room = test_room().await;
+        let mut away_rx = add_unloaded_player_at(&mut room, 1, 0.0, 0.0);
+        let edit_x = sim::EDIT_CHUNK_SIZE * (LOAD_CHUNK_RADIUS + 4);
+        let chunk = sim::edit_chunk_of(edit_x, 0);
+        room.stream_chunks(1);
+        let _ = received_edits(&mut away_rx);
+        assert!(
+            !room.players.get(&1).unwrap().loaded_chunks.contains(&chunk),
+            "the chunk starts unloaded for the away player"
+        );
+
+        // Someone edits that far chunk while player 1 is away (player 1 is NOT sent the live edit).
+        let mut editor_rx = add_unloaded_player_at(&mut room, 2, edit_x as f32, 0.0);
+        room.stream_chunks(2);
+        let _ = received_edits(&mut editor_rx);
+        room.players.get_mut(&2).unwrap().y = 12.0;
+        room.on_input(
+            2,
+            ClientMsg::Edit {
+                op: EditOp::Place,
+                x: edit_x,
+                y: 12,
+                z: 0,
+                id: sim::GOLD,
+            },
+        );
+        assert!(
+            !received_edits(&mut away_rx).contains(&(edit_x, 12, 0, sim::GOLD)),
+            "the away player did not get the live edit (its chunk was unloaded)"
+        );
+
+        // Player 1 now walks into that chunk: the stream hands them its CURRENT state, edit included.
+        room.players.get_mut(&1).unwrap().x = edit_x as f32;
+        room.stream_chunks(1);
+        assert!(
+            received_edits(&mut away_rx).contains(&(edit_x, 12, 0, sim::GOLD)),
+            "entering the chunk delivers the edit made while away"
+        );
+        assert_eq!(
+            room.world.get(edit_x, 12, 0),
+            sim::GOLD,
+            "the authoritative world holds the edit, and the player now mirrors it"
+        );
     }
 
     #[tokio::test]
@@ -4675,6 +4969,9 @@ mod tests {
         let p = room.players.get_mut(&id).unwrap();
         p.x = x;
         p.z = z;
+        // Reseed the loaded set to the actual position so a spread-out player holds its own chunks, not
+        // the origin's (the edit-broadcast tests rely on a far player NOT having a near chunk loaded).
+        p.loaded_chunks = Room::chunks_in_load_radius(x, z).into_iter().collect();
         rx
     }
 

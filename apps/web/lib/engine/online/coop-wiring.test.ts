@@ -45,6 +45,28 @@ describe('createCoopWiring applyRemoteEdit', () => {
   });
 });
 
+describe('createCoopWiring applyRemoteEditBatch (streamed chunk load)', () => {
+  it("applies every cell of a streamed chunk and remeshes the region it spans, so a moved-into chunk's built structures appear", () => {
+    const { runtime } = makeEditRuntime();
+    // A chunk arrives incrementally as the player moves into it (the server streams it as one EditBatch).
+    runtime.applyRemoteEditBatch([
+      { x: 130, y: 8, z: 20, id: 3 },
+      { x: 140, y: 9, z: 35, id: 8 },
+    ]);
+    expect(runtime.setVoxel).toHaveBeenCalledWith(130, 8, 20, 3);
+    expect(runtime.setVoxel).toHaveBeenCalledWith(140, 9, 35, 8);
+    // The remesh covers the cells' x/z bounds with a one-block margin (so neighbouring faces re-light).
+    expect(runtime.remeshRegion).toHaveBeenCalledWith(129, 141, 19, 36);
+  });
+
+  it('ignores an empty streamed chunk (a chunk nobody built in carries no cells)', () => {
+    const { runtime } = makeEditRuntime();
+    runtime.applyRemoteEditBatch([]);
+    expect(runtime.setVoxel).not.toHaveBeenCalled();
+    expect(runtime.remeshRegion).not.toHaveBeenCalled();
+  });
+});
+
 function makeRuntime({ online, chatEnabled }: { online: boolean; chatEnabled: boolean }) {
   const onChat = vi.fn();
   const bind = vi.fn();
