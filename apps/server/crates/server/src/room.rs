@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -108,17 +108,62 @@ pub enum Outbound {
     Binary(Arc<[u8]>),
 }
 
-/// Send one per-player message to a connection, dropping it if the channel is full or closed (a slow
-/// client never stalls the room tick). Mirrors the old `let _ = conn.try_send(msg)` at every call site.
+/// The room's view of a connection's outbound channel, abstracted away from tokio so the game logic
+/// no longer depends on `mpsc` directly (a future WASM core backs this with a JS-bound queue instead).
+/// `send` is non-blocking — it drops the message if the channel is full or closed, so a slow client
+/// never stalls the room tick (mirroring the old `let _ = conn.try_send(..)` at every call site). `id`
+/// is a unique per-connection identity used by the reconnect-grace to tell a player's CURRENT socket
+/// apart from a stale one it already reconnected over (replacing the old `same_channel`).
+pub trait OutboundSink {
+    fn send(&self, msg: Outbound);
+    fn id(&self) -> u64;
+}
+
+/// Convenience for the per-player `One` sends (welcome, inventory, error, …), so those call sites read
+/// the same as before the trait extraction.
 trait SendOne {
     fn send_one(&self, msg: ServerMsg);
 }
 
-impl SendOne for mpsc::Sender<Outbound> {
+impl SendOne for dyn OutboundSink + Send + Sync {
     fn send_one(&self, msg: ServerMsg) {
-        let _ = self.try_send(Outbound::One(msg));
+        self.send(Outbound::One(msg));
     }
 }
+
+/// Process-global source of unique connection ids, so two distinct sinks never share an identity (and a
+/// clone of the SAME sink keeps it, which is what makes the reconnect-grace identity check work).
+static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
+
+/// The native (tokio-backed) `OutboundSink`: a real `mpsc::Sender<Outbound>` plus a unique id. The
+/// future WASM build provides its own impl over a JS-bound queue; the room only ever sees the trait.
+pub struct NativeSink {
+    tx: mpsc::Sender<Outbound>,
+    id: u64,
+}
+
+impl NativeSink {
+    pub fn new(tx: mpsc::Sender<Outbound>) -> Self {
+        Self {
+            tx,
+            id: NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+}
+
+impl OutboundSink for NativeSink {
+    fn send(&self, msg: Outbound) {
+        let _ = self.tx.try_send(msg);
+    }
+    fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+/// A player's outbound channel as the room holds it: a shared trait object so a resume can clone/swap it
+/// like the old `mpsc::Sender`. `Arc` so the same connection can sit in `Player.conn`, be cloned into an
+/// admin-broadcast list, and back the `Leave` identity check — all without re-wrapping.
+pub type Conn = Arc<dyn OutboundSink + Send + Sync>;
 
 pub enum RoomCmd {
     Join {
@@ -126,7 +171,7 @@ pub enum RoomCmd {
         claim: String,
         look: Appearance,
         ip: IpAddr,
-        conn: mpsc::Sender<Outbound>,
+        conn: Conn,
         /// The connection task's already-measured latency. The room reads it straight into the snapshot;
         /// ping is owned by the socket round-trip (see `conn.rs`), never the room's tick load.
         ping: Arc<AtomicU32>,
@@ -139,9 +184,9 @@ pub enum RoomCmd {
     Leave {
         id: PlayerId,
         /// The departing socket's outbound channel, so the room can prove this Leave belongs to the
-        /// player's CURRENT connection (`same_channel`) and ignore a stale one from a socket already
+        /// player's CURRENT connection (by sink id) and ignore a stale one from a socket already
         /// replaced by a reconnect — without it, a late Leave would freeze a live, resumed player.
-        conn: mpsc::Sender<Outbound>,
+        conn: Conn,
         /// True when the client closed cleanly (a WebSocket Close frame — page reload / leave). A clean
         /// leave removes the player at once; an abrupt drop (no Close frame) holds the slot for reconnect.
         clean: bool,
@@ -210,7 +255,7 @@ struct Player {
     // PvP kills landed by this player (a hit that brought another player to 0 hp). Carried in the
     // Roster so the presence list can rank players when pvp is on; never affects the leaderboard.
     pvp_kills: u32,
-    conn: mpsc::Sender<Outbound>,
+    conn: Conn,
     // True until this connection has received a full keyframe it can build deltas on. Set when the player
     // joins or resumes (a new socket has no baseline), so the next snapshot it gets is a KEYFRAME, not a
     // delta against state it never saw; cleared once that keyframe is sent.
@@ -506,7 +551,7 @@ impl Room {
         claim: String,
         look: Appearance,
         ip: IpAddr,
-        conn: mpsc::Sender<Outbound>,
+        conn: Conn,
         ping: Arc<AtomicU32>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
@@ -587,7 +632,7 @@ impl Room {
         claim: String,
         look: Appearance,
         ip: IpAddr,
-        conn: mpsc::Sender<Outbound>,
+        conn: Conn,
         ping: Arc<AtomicU32>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
@@ -836,12 +881,12 @@ impl Room {
     /// A socket dropped: instead of removing the player and blinking them out for everyone, freeze their
     /// slot (avatar held in place) and start the reconnect grace, so a quick rejoin RESUMES them. The
     /// tick prunes the slot (with a single `Left`) only if the grace expires. Ignores a stale Leave from
-    /// a socket the player has already reconnected over (`same_channel` no longer matches the live conn).
-    fn on_leave(&mut self, now: Instant, id: PlayerId, conn: &mpsc::Sender<Outbound>, clean: bool) {
+    /// a socket the player has already reconnected over (the sink id no longer matches the live conn).
+    fn on_leave(&mut self, now: Instant, id: PlayerId, conn: &Conn, clean: bool) {
         let Some(player) = self.players.get(&id) else {
             return;
         };
-        if !player.conn.same_channel(conn) {
+        if player.conn.id() != conn.id() {
             return;
         }
         if player.disconnected_at.is_some() {
@@ -877,7 +922,7 @@ impl Room {
         account_id: &str,
         ip: IpAddr,
         look: &Appearance,
-        conn: &mpsc::Sender<Outbound>,
+        conn: &Conn,
         ping: &Arc<AtomicU32>,
     ) -> Option<PlayerId> {
         let id = self.players.values().find_map(|p| {
@@ -1733,7 +1778,7 @@ impl Room {
             },
         });
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
+        let admin_conns: Vec<Conn> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1862,7 +1907,7 @@ impl Room {
             detail: format!("approve|{account_id}"),
         });
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
+        let admin_conns: Vec<Conn> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1897,7 +1942,7 @@ impl Room {
             detail: format!("reject|{account_id}"),
         });
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
+        let admin_conns: Vec<Conn> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -1946,7 +1991,7 @@ impl Room {
         });
         self.broadcast_bans_to_admins();
         let tenant = self.key.0.clone();
-        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
+        let admin_conns: Vec<Conn> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -2010,7 +2055,7 @@ impl Room {
 
     /// Push the current pending-approval list to every online admin (no-op if none are online).
     async fn broadcast_pending_to_admins(&self) {
-        let admin_conns: Vec<mpsc::Sender<Outbound>> = self
+        let admin_conns: Vec<Conn> = self
             .players
             .values()
             .filter(|p| p.is_admin)
@@ -2374,13 +2419,13 @@ impl Room {
     /// frame is shared (an `Arc<str>`) across all connections, so the hot per-tick snapshot is encoded a
     /// single time for the whole room instead of once per writer task — the dominant cost as the
     /// creature + player counts grow. A serialization error drops the frame (it never happens for our
-    /// wire types). `try_send` is non-blocking, so a slow client's full channel never stalls the tick.
+    /// wire types). The sink's `send` is non-blocking, so a slow client's full channel never stalls the tick.
     fn broadcast(&self, msg: &ServerMsg) {
         let Some(frame) = serialize_frame(msg) else {
             return;
         };
         for p in self.players.values() {
-            let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
+            p.conn.send(Outbound::Frame(frame.clone()));
         }
     }
 
@@ -2391,7 +2436,7 @@ impl Room {
     /// periodic keyframe tick) gets a keyframe of ITS view; otherwise a delta against ITS OWN stored
     /// baseline. Single-serialize across players is intentionally traded away — every player's content
     /// differs under AOI — so this is one small encode per connection (≤ a handful of players →
-    /// microseconds). `try_send` stays non-blocking, so a slow client never stalls the tick.
+    /// microseconds). The sink's `send` stays non-blocking, so a slow client never stalls the tick.
     fn broadcast_snapshot(
         &mut self,
         tick: u64,
@@ -2409,7 +2454,7 @@ impl Room {
         // pre-bind the shared read-only data into `&` locals (so the parallel closure borrows them, with no
         // `&self`/`&mut self.players` aliasing), then `par_iter_mut` over the players. The output bytes +
         // baseline updates are byte-identical to a sequential run — parallelism only reorders the
-        // independent work, never the result. `try_send` stays non-blocking, so a slow client never stalls.
+        // independent work, never the result. The sink's `send` stays non-blocking, so a slow client never stalls.
         let (grids, players, creatures, hearts) = (&grids, players, creatures, hearts);
         self.players.par_iter_mut().for_each(|(&id, receiver)| {
             let center = receiver_center(id, players);
@@ -2445,7 +2490,7 @@ impl Room {
                 .into()
             };
 
-            let _ = receiver.conn.try_send(Outbound::Binary(bytes));
+            receiver.conn.send(Outbound::Binary(bytes));
             receiver.needs_keyframe = false;
             receiver.snapshot_baseline = SnapshotBaseline {
                 tick,
@@ -2472,7 +2517,7 @@ impl Room {
             if !crate::aoi::in_view((center_x, center_z), (p.x, p.z), false) {
                 continue;
             }
-            let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
+            p.conn.send(Outbound::Frame(frame.clone()));
         }
     }
 
@@ -2543,7 +2588,7 @@ impl Room {
             if !p.loaded_chunks.contains(&chunk) {
                 continue;
             }
-            let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
+            p.conn.send(Outbound::Frame(frame.clone()));
         }
     }
 
@@ -3220,7 +3265,7 @@ fn playtime_key(account_id: &str, ip: IpAddr) -> String {
 }
 
 /// Load the tenant's pending-approval list and send it to each given (admin) connection.
-async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<Outbound>]) {
+async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[Conn]) {
     if conns.is_empty() {
         return;
     }
@@ -3309,9 +3354,16 @@ mod tests {
         }
     }
 
+    /// A native sink over a fresh channel, returning the sink the room holds plus the backing receiver the
+    /// test reads off — the test-side mirror of `conn.rs` wiring a real socket to a `NativeSink`.
+    fn test_conn() -> (Conn, mpsc::Receiver<Outbound>) {
+        let (tx, rx) = mpsc::channel::<Outbound>(64);
+        (Arc::new(NativeSink::new(tx)), rx)
+    }
+
     /// Insert a minimal player into the room and return the channel that captures messages sent to it.
     fn add_player(room: &mut Room, id: PlayerId, is_admin: bool) -> mpsc::Receiver<Outbound> {
-        let (conn, conn_rx) = mpsc::channel::<Outbound>(64);
+        let (conn, conn_rx) = test_conn();
         let now = Instant::now();
         let player = Player {
             id,
@@ -5599,7 +5651,7 @@ mod tests {
     #[tokio::test]
     async fn guest_joins_without_a_claim_and_gets_a_unique_name() {
         let mut room = test_room().await;
-        let (conn, _conn_rx) = mpsc::channel::<Outbound>(64);
+        let (conn, _conn_rx) = test_conn();
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -5634,7 +5686,7 @@ mod tests {
         name: &str,
         role: Role,
     ) -> (Result<PlayerId, String>, mpsc::Receiver<Outbound>) {
-        let (conn, conn_rx) = mpsc::channel::<Outbound>(64);
+        let (conn, conn_rx) = test_conn();
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -5886,7 +5938,7 @@ mod tests {
         );
 
         // The banned address is now turned away at the join gate (the same check the connect path runs).
-        let (conn, _conn_rx) = mpsc::channel::<Outbound>(64);
+        let (conn, _conn_rx) = test_conn();
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -6013,7 +6065,7 @@ mod tests {
         role: Role,
         ip: &str,
     ) -> (Result<PlayerId, String>, mpsc::Receiver<Outbound>) {
-        let (conn, conn_rx) = mpsc::channel::<Outbound>(64);
+        let (conn, conn_rx) = test_conn();
         let (reply, reply_rx) = oneshot::channel();
         let look = Appearance {
             skin: "#fff".into(),
@@ -6265,14 +6317,24 @@ mod tests {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 2, false);
         // Swap in a fresh connection (as a resume would), then deliver the OLD socket's late Leave.
-        let (stale_conn, _stale_rx) = mpsc::channel::<Outbound>(64);
-        let (live_conn, _live_rx) = mpsc::channel::<Outbound>(64);
+        let (stale_conn, _stale_rx) = test_conn();
+        let (live_conn, _live_rx) = test_conn();
         room.players.get_mut(&2).unwrap().conn = live_conn;
         room.on_leave(Instant::now(), 2, &stale_conn, false);
         assert!(
             room.players.get(&2).unwrap().disconnected_at.is_none(),
             "a Leave from a replaced socket never freezes the live slot"
         );
+    }
+
+    #[test]
+    fn distinct_sinks_get_distinct_ids_and_a_clone_keeps_its_id() {
+        let (a, _a_rx) = test_conn();
+        let (b, _b_rx) = test_conn();
+        assert_ne!(a.id(), b.id(), "two distinct sinks never share an identity");
+        // A clone is the SAME connection (what a resume swaps into the slot), so the id is preserved —
+        // this is exactly what lets the reconnect-grace match a player's CURRENT socket.
+        assert_eq!(a.clone().id(), a.id(), "cloning a sink keeps its id");
     }
 
     #[tokio::test]
@@ -6842,7 +6904,7 @@ mod tests {
                 .into()
             };
             let receiver = room.players.get_mut(&id).unwrap();
-            let _ = receiver.conn.try_send(Outbound::Binary(bytes));
+            receiver.conn.send(Outbound::Binary(bytes));
             receiver.needs_keyframe = false;
             receiver.snapshot_baseline = SnapshotBaseline {
                 tick,

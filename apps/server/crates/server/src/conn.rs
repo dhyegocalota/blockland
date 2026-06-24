@@ -12,7 +12,7 @@ use protocol::{ClientMsg, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::hub::Hub;
-use crate::room::{Appearance, Outbound, RoomCmd};
+use crate::room::{Appearance, Conn, NativeSink, Outbound, RoomCmd};
 
 // Large enough for a chunked EditBatch (the client caps each batch to BATCH_CHUNK cells).
 const MAX_TEXT_BYTES: usize = 32 * 1024;
@@ -114,9 +114,12 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     };
 
     let (conn_tx, mut conn_rx) = mpsc::channel::<Outbound>(256);
-    // Kept so the Leave below can prove it is THIS connection going away (via `same_channel`): a slow,
-    // stale Leave from a socket the player already reconnected over must never freeze the live slot.
-    let leave_conn = conn_tx.clone();
+    // The room sees the channel only through the `OutboundSink` trait (no tokio dependency in the game
+    // logic). The native sink carries a unique connection id; the same `Arc` backs both `Join` and the
+    // `Leave` below, so the room's identity check proves it is THIS connection going away (via the sink
+    // id): a slow, stale Leave from a socket the player already reconnected over never freezes the live slot.
+    let conn: Conn = Arc::new(NativeSink::new(conn_tx));
+    let leave_conn = conn.clone();
     // Per-connection latency, measured by this task's own heartbeat (below) and read by the room into the
     // snapshot. Owning it here keeps ping a property of the SOCKET round-trip, never the room's tick load.
     let ping_ms = Arc::new(AtomicU32::new(0));
@@ -128,7 +131,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
             claim,
             look: Appearance { skin, shirt, hair },
             ip,
-            conn: conn_tx,
+            conn,
             ping: ping_ms.clone(),
             reply: reply_tx,
         })
