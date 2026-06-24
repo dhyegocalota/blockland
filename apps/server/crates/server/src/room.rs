@@ -810,8 +810,7 @@ impl Room {
         self.send_inventory(id);
         // Everyone gets the refreshed identity roster so the new player's avatar can render at once
         // (the per-tick Snapshot is slim and carries no names/colors).
-        let roster = self.roster_msg();
-        self.broadcast(&roster);
+        self.announce_roster();
         self.empty_since = None;
         let _ = reply.send(Ok(id));
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player joined");
@@ -837,6 +836,7 @@ impl Room {
         if clean {
             self.players.remove(&id);
             self.broadcast(&ServerMsg::Left { id });
+            self.announce_roster();
             tracing::debug!(tenant = %self.key.0, %id, "player left cleanly, removed immediately");
             return;
         }
@@ -844,6 +844,7 @@ impl Room {
             .get_mut(&id)
             .expect("player present")
             .disconnected_at = Some(Instant::now());
+        self.announce_roster();
         tracing::debug!(tenant = %self.key.0, %id, "player dropped, holding slot for reconnect");
     }
 
@@ -909,8 +910,7 @@ impl Room {
         self.stream_chunks(id);
         conn.send_one(self.room_state());
         self.send_inventory(id);
-        let roster = self.roster_msg();
-        self.broadcast(&roster);
+        self.announce_roster();
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player resumed");
         Some(id)
     }
@@ -928,6 +928,7 @@ impl Room {
             name: new_name.to_string(),
             detail: old_name.to_string(),
         });
+        self.announce_roster();
         tracing::info!(tenant = %self.key.0, %new_name, %old_name, "player renamed");
     }
 
@@ -1458,6 +1459,7 @@ impl Room {
         }
         self.players.remove(&target_id);
         self.broadcast(&ServerMsg::Left { id: target_id });
+        self.announce_roster();
         self.broadcast(&ServerMsg::Event {
             kind: "admin".into(),
             name: admin_name,
@@ -1539,6 +1541,8 @@ impl Room {
             p.score = 0;
             p.pvp_kills = 0;
         }
+        // The wiped pvp-kill count rides the roster, so push the refreshed roster now.
+        self.announce_roster();
         let db = self.hub.db.clone();
         let tenant = self.key.0.clone();
         tokio::spawn(async move {
@@ -1584,6 +1588,7 @@ impl Room {
                 }
                 self.broadcast(&ServerMsg::Left { id: pid });
             }
+            self.announce_roster();
         }
         tracing::info!(tenant = %self.key.0, %id, on, "world suspension set by admin");
     }
@@ -1630,9 +1635,8 @@ impl Room {
             name: actor_name,
             detail: format!("{role_word}|{target_name}"),
         });
-        // Reflect the new badge for everyone immediately rather than waiting for the next roster sweep.
-        let roster = self.roster_msg();
-        self.broadcast(&roster);
+        // Reflect the new badge for everyone immediately.
+        self.announce_roster();
         // A guest's promotion is session-only (no account to persist to); registered players keep it.
         if !target_account.is_empty() {
             let db = self.hub.db.clone();
@@ -2051,10 +2055,16 @@ impl Room {
             },
         );
         if died {
+            let mut scored = false;
             if let Some(attacker) = self.players.get_mut(&attacker_id) {
                 attacker.pvp_kills = attacker.pvp_kills.saturating_add(1);
+                scored = true;
             }
             self.respawn(target_id);
+            // The bumped pvp-kill count rides the roster, so refresh it for everyone.
+            if scored {
+                self.announce_roster();
+            }
         }
         tracing::debug!(tenant = %self.key.0, %attacker_id, %target_id, "pvp hit");
     }
@@ -2075,8 +2085,9 @@ impl Room {
         });
     }
 
-    /// The static identity of every online player, so the per-tick Snapshot can stay slim. Broadcast on
-    /// join and on the periodic sweep (not every tick).
+    /// The static identity of every online player, so the per-tick Snapshot can stay slim. Broadcast
+    /// only when the roster MATERIALLY changes (join/leave/rename/role/pvp-kill/away-toggle), never on
+    /// a periodic cadence — a 1000-player roster re-sent twice a second was the dominant bandwidth.
     fn roster_msg(&self) -> ServerMsg {
         ServerMsg::Roster {
             players: self
@@ -2095,6 +2106,12 @@ impl Room {
                 })
                 .collect(),
         }
+    }
+
+    /// Push the current roster to everyone. Call this at every roster-affecting transition (the cadence
+    /// is event-driven now, not periodic), and at most once per handler to avoid duplicate frames.
+    fn announce_roster(&self) {
+        self.broadcast(&self.roster_msg());
     }
 
     /// Snapshot the room-wide settings as the wire message broadcast on change and sent on join.
@@ -2126,6 +2143,9 @@ impl Room {
         // The ban/reclaim/idle sweep (DashMap lookups per player) runs at ~2Hz, not every tick.
         let now = Instant::now();
         if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
+            // Any removal below (prune/kick/time-up) is a roster change; announce once after the sweep so
+            // a single tick that drops several players still emits exactly one refreshed roster.
+            let mut roster_changed = false;
             // Prune slots whose reconnect grace expired: the player never came back, so remove them and
             // broadcast a single `Left` now (the only point the avatar blinks out for everyone else).
             let expired: Vec<PlayerId> = self
@@ -2138,6 +2158,7 @@ impl Room {
             for id in expired {
                 self.players.remove(&id);
                 self.broadcast(&ServerMsg::Left { id });
+                roster_changed = true;
                 tracing::debug!(tenant = %self.key.0, %id, "reconnect grace expired, pruned");
             }
 
@@ -2184,6 +2205,7 @@ impl Room {
             for id in kicked {
                 self.players.remove(&id);
                 self.broadcast(&ServerMsg::Left { id });
+                roster_changed = true;
             }
 
             // Play-time accounting: flush each player's session delta to the db (keyed by account or
@@ -2222,7 +2244,12 @@ impl Room {
                         });
                     }
                     self.broadcast(&ServerMsg::Left { id });
+                    roster_changed = true;
                 }
+            }
+
+            if roster_changed {
+                self.announce_roster();
             }
         }
 
@@ -2292,14 +2319,10 @@ impl Room {
             .collect();
         self.broadcast_snapshot(self.tick, &states, &creatures, &hearts);
 
+        // The roster is no longer re-sent here on a cadence; it's broadcast event-driven at each
+        // roster-affecting transition (join/leave/rename/role/pvp-kill/away-toggle). Stats stay periodic.
         if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
             self.publish_stats(now);
-            // Refresh the identity roster so late joiners + renames reach everyone within the sweep
-            // cadence; the per-tick Snapshot stays slim.
-            if !self.players.is_empty() {
-                let roster = self.roster_msg();
-                self.broadcast(&roster);
-            }
         }
 
         // Persist the world diff at most every PERSIST_SECS, and only when it changed.
@@ -5943,6 +5966,170 @@ mod tests {
     fn saw_left(rx: &mut mpsc::Receiver<Outbound>, target: PlayerId) -> bool {
         std::iter::from_fn(|| rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Left { id } if id == target))
+    }
+
+    /// Drain a connection's queued frames as decoded rosters, skipping the binary snapshot frames a tick
+    /// fans out (those carry no roster). The roster is event-driven now, so a peer only sees one when a
+    /// roster-affecting transition fired.
+    fn drain_rosters(rx: &mut mpsc::Receiver<Outbound>) -> Vec<Vec<PlayerMeta>> {
+        let mut out = Vec::new();
+        while let Ok(frame) = rx.try_recv() {
+            if matches!(frame, Outbound::Binary(_)) {
+                continue;
+            }
+            if let ServerMsg::Roster { players } = unwrap_msg(frame) {
+                out.push(players);
+            }
+        }
+        out
+    }
+
+    /// The LAST roster a connection received, if any.
+    fn last_roster(rx: &mut mpsc::Receiver<Outbound>) -> Option<Vec<PlayerMeta>> {
+        drain_rosters(rx).pop()
+    }
+
+    /// Count the roster frames a connection received (for the quiet-tick assertion).
+    fn count_rosters(rx: &mut mpsc::Receiver<Outbound>) -> usize {
+        drain_rosters(rx).len()
+    }
+
+    #[tokio::test]
+    async fn a_leave_broadcasts_an_updated_roster_with_one_fewer_player() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _leaver_rx = add_player(&mut room, 2, false);
+        let conn2 = room.players.get(&2).unwrap().conn.clone();
+        room.on_leave(2, &conn2, true);
+        let roster = last_roster(&mut peer_rx).expect("a leave refreshes the roster");
+        assert_eq!(roster.len(), 1, "the roster drops the player who left");
+        assert!(roster.iter().all(|p| p.id != 2), "the leaver is gone");
+    }
+
+    #[tokio::test]
+    async fn a_drop_then_resume_each_broadcast_an_away_toggled_roster() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _dropped_rx = add_player(&mut room, 2, false);
+        let conn2 = room.players.get(&2).unwrap().conn.clone();
+        // An abrupt drop marks the slot away=true and refreshes the roster (no Left during grace).
+        room.on_leave(2, &conn2, false);
+        let away = last_roster(&mut peer_rx).expect("a drop refreshes the roster");
+        assert!(
+            away.iter().find(|p| p.id == 2).unwrap().away,
+            "the dropped player shows away in the roster",
+        );
+        // A reconnect resumes the held slot and refreshes the roster with away=false again.
+        let (resumed, _r2) =
+            admit_from_ip(&mut room, "acc2", "p2", Role::Player, "127.0.0.1").await;
+        assert_eq!(resumed, Ok(2), "the slot resumes");
+        let back = last_roster(&mut peer_rx).expect("a resume refreshes the roster");
+        assert!(
+            !back.iter().find(|p| p.id == 2).unwrap().away,
+            "the resumed player is no longer away",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rename_broadcasts_an_updated_roster() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _renamed_rx = add_player(&mut room, 2, false);
+        room.on_rename("acc2", "Renamed", "p2");
+        let roster = last_roster(&mut peer_rx).expect("a rename refreshes the roster");
+        assert_eq!(
+            roster.iter().find(|p| p.id == 2).unwrap().name,
+            "Renamed",
+            "the new name rides the roster",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_role_change_broadcasts_an_updated_roster() {
+        let mut room = test_room().await;
+        let mut admin_rx = add_player(&mut room, 1, true);
+        add_player(&mut room, 2, false);
+        room.on_admin_set_role(1, 2, protocol::Role::Moderator);
+        let roster = last_roster(&mut admin_rx).expect("a role change refreshes the roster");
+        assert!(
+            roster.iter().find(|p| p.id == 2).unwrap().moderator,
+            "the promoted player's badge rides the roster",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pvp_kill_broadcasts_an_updated_roster() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        add_player(&mut room, 2, false);
+        room.pvp = true;
+        // Stand the two players together and drain the attacker's hp to one hit from death.
+        room.players.get_mut(&2).unwrap().hp = 1;
+        for id in [1, 2] {
+            let p = room.players.get_mut(&id).unwrap();
+            p.x = 0.0;
+            p.y = 0.0;
+            p.z = 0.0;
+        }
+        let _ = last_roster(&mut peer_rx); // clear the join rosters
+        room.on_attack_player(1, 2);
+        assert_eq!(
+            room.players.get(&1).unwrap().pvp_kills,
+            1,
+            "the kill landed",
+        );
+        let roster = last_roster(&mut peer_rx).expect("a pvp kill refreshes the roster");
+        assert_eq!(
+            roster.iter().find(|p| p.id == 1).unwrap().pvp_kills,
+            1,
+            "the bumped kill count rides the roster",
+        );
+    }
+
+    #[tokio::test]
+    async fn the_roster_is_not_rebroadcast_on_a_quiet_tick() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        add_player(&mut room, 2, false);
+        // Both players hold a live claim so the reclaim-kick sweep leaves them in place: the stretch is
+        // genuinely quiet (no leave/kick), exercising the path that used to re-send the roster.
+        room.hub.claims.set("acc1", "tok1");
+        room.hub.claims.set("acc2", "tok2");
+        // No roster-affecting change happens — just advance many ticks past several STATUS_EVERY_TICKS
+        // boundaries. The roster used to be re-sent every boundary; now a quiet tick emits none.
+        let _ = last_roster(&mut peer_rx); // ignore anything queued before the quiet stretch
+        for _ in 0..(STATUS_EVERY_TICKS * 4 + 3) {
+            room.tick(0.05);
+        }
+        assert!(
+            room.players.contains_key(&1) && room.players.contains_key(&2),
+            "both players stay through the quiet stretch (no leave/kick)",
+        );
+        assert_eq!(
+            count_rosters(&mut peer_rx),
+            0,
+            "a quiet stretch of ticks broadcasts no roster",
+        );
+    }
+
+    #[tokio::test]
+    async fn the_grace_prune_broadcasts_an_updated_roster() {
+        let mut room = test_room().await;
+        let mut peer_rx = add_player(&mut room, 1, false);
+        let _dropped_rx = add_player(&mut room, 2, false);
+        let conn2 = room.players.get(&2).unwrap().conn.clone();
+        room.on_leave(2, &conn2, false);
+        room.players.get_mut(&2).unwrap().disconnected_at =
+            Some(Instant::now() - RECONNECT_GRACE - Duration::from_secs(1));
+        // Keep the observing peer alive through the sweep: register its claim so the reclaim-kick (which
+        // fires for any account whose live claim isn't in the hub) leaves it in place to see the prune.
+        room.hub.claims.set("acc1", "tok1");
+        let _ = last_roster(&mut peer_rx); // clear the drop's roster
+        room.tick = STATUS_EVERY_TICKS - 1;
+        room.tick(0.05);
+        let roster = last_roster(&mut peer_rx).expect("the prune refreshes the roster");
+        assert_eq!(roster.len(), 1, "the pruned player leaves the roster");
+        assert!(roster.iter().all(|p| p.id != 2), "the pruned slot is gone");
     }
 
     #[tokio::test]
