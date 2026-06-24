@@ -23,6 +23,7 @@ use tokio::time::MissedTickBehavior;
 use crate::creatures::{separate_creatures, Creature, CreatureKind};
 use crate::db::Role;
 use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
+use crate::persistence::{DbPersistence, Persistence};
 use crate::spatial_grid::SpatialGrid;
 
 // Bulk edits (magic structures, and the world handed to a joining player) are capped so one player
@@ -349,6 +350,10 @@ pub struct Room {
     // it deterministically so the same seed + inputs reproduce the same spawns. Routing every draw
     // through this owned source — never `rand::thread_rng()` — is what makes the game logic portable.
     rng: StdRng,
+    // The in-game write side-effects (playtime/chat/leaderboard/world flush) behind a fire-and-forget
+    // seam: the native server backs it with the real db, a future WASM/offline core with a no-op. The
+    // game logic calls this instead of touching `self.hub.db` + `tokio::spawn` directly.
+    persistence: Arc<dyn Persistence>,
 }
 
 /// One connection's last-sent snapshot view (its AOI-filtered entities), the baseline its per-tick delta
@@ -427,6 +432,7 @@ impl Room {
         // The saved world is restored asynchronously in run() (a db read can't happen in this sync
         // constructor); start from the procedural base.
         let world_state = World::new();
+        let persistence: Arc<dyn Persistence> = Arc::new(DbPersistence::new(hub.db.clone()));
         Self {
             key: (tcfg.id.clone(), world),
             brand,
@@ -457,6 +463,7 @@ impl Room {
             offline_allowed: true,
             // Native server: seed from OS entropy, so spawns stay effectively random as before.
             rng: StdRng::from_entropy(),
+            persistence,
             hub,
         }
     }
@@ -1342,15 +1349,7 @@ impl Room {
         }
         if let Some(m) = chat_out {
             if let ServerMsg::Chat { name, text, .. } = &m {
-                let db = self.hub.db.clone();
-                let tenant = self.key.0.clone();
-                let name = name.clone();
-                let text = text.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = db.record_chat(&tenant, &name, &text).await {
-                        tracing::error!(error = %e, "failed to persist chat");
-                    }
-                });
+                self.persistence.record_chat(&self.key.0, name, text);
             }
             self.broadcast(&m);
         }
@@ -1610,13 +1609,7 @@ impl Room {
         }
         // The wiped pvp-kill count rides the roster, so push the refreshed roster now.
         self.announce_roster();
-        let db = self.hub.db.clone();
-        let tenant = self.key.0.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.reset_scores(&tenant).await {
-                tracing::error!(error = %e, "reset_scores failed");
-            }
-        });
+        self.persistence.reset_scores(&self.key.0);
     }
 
     /// Suspend or resume the world. Admin-only: suspending persists the flag (so it survives a restart),
@@ -2288,22 +2281,20 @@ impl Room {
                 let window = self.playtime_window_ms;
                 let now_ms = epoch_ms() as i64;
                 let tenant = self.key.0.clone();
+                let persistence = self.persistence.clone();
                 let mut time_up: Vec<PlayerId> = Vec::new();
                 for p in self.players.values_mut() {
                     let session = now_ms - p.joined_at_ms as i64;
                     let delta = session - p.playtime_persisted_ms;
                     if delta > 0 {
                         p.playtime_persisted_ms = session;
-                        let db = self.hub.db.clone();
-                        let tenant = tenant.clone();
-                        let key = p.playtime_key.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) =
-                                db.add_playtime(&tenant, &key, delta, window, now_ms).await
-                            {
-                                tracing::error!(error = %e, "add_playtime failed");
-                            }
-                        });
+                        persistence.accrue_playtime(
+                            &tenant,
+                            &p.playtime_key,
+                            delta,
+                            window,
+                            now_ms,
+                        );
                     }
                     if p.playtime_baseline_ms + session >= limit && !p.is_admin {
                         time_up.push(p.id);
@@ -2936,12 +2927,7 @@ impl Room {
         if account_id.is_empty() {
             return;
         }
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.submit_score(&account_id, new_total as i64).await {
-                tracing::error!(error = %e, "submit_score after kill failed");
-            }
-        });
+        self.persistence.submit_score(&account_id, new_total as i64);
     }
 
     /// Drop a heart pickup at a defeated creature's position, for a damaged player to collect.
@@ -2989,15 +2975,9 @@ impl Room {
             return;
         }
         self.dirty = false;
-        let tenant = self.key.0.clone();
         let blob = sim::encode_edits(&self.world.snapshot());
-        tracing::debug!(tenant = %tenant, edits = self.world.edit_count(), bytes = blob.len(), "world flush");
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.save_world(&tenant, &blob).await {
-                tracing::error!(%tenant, error = %e, "world save failed");
-            }
-        });
+        tracing::debug!(tenant = %self.key.0, edits = self.world.edit_count(), bytes = blob.len(), "world flush");
+        self.persistence.flush_world(&self.key.0, blob);
     }
 
     fn publish_stats(&self, now: Instant) {
@@ -3298,6 +3278,28 @@ mod tests {
     use crate::db::Db;
     use crate::hub::Hub;
     use std::sync::Arc;
+    use std::sync::Mutex;
+
+    /// A `Persistence` that records its `record_chat` calls instead of writing, so a test can prove the
+    /// game logic goes through the seam (rather than touching the db directly).
+    #[derive(Default)]
+    struct RecordingPersistence {
+        chats: Mutex<Vec<(String, String, String)>>,
+    }
+
+    impl Persistence for RecordingPersistence {
+        fn accrue_playtime(&self, _: &str, _: &str, _: i64, _: i64, _: i64) {}
+        fn record_chat(&self, tenant: &str, name: &str, text: &str) {
+            self.chats.lock().unwrap().push((
+                tenant.to_string(),
+                name.to_string(),
+                text.to_string(),
+            ));
+        }
+        fn submit_score(&self, _: &str, _: i64) {}
+        fn reset_scores(&self, _: &str) {}
+        fn flush_world(&self, _: &str, _: Vec<u8>) {}
+    }
 
     #[test]
     fn server_version_prefers_env_then_baked_sha_then_crate() {
@@ -4561,6 +4563,28 @@ mod tests {
             .filter(|m| matches!(m, ServerMsg::Chat { .. }))
             .collect();
         assert_eq!(chats.len(), 1, "a clean message must be broadcast");
+    }
+
+    #[tokio::test]
+    async fn clean_chat_goes_through_the_persistence_seam() {
+        let mut room = test_room().await;
+        let recorder = Arc::new(RecordingPersistence::default());
+        room.persistence = recorder.clone();
+        let _sender_rx = add_player(&mut room, 1, false);
+
+        room.on_input(
+            Instant::now(),
+            1,
+            ClientMsg::Chat {
+                text: "hello world".into(),
+            },
+        );
+        let recorded = recorder.chats.lock().unwrap().clone();
+        assert_eq!(
+            recorded,
+            vec![("acme".into(), "p1".into(), "hello world".into())],
+            "a clean chat is persisted through the seam"
+        );
     }
 
     #[tokio::test]
