@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -112,6 +113,9 @@ pub enum RoomCmd {
         look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<Outbound>,
+        /// The connection task's already-measured latency. The room reads it straight into the snapshot;
+        /// ping is owned by the socket round-trip (see `conn.rs`), never the room's tick load.
+        ping: Arc<AtomicU32>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     },
     Input {
@@ -185,7 +189,9 @@ struct Player {
     z: f32,
     yaw: f32,
     pitch: f32,
-    ping_ms: u32,
+    // Latency measured by the connection task (its own socket heartbeat in `conn.rs`), shared so the room
+    // reads it into the snapshot. A busy/late tick never touches it — ping is the round-trip, not tick load.
+    ping: Arc<AtomicU32>,
     score: u32,
     // PvP kills landed by this player (a hit that brought another player to 0 hp). Carried in the
     // Roster so the presence list can rank players when pvp is on; never affects the leaderboard.
@@ -229,8 +235,6 @@ struct Player {
     inventory: HashMap<u8, u32>,
     infinite: bool,
     joined_at_ms: u64,
-    ping_nonce: u32,
-    ping_sent_at: Instant,
     move_b: Bucket,
     edit_b: Bucket,
     chat_b: Bucket,
@@ -328,9 +332,8 @@ enum TenantFlag {
     ApprovalRequired,
 }
 
-const PING_EVERY_TICKS: u64 = 60; // 2s @ 30Hz
-                                  // The ban/reclaim/idle sweep + admin telemetry don't need 30Hz; running them at ~2Hz keeps the hot tick
-                                  // loop cheap (no per-tick DashMap lookups or player clones) without users noticing the slower cadence.
+// The ban/reclaim/idle sweep + admin telemetry don't need 30Hz; running them at ~2Hz keeps the hot tick
+// loop cheap (no per-tick DashMap lookups or player clones) without users noticing the slower cadence.
 const STATUS_EVERY_TICKS: u64 = 15; // 0.5s @ 30Hz
                                     // The snapshot stream is keyframe + deltas: a full keyframe every this-many ticks (~2s @ 30Hz) bounds
                                     // the baseline and lets any desynced client resync; every other tick is a delta against the baseline.
@@ -449,8 +452,9 @@ impl Room {
                 look,
                 ip,
                 conn,
+                ping,
                 reply,
-            } => self.on_join(name, claim, look, ip, conn, reply).await,
+            } => self.on_join(name, claim, look, ip, conn, ping, reply).await,
             RoomCmd::Input { id, msg } => self.on_input(id, msg),
             RoomCmd::Leave { id, conn, clean } => self.on_leave(id, &conn, clean),
             RoomCmd::Rename {
@@ -462,6 +466,7 @@ impl Room {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn on_join(
         &mut self,
         name: String,
@@ -469,6 +474,7 @@ impl Room {
         look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<Outbound>,
+        ping: Arc<AtomicU32>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
         // The ban is enforced in `admit`, after the claim resolves to a role, so a banned admin/moderator
@@ -492,6 +498,7 @@ impl Room {
                     look,
                     ip,
                     conn,
+                    ping,
                     reply,
                 )
                 .await;
@@ -527,6 +534,7 @@ impl Room {
             look,
             ip,
             conn,
+            ping,
             reply,
         )
         .await;
@@ -544,13 +552,14 @@ impl Room {
         look: Appearance,
         ip: IpAddr,
         conn: mpsc::Sender<Outbound>,
+        ping: Arc<AtomicU32>,
         reply: oneshot::Sender<Result<PlayerId, String>>,
     ) {
         // Reconnect resume: a player whose socket dropped within RECONNECT_GRACE rejoins straight back
         // into their held slot (same id, position, score, inventory, hp) — no Left/Join churn, others
         // saw at most a brief freeze. They already cleared every gate at the original join, so resume
         // skips them. Matched by identity: account for a logged-in player, IP for a guest.
-        if let Some(id) = self.try_resume(&account_id, ip, &look, &conn) {
+        if let Some(id) = self.try_resume(&account_id, ip, &look, &conn, &ping) {
             let _ = reply.send(Ok(id));
             return;
         }
@@ -698,7 +707,7 @@ impl Room {
             z: spawn[2],
             yaw: 0.0,
             pitch: 0.0,
-            ping_ms: 0,
+            ping,
             score: 0,
             pvp_kills: 0,
             conn: conn.clone(),
@@ -721,8 +730,6 @@ impl Room {
             // for a player to make them spend banked blocks).
             infinite: true,
             joined_at_ms: epoch_ms(),
-            ping_nonce: 0,
-            ping_sent_at: now,
             move_b: Bucket::new(limits.move_per_sec),
             edit_b: Bucket::new(limits.edit_per_sec),
             chat_b: Bucket::new(limits.chat_per_sec),
@@ -841,6 +848,7 @@ impl Room {
         ip: IpAddr,
         look: &Appearance,
         conn: &mpsc::Sender<Outbound>,
+        ping: &Arc<AtomicU32>,
     ) -> Option<PlayerId> {
         let now = Instant::now();
         let id = self.players.values().find_map(|p| {
@@ -858,6 +866,9 @@ impl Room {
         let (spawn, role_admin, role_moderator) = {
             let p = self.players.get_mut(&id)?;
             p.conn = conn.clone();
+            // The new socket measures its own latency: adopt the new connection's ping atomic so the
+            // resumed player's snapshot reflects the live round-trip, not the dead socket's last reading.
+            p.ping = ping.clone();
             // A fresh socket has no baseline — its next snapshot must be a keyframe, not a delta. Clear the
             // held connection's stored view too, so the keyframe (and later deltas) start from an empty set.
             p.needs_keyframe = true;
@@ -1204,11 +1215,6 @@ impl Room {
                     });
                 }
             }
-            ClientMsg::Pong { nonce } => {
-                if nonce == p.ping_nonce {
-                    p.ping_ms = (now - p.ping_sent_at).as_millis().min(u32::MAX as u128) as u32;
-                }
-            }
             ClientMsg::AdminSetPeace { .. }
             | ClientMsg::AdminSetStructure { .. }
             | ClientMsg::AdminSetPvp { .. }
@@ -1232,6 +1238,8 @@ impl Room {
             | ClientMsg::Respawn
             | ClientMsg::Dig { .. } => { /* handled before the per-player borrow above */ }
             ClientMsg::Join { .. } => { /* handled at connect, not per-input */ }
+            // Ping is measured connection-local now (see conn.rs); a Pong is never forwarded to the room.
+            ClientMsg::Pong { .. } => {}
         }
 
         if let Some(ServerMsg::Edit {
@@ -2210,17 +2218,6 @@ impl Room {
             }
         }
 
-        // Server-initiated ping for authoritative latency measurement.
-        if self.tick.is_multiple_of(PING_EVERY_TICKS) {
-            for p in self.players.values_mut() {
-                p.ping_nonce = p.ping_nonce.wrapping_add(1);
-                p.ping_sent_at = now;
-                p.conn.send_one(ServerMsg::Ping {
-                    nonce: p.ping_nonce,
-                });
-            }
-        }
-
         // Maintain and advance the creature population, then resolve heart pickups, before snapshotting.
         self.simulate_creatures(dt);
         self.collect_hearts();
@@ -2238,7 +2235,7 @@ impl Room {
                     round_snapshot(p.z),
                     round_snapshot(p.yaw),
                     round_snapshot(p.pitch),
-                    p.ping_ms,
+                    p.ping.load(Ordering::Relaxed),
                     p.score,
                     p.hp,
                 )
@@ -2798,7 +2795,7 @@ impl Room {
                 x: p.x,
                 y: p.y,
                 z: p.z,
-                ping_ms: p.ping_ms,
+                ping_ms: p.ping.load(Ordering::Relaxed),
                 idle_ms: now.duration_since(p.last_seen).as_millis() as u64,
                 joined_at_ms: p.joined_at_ms,
             })
@@ -3162,7 +3159,7 @@ mod tests {
             z: 0.0,
             yaw: 0.0,
             pitch: 0.0,
-            ping_ms: 0,
+            ping: Arc::new(AtomicU32::new(0)),
             score: 0,
             pvp_kills: 0,
             conn,
@@ -3183,8 +3180,6 @@ mod tests {
             inventory: HashMap::new(),
             infinite: true,
             joined_at_ms: 0,
-            ping_nonce: 0,
-            ping_sent_at: now,
             move_b: Bucket::new(100.0),
             edit_b: Bucket::new(100.0),
             chat_b: Bucket::new(100.0),
@@ -4690,10 +4685,61 @@ mod tests {
             .values()
             .map(|p| {
                 PlayerState(
-                    p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.ping_ms, p.score, p.hp,
+                    p.id,
+                    p.x,
+                    p.y,
+                    p.z,
+                    p.yaw,
+                    p.pitch,
+                    p.ping.load(Ordering::Relaxed),
+                    p.score,
+                    p.hp,
                 )
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn snapshot_carries_the_connection_measured_ping_from_the_atomic() {
+        // The connection task owns the ping atomic; the room only reads it into the snapshot. Storing a
+        // value into a player's shared atomic must surface verbatim in the per-tick PlayerState.
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        room.players
+            .get(&1)
+            .unwrap()
+            .ping
+            .store(73, Ordering::Relaxed);
+        let states = states_of(&room);
+        assert_eq!(states[0].6, 73, "the snapshot reads ping from the atomic");
+    }
+
+    #[tokio::test]
+    async fn a_busy_late_tick_never_changes_the_measured_ping() {
+        // Ping is now measured on the connection task, so the room tick must NOT touch it: even running many
+        // ticks (a stand-in for a slow, overloaded room) leaves the connection-measured value untouched.
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        // Make this a guest so the periodic reclaim sweep (which kicks an account whose claim isn't live)
+        // never removes it across the long tick run; the ping assertion is what this test is about.
+        let guest = room.players.get_mut(&1).unwrap();
+        guest.account_id = String::new();
+        guest.claim = String::new();
+        let ping = room.players.get(&1).unwrap().ping.clone();
+        ping.store(42, Ordering::Relaxed);
+        for _ in 0..200 {
+            room.tick(0.05);
+        }
+        assert_eq!(
+            ping.load(Ordering::Relaxed),
+            42,
+            "the tick leaves the connection-measured ping untouched"
+        );
+        assert_eq!(
+            states_of(&room)[0].6,
+            42,
+            "and the snapshot still reflects exactly the measured ping"
+        );
     }
 
     #[tokio::test]
@@ -5157,6 +5203,7 @@ mod tests {
             look,
             "127.0.0.1".parse().unwrap(),
             conn,
+            Arc::new(AtomicU32::new(0)),
             reply,
         )
         .await;
@@ -5192,6 +5239,7 @@ mod tests {
             look,
             "127.0.0.1".parse().unwrap(),
             conn,
+            Arc::new(AtomicU32::new(0)),
             reply,
         )
         .await;
@@ -5433,8 +5481,16 @@ mod tests {
             shirt: "#fff".into(),
             hair: "#fff".into(),
         };
-        room.on_join(String::new(), String::new(), look, banned_ip, conn, reply)
-            .await;
+        room.on_join(
+            String::new(),
+            String::new(),
+            look,
+            banned_ip,
+            conn,
+            Arc::new(AtomicU32::new(0)),
+            reply,
+        )
+        .await;
         assert_eq!(reply_rx.await.unwrap(), Err("banned".into()));
         // The admin who acted received the refreshed ban list.
         let saw_bans = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
@@ -5557,6 +5613,7 @@ mod tests {
             look,
             ip.parse().unwrap(),
             conn,
+            Arc::new(AtomicU32::new(0)),
             reply,
         )
         .await;
