@@ -65,6 +65,15 @@ export class WasmCore {
   input(player_id: number, msg: string, now_ms: number): void;
 }
 
+/**
+ * The full procedural base of one chunk `(cx, cz)` as a flat `CHUNK*CHUNK*SIZE_Y` byte array (the TS
+ * `lx + lz*CHUNK + y*CHUNK*CHUNK` layout), straight from `sim::worldgen_chunk`. STANDALONE — no Room or
+ * `WasmCore` instance needed — so the client store fills a chunk's base from the single Rust source
+ * (deleting its TS worldgen duplicate) with one call per chunk; all hot per-voxel reads stay in the TS
+ * cache. Online AND offline call this, so the terrain base always matches the server's authoritative world.
+ */
+export function worldgen_chunk(cx: number, cz: number): Uint8Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -81,6 +90,7 @@ export interface InitOutput {
   readonly wasmcore_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
   readonly wasmcore_tick: (a: number, b: number, c: number, d: number) => number;
   readonly wasmcore_world_blob: (a: number) => any;
+  readonly worldgen_chunk: (a: number, b: number) => any;
   readonly __wbindgen_exn_store: (a: number) => void;
   readonly __externref_table_alloc: () => number;
   readonly __wbindgen_externrefs: WebAssembly.Table;

@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import {
-  AIR, CHUNK, FACE_ID, GOLD_ID, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID, WATER_LEVEL,
-} from './constants';
-import { baseVoxel, heightAt } from './worldgen';
+import { AIR, CHUNK, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID } from './constants';
 import { VoxelWorld } from './world';
+import { emptyWorldgen, fakeWorldgen, makeTestWorld } from './test-world';
 
 const STONE_ID = 3;
 const MARKER_ID = 7;
 
+// The store tests run on a fake worldgen — the real terrain/decoration/monument generation is the shared
+// Rust source, proven byte-identical by worldgen-parity.test.ts and the sim golden test. Here we only
+// prove the STORE contract: it fills a chunk's base from its worldgen once, caches it, and overlays edits.
+
 describe('VoxelWorld.chunkKey', () => {
   it('is deterministic and unique per chunk column', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.chunkKey(0, 0)).toBe(0);
     expect(world.chunkKey(2, 3)).toBe(world.chunkKey(2, 3));
     expect(world.chunkKey(1, 0)).not.toBe(world.chunkKey(0, 1));
@@ -19,13 +21,13 @@ describe('VoxelWorld.chunkKey', () => {
 
 describe('VoxelWorld.inBounds', () => {
   it('accepts coordinates inside the world volume', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.inBounds(0, 0, 0)).toBe(true);
     expect(world.inBounds(SIZE_X - 1, SIZE_Y - 1, SIZE_Z - 1)).toBe(true);
   });
 
   it('rejects coordinates on or past every boundary', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.inBounds(-1, 0, 0)).toBe(false);
     expect(world.inBounds(0, -1, 0)).toBe(false);
     expect(world.inBounds(0, 0, -1)).toBe(false);
@@ -35,46 +37,65 @@ describe('VoxelWorld.inBounds', () => {
   });
 });
 
-describe('VoxelWorld decoration determinism', () => {
-  it('generates the identical world (terrain + trees) for every player', () => {
-    const a = new VoxelWorld();
-    const b = new VoxelWorld();
-    // Force the same region to generate in two independent worlds and compare every cell.
+describe('VoxelWorld base fill from worldgen', () => {
+  // A worldgen that paints each cell with a value derived from its world coordinates, so we can predict
+  // exactly what the store should read back from the cached base.
+  const coordFill = (x: number, y: number, z: number): number => ((x + y * 3 + z * 7) % 5) + 1;
+
+  it('reads back exactly what its worldgen filled, for every cell of a chunk', () => {
+    const world = makeTestWorld(fakeWorldgen(coordFill));
+    for (let x = 0; x < CHUNK; x++)
+      for (let z = 0; z < CHUNK; z++)
+        for (let y = 0; y < SIZE_Y; y++)
+          expect(world.get(x, y, z)).toBe(coordFill(x, y, z));
+  });
+
+  it('fills the same base for every player (independent worlds agree) and after reset()', () => {
+    const a = makeTestWorld(fakeWorldgen(coordFill));
+    const b = makeTestWorld(fakeWorldgen(coordFill));
     for (let x = 0; x < CHUNK * 2; x++)
       for (let z = 0; z < CHUNK * 2; z++)
-        for (let y = 0; y < SIZE_Y; y++) {
-          if (a.get(x, y, z) !== b.get(x, y, z)) {
-            throw new Error(`worlds diverged at ${x},${y},${z}`);
-          }
-        }
-    // A re-gen after reset() must reproduce the same world too (no Math.random drift).
-    const before = a.get(5, heightAt(5, 5) + 1, 5);
+        for (let y = 0; y < SIZE_Y; y++)
+          expect(a.get(x, y, z)).toBe(b.get(x, y, z));
+    const before = a.get(5, 6, 5);
     a.reset();
-    expect(a.get(5, heightAt(5, 5) + 1, 5)).toBe(before);
+    expect(a.get(5, 6, 5)).toBe(before);
+  });
+
+  it('calls its worldgen exactly once per chunk (caches the base)', () => {
+    const calls: Array<[number, number]> = [];
+    const counting = fakeWorldgen(() => 0);
+    const wrapped: typeof counting = (cx, cz) => { calls.push([cx, cz]); return counting(cx, cz); };
+    const world = new VoxelWorld(wrapped);
+    world.get(5, 6, 5);
+    world.get(6, 7, 6);
+    expect(calls).toEqual([[0, 0]]);
+    world.get(CHUNK + 1, 6, 1);
+    expect(calls).toEqual([[0, 0], [1, 0]]);
   });
 });
 
 describe('VoxelWorld.rawGet / rawSet', () => {
   it('reads back what was written without triggering generation', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.rawSet(8, 12, 8, MARKER_ID);
     expect(world.rawGet(8, 12, 8)).toBe(MARKER_ID);
   });
 
   it('returns AIR for an unwritten cell in an unallocated chunk', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.rawGet(100, 5, 100)).toBe(AIR);
   });
 
   it('returns AIR out of bounds and ignores out-of-bounds writes', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.rawGet(-1, 0, 0)).toBe(AIR);
     world.rawSet(-1, 0, 0, MARKER_ID);
     expect(world.rawGet(-1, 0, 0)).toBe(AIR);
   });
 
   it('keeps neighboring cells in the same chunk independent', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.rawSet(3, 4, 5, MARKER_ID);
     expect(world.rawGet(4, 4, 5)).toBe(AIR);
     expect(world.rawGet(3, 5, 5)).toBe(AIR);
@@ -83,40 +104,26 @@ describe('VoxelWorld.rawGet / rawSet', () => {
 });
 
 describe('VoxelWorld.get', () => {
-  it('generates terrain lazily that matches the base voxel function', () => {
-    const world = new VoxelWorld();
-    expect(world.get(50, 0, 50)).toBe(baseVoxel(50, 0, 50));
-    const top = heightAt(50, 50);
-    expect(world.get(50, top, 50)).toBe(baseVoxel(50, top, 50));
-    expect(world.get(50, top + 1, 50)).toBe(baseVoxel(50, top + 1, 50));
-  });
-
   it('returns AIR outside the world bounds', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.get(-1, 0, 0)).toBe(AIR);
     expect(world.get(0, -1, 0)).toBe(AIR);
     expect(world.get(0, SIZE_Y, 0)).toBe(AIR);
     expect(world.get(SIZE_X, 0, 0)).toBe(AIR);
     expect(world.get(0, 0, SIZE_Z)).toBe(AIR);
   });
-
-  it('returns bedrock at the very bottom of any generated column', () => {
-    const world = new VoxelWorld();
-    expect(world.get(70, 0, 70)).toBe(baseVoxel(70, 0, 70));
-  });
 });
 
 describe('VoxelWorld.set', () => {
   it('overrides the generated base voxel', () => {
-    const world = new VoxelWorld();
-    const generated = world.get(40, 3, 40);
+    const world = makeTestWorld(fakeWorldgen(() => STONE_ID));
+    expect(world.get(40, 3, 40)).toBe(STONE_ID);
     world.set(40, 3, 40, MARKER_ID);
     expect(world.get(40, 3, 40)).toBe(MARKER_ID);
-    expect(world.get(40, 3, 40)).not.toBe(generated);
   });
 
   it('ignores writes outside bounds', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.set(-5, 0, 0, MARKER_ID);
     expect(world.get(-5, 0, 0)).toBe(AIR);
   });
@@ -124,13 +131,13 @@ describe('VoxelWorld.set', () => {
 
 describe('VoxelWorld.isSolid', () => {
   it('treats placed solid blocks as solid', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.set(6, 20, 6, STONE_ID);
     expect(world.isSolid(6, 20, 6)).toBe(true);
   });
 
   it('treats air and water as non-solid', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.set(4, 20, 4, AIR);
     world.set(5, 20, 5, WATER_ID);
     expect(world.isSolid(4, 20, 4)).toBe(false);
@@ -138,7 +145,7 @@ describe('VoxelWorld.isSolid', () => {
   });
 
   it('treats out-of-bounds cells as non-solid', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.isSolid(-1, 5, 5)).toBe(false);
     expect(world.isSolid(5, SIZE_Y, 5)).toBe(false);
   });
@@ -146,7 +153,7 @@ describe('VoxelWorld.isSolid', () => {
 
 describe('VoxelWorld.ensureGen', () => {
   it('is idempotent: a manual edit survives a repeated ensureGen of its chunk', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const cx = Math.floor(40 / CHUNK), cz = Math.floor(40 / CHUNK);
     world.ensureGen(cx, cz);
     world.rawSet(40, 22, 40, MARKER_ID);
@@ -155,14 +162,14 @@ describe('VoxelWorld.ensureGen', () => {
   });
 
   it('does nothing for chunk coordinates outside the world grid', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.ensureGen(-1, 0);
     world.ensureGen(Math.ceil(SIZE_X / CHUNK), 0);
     expect(world.snapshot().size).toBe(0);
   });
 
   it('allocates exactly one chunk per generated column', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.get(40, 5, 40);
     expect(world.snapshot().size).toBe(1);
     world.get(41, 5, 41);
@@ -174,7 +181,7 @@ describe('VoxelWorld.ensureGen', () => {
 
 describe('VoxelWorld.snapshot', () => {
   it('reflects edits and is a detached copy of the chunk map', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     world.set(9, 13, 9, MARKER_ID);
     const snapshot = world.snapshot();
     const key = world.chunkKey(Math.floor(9 / CHUNK), Math.floor(9 / CHUNK));
@@ -185,40 +192,23 @@ describe('VoxelWorld.snapshot', () => {
   });
 
   it('starts empty before any generation or edit', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     expect(world.snapshot().size).toBe(0);
   });
 });
 
-describe('VoxelWorld terrain generation', () => {
-  it('matches baseVoxel for every cell from bedrock to the surface (decoration never rewrites buried voxels)', () => {
-    const world = new VoxelWorld();
-    const x = 55, z = 73;
-    const top = heightAt(x, z);
-    for (let y = 0; y <= top; y++) expect(world.get(x, y, z)).toBe(baseVoxel(x, y, z));
+describe('VoxelWorld edits do not write through to the worldgen source', () => {
+  it('owns a fresh copy of the base so an edit never mutates a shared worldgen buffer', () => {
+    const shared = new Uint8Array(CHUNK * CHUNK * SIZE_Y);
+    const world = new VoxelWorld(() => shared);
+    world.set(1, 2, 3, MARKER_ID);
+    expect(world.get(1, 2, 3)).toBe(MARKER_ID);
+    // The worldgen's own buffer is untouched (the store copied it on fill).
+    expect(shared[1 + 3 * CHUNK + 2 * CHUNK * CHUNK]).toBe(AIR);
   });
 
-  it('fills water up to the water level above a submerged column', () => {
-    const world = new VoxelWorld();
-    let column: { x: number; z: number } | null = null;
-    for (let x = 0; x < CHUNK && !column; x++)
-      for (let z = 0; z < CHUNK && !column; z++)
-        if (heightAt(x, z) < WATER_LEVEL) column = { x, z };
-    if (!column) return;
-    const top = heightAt(column.x, column.z);
-    expect(world.get(column.x, top + 1, column.z)).toBe(WATER_ID);
-    expect(world.get(column.x, WATER_LEVEL, column.z)).toBe(WATER_ID);
-  });
-
-  it('materializes the welcome monument at the world centre and lets it be dug', () => {
-    const world = new VoxelWorld();
-    const cx = SIZE_X >> 1, cz = SIZE_Z >> 1;
-    const top = heightAt(cx, cz);
-    expect(world.get(cx, top + 1, cz)).toBe(FACE_ID);
-    expect(world.get(cx, top + 2, cz)).toBe(FACE_ID);
-    expect(world.get(cx - 1, top + 1, cz)).toBe(GOLD_ID);
-    expect(world.isSolid(cx, top + 1, cz)).toBe(true);
-    world.set(cx, top + 1, cz, AIR);
-    expect(world.isSolid(cx, top + 1, cz)).toBe(false);
+  it('keeps emptyWorldgen all air', () => {
+    const world = new VoxelWorld(emptyWorldgen);
+    expect(world.get(3, 4, 5)).toBe(AIR);
   });
 });
