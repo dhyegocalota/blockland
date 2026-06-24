@@ -100,6 +100,8 @@ export const MOUSE_LOOK_SENSITIVITY = 0.0022;
 export const TOUCH_LOOK_SENSITIVITY = 0.005;
 
 // ---------- Audio cues (frequency Hz, duration s) ----------
+// Peak oscillator gain of a cue at full volume (today's level); the player's master volume scales it.
+export const BLIP_BASE_GAIN = 0.06;
 export const DAMAGE_BLIP_FREQ = 140;
 export const DAMAGE_BLIP_DURATION = 0.18;
 export const DIG_BLIP_FREQ = 180;

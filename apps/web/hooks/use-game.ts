@@ -9,6 +9,7 @@ import { lobbyAdminPanelActive, lobbyModeGates, shouldPushToOnline, shouldPushTo
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
+import { type Settings, loadSettings, updateSettings } from '../lib/settings';
 import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
 import { IDLE_STATE, LoaderPhase, LoaderStage, loaderReducer } from '../lib/engine/loader-state';
 import type { Appearance, RoomState, RosterEntry } from '../lib/coop';
@@ -92,6 +93,7 @@ export function useGame() {
   const [lobbyModerator, setLobbyModerator] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
   const [infiniteResources, setInfiniteResources] = useState(true);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
   const [started, setStarted] = useState(false);
   // Online readiness signals for the connecting overlay: Welcome received (socket acknowledged the
   // join) and the first Snapshot applied (the world is actually live). Until both land, early
@@ -298,11 +300,14 @@ export function useGame() {
       // In-game: Tab toggles the online-players list (a scoreboard), like an FPS. On the start screen
       // (not started) Tab is left alone so it still navigates the form.
       if (event.code === 'Tab' && started) { event.preventDefault(); setRosterOpen((open) => !open); return; }
+      if (event.code === 'KeyH' && started) { event.preventDefault(); gameApiRef.current?.returnToSpawn(); return; }
+      // The admin/moderator panel toggle (the player has no panel, so the key does nothing for them).
+      if (event.code === 'KeyM' && started && (isAdmin || isModerator)) { event.preventDefault(); setAdminOpen((open) => !open); return; }
       if (event.code === 'Enter' || event.code === 'KeyT') { event.preventDefault(); openChat(); }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chatOpen, openChat, started]);
+  }, [chatOpen, openChat, started, isAdmin, isModerator, setAdminOpen]);
 
   useEffect(() => {
     if (!debugOpen) return;
@@ -353,6 +358,14 @@ export function useGame() {
   const onLookChange = useCallback((part: keyof Appearance, value: string): void => {
     setLook((current) => ({ ...current, [part]: value }));
     if (typeof window !== 'undefined') window.localStorage.setItem(LOOK_KEYS[part], value);
+  }, []);
+
+  // A settings slider/toggle change persists to the live store (the engine reads it next frame/cue) and
+  // mirrors the clamped result back into React state so the panel shows what was actually stored. The
+  // ⚙ gear + Resume buttons open/close the panel through the engine (id-wired, like the controls modal),
+  // so opening/closing is not a React concern here.
+  const onSettingChange = useCallback((patch: Partial<Settings>): void => {
+    setSettings(updateSettings(patch));
   }, []);
 
   // Owning a NAME is an ONLINE concern: claiming it on the server (anti-impersonation + ranking) is the
@@ -558,6 +571,7 @@ export function useGame() {
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
+    settings, onSettingChange,
     lobby,
     gameApiRef,
     feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,

@@ -145,4 +145,29 @@ describe('useGame', () => {
     expect(bridge.resolveName()).toBe('Maria');
     expect(bridge.resolveOffline()).toBe(true);
   });
+
+  function pressKey(code: string): void {
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true, cancelable: true })); });
+  }
+
+  it('the H shortcut returns the player to spawn once the game has started', async () => {
+    const { result, bridge } = await mountWithBridge();
+    const returnToSpawn = vi.fn();
+    act(() => { bridge.bind({ returnToSpawn } as unknown as Parameters<CoopBridge['bind']>[0]); });
+    pressKey('KeyH');
+    expect(returnToSpawn).toHaveBeenCalledOnce();
+  });
+
+  it('the M shortcut toggles the admin panel only for an admin/moderator', async () => {
+    const { result, bridge } = await mountWithBridge();
+    pressKey('KeyM');
+    expect(result.current.adminOpen).toBe(false);
+
+    act(() => { bridge.hud.onRole({ admin: true, moderator: false }); });
+    await waitFor(() => expect(result.current.isAdmin).toBe(true));
+    pressKey('KeyM');
+    await waitFor(() => expect(result.current.adminOpen).toBe(true));
+    pressKey('KeyM');
+    await waitFor(() => expect(result.current.adminOpen).toBe(false));
+  });
 });

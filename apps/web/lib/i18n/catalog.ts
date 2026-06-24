@@ -12,6 +12,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.fly': '✈️ Voar',
     'hud.spawn': '🏠 Início',
     'hud.chat': '💬 Chat',
+    'hud.settings': '⚙️ Ajustes',
     'hud.exit': '🚪 Sair',
     'hud.online': '🟢 Online',
     'hud.offline': '🔵 Offline',
@@ -73,6 +74,16 @@ export const messages: Record<Locale, Record<string, string>> = {
     'build.hero': 'Estátua do Herói',
     'build.close': 'Fechar',
     'build.blocked': '🚫 O admin bloqueou esta construção',
+
+    // Settings menu (audio + look sensitivity)
+    'settings.title': '⚙️ Ajustes',
+    'settings.audio': '🔊 Som',
+    'settings.volume': 'Volume',
+    'settings.mute': '🔇 Mudo',
+    'settings.look': '🖱️ Sensibilidade',
+    'settings.mouse': 'Mouse',
+    'settings.touch': 'Toque',
+    'settings.resume': '▶ Voltar a jogar',
 
     // In-game admin panel
     'game_admin.title': 'Admin',
@@ -453,6 +464,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.fly': '✈️ Fly',
     'hud.spawn': '🏠 Spawn',
     'hud.chat': '💬 Chat',
+    'hud.settings': '⚙️ Settings',
     'hud.exit': '🚪 Leave',
     'hud.online': '🟢 Online',
     'hud.offline': '🔵 Offline',
@@ -514,6 +526,16 @@ export const messages: Record<Locale, Record<string, string>> = {
     'build.hero': 'Hero Statue',
     'build.close': 'Close',
     'build.blocked': '🚫 The admin blocked this structure',
+
+    // Settings menu (audio + look sensitivity)
+    'settings.title': '⚙️ Settings',
+    'settings.audio': '🔊 Sound',
+    'settings.volume': 'Volume',
+    'settings.mute': '🔇 Mute',
+    'settings.look': '🖱️ Sensitivity',
+    'settings.mouse': 'Mouse',
+    'settings.touch': 'Touch',
+    'settings.resume': '▶ Back to game',
 
     // In-game admin panel
     'game_admin.title': 'Admin',

@@ -25,6 +25,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     loginStep: null, loginEmail: '', setLoginEmail: () => {}, loginCode: '', setLoginCode: () => {}, loginBusy: false, loginError: null,
     authToast: null, loggedIn: false, lobbyAdmin: false, lobbyModerator: false, isTouch: false,
     infiniteResources: true, setInfiniteResources: () => {},
+    settings: { mouseSensitivity: 1, touchSensitivity: 1, volume: 1, muted: false }, onSettingChange: () => {},
     lobby: { roster: [], room: { suspended: false, playtimeLimitMin: 0, playtimeWindowH: 0 } },
     gameApiRef: { current: null },
     feed: [], room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: false, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
@@ -325,5 +326,115 @@ describe('Game', () => {
     expect(within(modal).getByRole('heading').textContent).toBe('Jogar online com "Maria"');
     expect(modal.textContent).toContain('online');
     expect(modal.textContent).toContain('offline');
+  });
+
+  it('shows the ⚙ gear button in the HUD action row', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
+    render(<Game />);
+    const gear = document.getElementById('settingsBtn')!;
+    expect(gear).toBeInTheDocument();
+    expect(gear.textContent).toContain('⚙️ Ajustes');
+    expect(document.getElementById('actionRow')).toContainElement(gear);
+  });
+
+  it('renders the settings panel hidden, with both sensitivity sliders, volume + mute, and a resume button', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
+    render(<Game />);
+    const panel = document.getElementById('settings')!;
+    expect(panel).toBeInTheDocument();
+    expect(panel.hidden).toBe(true);
+    expect(panel.querySelector('h2')!.textContent).toBe('⚙️ Ajustes');
+    expect(document.getElementById('settingsVolume')).toBeInTheDocument();
+    expect(document.getElementById('settingsMouse')).toBeInTheDocument();
+    expect(document.getElementById('settingsTouch')).toBeInTheDocument();
+    expect(document.getElementById('settingsMute')).toBeInTheDocument();
+    expect(document.getElementById('closeSettings')!.textContent).toBe('▶ Voltar a jogar');
+  });
+
+  it('reflects the live settings on the sliders + mute toggle', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online', connectKey: null,
+        settings: { mouseSensitivity: 2, touchSensitivity: 0.5, volume: 0.4, muted: true },
+      }),
+    );
+    render(<Game />);
+    expect((document.getElementById('settingsVolume') as HTMLInputElement).value).toBe('0.4');
+    expect((document.getElementById('settingsVolume') as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById('settingsMouse') as HTMLInputElement).value).toBe('2');
+    expect((document.getElementById('settingsTouch') as HTMLInputElement).value).toBe('0.5');
+    expect(document.getElementById('settingsMute')!.className).toBe('on');
+    expect(document.getElementById('settings')!.textContent).toContain('40%');
+    expect(document.getElementById('settings')!.textContent).toContain('2.00x');
+  });
+
+  it('moving a slider or toggling mute pushes the change to the store', () => {
+    const onSettingChange = vi.fn();
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, onSettingChange }));
+    render(<Game />);
+    fireEvent.change(document.getElementById('settingsVolume')!, { target: { value: '0.2' } });
+    expect(onSettingChange).toHaveBeenCalledWith({ volume: 0.2 });
+    fireEvent.change(document.getElementById('settingsMouse')!, { target: { value: '1.5' } });
+    expect(onSettingChange).toHaveBeenCalledWith({ mouseSensitivity: 1.5 });
+    fireEvent.click(document.getElementById('settingsMute')!);
+    expect(onSettingChange).toHaveBeenCalledWith({ muted: true });
+  });
+
+  // The settings panel is a sibling of the HUD, not an overlay over it: so when paused with the panel
+  // CLOSED (settingsEl.hidden, which the engine toggles), the full in-game HUD — action row gear/build/
+  // chat + the admin panel toggle — is still rendered and reachable. Closing the panel never hides them.
+  it('keeps the full in-game HUD (gear, build, chat, admin toggle) rendered alongside the settings panel', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online', connectKey: null, isAdmin: true,
+        room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
+      }),
+    );
+    render(<Game />);
+    expect(document.getElementById('settingsBtn')).toBeInTheDocument();
+    expect(document.getElementById('buildBtn')).toBeInTheDocument();
+    expect(document.getElementById('chatBtn')).toBeInTheDocument();
+    expect(document.getElementById('adminToggle')).toBeInTheDocument();
+    expect(document.getElementById('settings')).toBeInTheDocument();
+  });
+
+  it('shows the keyboard-shortcut key-cap on each desktop HUD button', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online', connectKey: null, isTouch: false,
+        room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
+      }),
+    );
+    render(<Game />);
+    expect(document.getElementById('helpBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('V');
+    expect(document.getElementById('buildBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('B');
+    expect(document.getElementById('flyBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('F');
+    expect(document.getElementById('spawnBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('H');
+    expect(document.getElementById('chatBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('T');
+    expect(document.getElementById('settingsBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('Esc');
+    expect(document.getElementById('presenceToggle')!.querySelector('.hotkeyHint')!.textContent).toBe('Tab');
+    // Exit reloads the page, so it deliberately has no shortcut.
+    expect(document.getElementById('exitBtn')!.querySelector('.hotkeyHint')).toBeNull();
+  });
+
+  it('hides every key-cap on touch devices (no keyboard)', () => {
+    useGame.mockReturnValue(
+      gameState({
+        netState: 'online', connectKey: null, isTouch: true, isAdmin: true,
+        room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: true, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
+      }),
+    );
+    render(<Game />);
+    expect(document.querySelectorAll('.hotkeyHint')).toHaveLength(0);
+  });
+
+  it('shows the admin-panel key-cap (M) only for an admin/moderator', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, isAdmin: true }));
+    render(<Game />);
+    expect(document.getElementById('adminToggle')!.querySelector('.hotkeyHint')!.textContent).toBe('M');
+    cleanup();
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
+    render(<Game />);
+    expect(document.getElementById('adminToggle')).toBeNull();
   });
 });
