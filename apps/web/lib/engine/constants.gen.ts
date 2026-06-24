@@ -23,3 +23,18 @@ export const SPAWN_OFFSET_Z = 4;
 export const SPAWN_AREA_RADIUS = 12;
 export const SPAWN_SEARCH_RADIUS = 6;
 export const SPAWN_CLEARANCE_GAP = 1.2;
+
+// Shared voxel block ids — the ids the worldgen and world edits encode. The client-only
+// palette ids and naming aliases stay hand-written in constants.ts; these are the shared set.
+export const AIR = 0;
+export const GRASS_ID = 1;
+export const DIRT_ID = 2;
+export const STONE_ID = 3;
+export const WOOD_ID = 4;
+export const LEAF_ID = 5;
+export const SAND_ID = 6;
+export const GOLD_ID = 8;
+export const FACE_ID = 10;
+export const WATER_ID = 11;
+export const WHITE_ID = 12;
+export const BEDROCK_ID = 16;

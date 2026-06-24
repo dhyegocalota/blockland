@@ -44,6 +44,27 @@ mod export {
         ]
     }
 
+    /// The shared voxel block ids, each `(ts_name, rust_value)`. These are the ids the worldgen and
+    /// world edits encode, so `sim` is the authority; the client kept a hand-written mirror (which
+    /// could silently drift) until this emitted them. Client-only ids (palette-only colours with no
+    /// server meaning) and naming aliases stay hand-written in `constants.ts`.
+    fn web_block_ids() -> Vec<(&'static str, u8)> {
+        vec![
+            ("AIR", sim::AIR),
+            ("GRASS_ID", sim::GRASS),
+            ("DIRT_ID", sim::DIRT),
+            ("STONE_ID", sim::STONE),
+            ("WOOD_ID", sim::WOOD),
+            ("LEAF_ID", sim::LEAF),
+            ("SAND_ID", sim::SAND),
+            ("GOLD_ID", sim::GOLD),
+            ("FACE_ID", sim::FACE),
+            ("WATER_ID", sim::WATER),
+            ("WHITE_ID", sim::WHITE),
+            ("BEDROCK_ID", sim::BEDROCK),
+        ]
+    }
+
     fn seconds(duration: std::time::Duration) -> String {
         duration.as_secs_f32().to_string()
     }
@@ -59,6 +80,15 @@ mod export {
             "// constants; constants.ts re-exports them so client and server can never drift.\n\n",
         );
         for (name, value) in web_constants() {
+            out.push_str(&format!("export const {name} = {value};\n"));
+        }
+        out.push_str(
+            "\n// Shared voxel block ids — the ids the worldgen and world edits encode. The client-only\n",
+        );
+        out.push_str(
+            "// palette ids and naming aliases stay hand-written in constants.ts; these are the shared set.\n",
+        );
+        for (name, value) in web_block_ids() {
             out.push_str(&format!("export const {name} = {value};\n"));
         }
         out

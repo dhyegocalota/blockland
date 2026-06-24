@@ -7,18 +7,26 @@
 // below, so client and server can never silently drift. Regenerate with `cargo test -p game-core`.
 
 export {
+  AIR,
+  BEDROCK_ID,
   CHUNK,
   CREATURE_ORBIT_FLIP_TICKS,
   CREATURE_ORBIT_SPEED,
   CREATURE_SEPARATION,
   CREATURE_STOP_DISTANCE,
   DIG_HITS,
+  DIRT_ID,
+  FACE_ID,
+  GOLD_ID,
+  GRASS_ID,
   GROUND,
   HEART_DROP_TTL_MS,
   HEART_PICKUP_RADIUS,
   HURT_COOLDOWN,
+  LEAF_ID,
   MAX_FLY_Y,
   MAX_HEARTS,
+  SAND_ID,
   SIZE_X,
   SIZE_Y,
   SIZE_Z,
@@ -26,7 +34,11 @@ export {
   SPAWN_CLEARANCE_GAP,
   SPAWN_OFFSET_Z,
   SPAWN_SEARCH_RADIUS,
+  STONE_ID,
+  WATER_ID,
   WATER_LEVEL,
+  WHITE_ID,
+  WOOD_ID,
 } from './constants.gen';
 
 // ---------- Physics ----------
@@ -51,22 +63,13 @@ export const SWING_DURATION_MS = 220;
 export const SWING_PEAK_RAD = 0.8;
 
 // ---------- Block ids ----------
-export const AIR = 0;
-export const GRASS_ID = 1;
-export const HAIR_ID = 2;
-export const DIRT_ID = 2;
-export const STONE_ID = 3;
-export const WOOD_ID = 4;
-export const LEAF_ID = 5;
-export const SAND_ID = 6;
-export const SKIN_ID = 6;
-export const GOLD_ID = 8;
-export const FACE_ID = 10;
-export const WATER_ID = 11;
-export const WHITE_ID = 12;
+// The shared ids (AIR, GRASS_ID, DIRT_ID, STONE_ID, WOOD_ID, LEAF_ID, SAND_ID, GOLD_ID, FACE_ID,
+// WATER_ID, WHITE_ID, BEDROCK_ID) are generated from the Rust `sim` source and re-exported above, so
+// the worldgen/edits ids can never silently drift. The ids below are client-only: naming aliases that
+// reuse a shared value (HAIR/SKIN) and palette colours the server has no named constant for.
+export { DIRT_ID as HAIR_ID, SAND_ID as SKIN_ID } from './constants.gen';
 export const BLACK_ID = 13;
 export const CYAN_ID = 14;
-export const BEDROCK_ID = 16;
 export const CELESTE_ID = 17;
 export const RED_ID = 18;
 export const BLUE_ID = 19;

@@ -24,6 +24,7 @@ import {
   DEFAULT_APP_VERSION,
   DIG_BLIP_DURATION,
   DIG_BLIP_FREQ,
+  DIRT_ID,
   EYE_HEIGHT,
   FACE_ID,
   FLY_SPEED,
@@ -35,6 +36,7 @@ import {
   HURT_COOLDOWN,
   HURT_FLASH_MS,
   JUMP_SPEED,
+  LEAF_ID,
   MAX_FLY_Y,
   MAX_HEARTS,
   MOUSE_LOOK_SENSITIVITY,
@@ -50,6 +52,7 @@ import {
   SIZE_Z,
   SKIN_ID,
   SPAWN_OFFSET_Z,
+  STONE_ID,
   STRUCTURE_REACH_DIST,
   TOAST_DURATION_MS,
   TOUCH_LOOK_SENSITIVITY,
@@ -242,5 +245,25 @@ describe('generated server constants', () => {
   it('keeps the derived relationships the old literals encoded', () => {
     expect(WATER_LEVEL).toBe(GROUND - 1);
     expect(MAX_FLY_Y).toBe(SIZE_Y + 32);
+  });
+
+  it('match the pre-migration shared block ids exactly', () => {
+    expect(AIR).toBe(0);
+    expect(GRASS_ID).toBe(1);
+    expect(DIRT_ID).toBe(2);
+    expect(STONE_ID).toBe(3);
+    expect(WOOD_ID).toBe(4);
+    expect(LEAF_ID).toBe(5);
+    expect(SAND_ID).toBe(6);
+    expect(GOLD_ID).toBe(8);
+    expect(FACE_ID).toBe(10);
+    expect(WATER_ID).toBe(11);
+    expect(WHITE_ID).toBe(12);
+    expect(BEDROCK_ID).toBe(16);
+  });
+
+  it('keeps the client-only aliases pinned to their shared id', () => {
+    expect(HAIR_ID).toBe(DIRT_ID);
+    expect(SKIN_ID).toBe(SAND_ID);
   });
 });
