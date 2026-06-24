@@ -651,7 +651,9 @@ impl Room {
         self.playtime_window_ms = window_h * 3_600_000;
         let playtime_key = playtime_key(&account_id, ip);
         let mut playtime_baseline = 0;
-        if self.playtime_limit_ms > 0 {
+        // Admins are never blocked by the play-time budget — even out of time they keep playing and can
+        // run the lobby/in-game admin panel. Moderators and players ARE subject to it.
+        if self.playtime_limit_ms > 0 && !role.is_admin() {
             playtime_baseline = self
                 .hub
                 .db
@@ -2185,7 +2187,7 @@ impl Room {
                             }
                         });
                     }
-                    if p.playtime_baseline_ms + session >= limit {
+                    if p.playtime_baseline_ms + session >= limit && !p.is_admin {
                         time_up.push(p.id);
                     }
                 }
@@ -5577,6 +5579,57 @@ mod tests {
         // The IP is now over budget, so the next guest from it is turned away with "time_up".
         let (blocked, _rx2) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
         assert_eq!(blocked, Err("time_up".into()), "the IP is over budget");
+    }
+
+    #[tokio::test]
+    async fn an_admin_over_the_playtime_budget_still_plays_but_a_moderator_does_not() {
+        let mut room = test_room().await;
+        room.hub
+            .db
+            .set_tenant_playtime(&room.key.0, 1, 24)
+            .await
+            .unwrap();
+        // Burn the IP's budget: a guest plays 2 minutes, past the 1-minute limit.
+        let (admitted, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.9").await;
+        let id = admitted.expect("first guest admitted");
+        room.players.get_mut(&id).unwrap().joined_at_ms = epoch_ms() - 2 * 60_000;
+        room.tick = STATUS_EVERY_TICKS - 1;
+        room.tick(0.05);
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            let used = room
+                .hub
+                .db
+                .playtime_used(
+                    &room.key.0,
+                    "ip:203.0.113.9",
+                    24 * 3_600_000,
+                    epoch_ms() as i64,
+                )
+                .await
+                .unwrap();
+            if used >= 60_000 {
+                break;
+            }
+        }
+        // A moderator from that over-budget IP is turned away — moderators are subject to the limit.
+        let (mod_res, _r1) = admit_from_ip(&mut room, "", "", Role::Moderator, "203.0.113.9").await;
+        assert_eq!(
+            mod_res,
+            Err("time_up".into()),
+            "a moderator over budget is blocked"
+        );
+        // An admin from the same over-budget IP still gets in.
+        let (admin_res, _r2) = admit_from_ip(&mut room, "", "", Role::Admin, "203.0.113.9").await;
+        let admin_id = admin_res.expect("an admin over budget still plays");
+        // And an admin already past their session time is never kicked by the play-time sweep.
+        room.players.get_mut(&admin_id).unwrap().joined_at_ms = epoch_ms() - 5 * 60_000;
+        room.tick = STATUS_EVERY_TICKS - 1;
+        room.tick(0.05);
+        assert!(
+            room.players.contains_key(&admin_id),
+            "an admin is never kicked by the playtime sweep"
+        );
     }
 
     #[tokio::test]
