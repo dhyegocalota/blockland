@@ -14,6 +14,7 @@ use protocol::{
     PlayerId, PlayerMeta, PlayerState, ServerMsg,
 };
 use rand::Rng;
+use rayon::prelude::*;
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
@@ -2331,19 +2332,21 @@ impl Room {
         // Build the spatial grid ONCE per tick from this tick's positions, so each receiver's AOI runs the
         // exact `in_view` test over only its 3×3-cell neighborhood (O(neighbors)) instead of every entity.
         let grids = AoiGrids::build(players, creatures, hearts);
-        // Iterate over a snapshot of the ids so the per-connection body can borrow `self.players` mutably
-        // (to read + update each player's own baseline) without holding an iterator over the same map.
-        let ids: Vec<PlayerId> = self.players.keys().copied().collect();
-        for id in ids {
-            let Some(receiver) = self.players.get(&id) else {
-                continue;
-            };
+        // The tick's entity state + the grids are READ-ONLY for the whole broadcast, and each receiver
+        // touches only its OWN baseline + channel (disjoint per player, no cross-connection mutation). So
+        // fan the per-connection AOI-filter + keyframe/delta encode + send across CPU cores with rayon:
+        // pre-bind the shared read-only data into `&` locals (so the parallel closure borrows them, with no
+        // `&self`/`&mut self.players` aliasing), then `par_iter_mut` over the players. The output bytes +
+        // baseline updates are byte-identical to a sequential run — parallelism only reorders the
+        // independent work, never the result. `try_send` stays non-blocking, so a slow client never stalls.
+        let (grids, players, creatures, hearts) = (&grids, players, creatures, hearts);
+        self.players.par_iter_mut().for_each(|(&id, receiver)| {
             let center = receiver_center(id, players);
             let view = aoi_view(
                 id,
                 center,
                 &receiver.snapshot_baseline,
-                &grids,
+                grids,
                 players,
                 creatures,
                 hearts,
@@ -2371,9 +2374,6 @@ impl Room {
                 .into()
             };
 
-            let Some(receiver) = self.players.get_mut(&id) else {
-                continue;
-            };
             let _ = receiver.conn.try_send(Outbound::Binary(bytes));
             receiver.needs_keyframe = false;
             receiver.snapshot_baseline = SnapshotBaseline {
@@ -2382,7 +2382,7 @@ impl Room {
                 creatures: view.creatures,
                 hearts: view.hearts,
             };
-        }
+        });
     }
 
     /// Fan a TRANSIENT spatial event (a swing / hit flash) out only to players whose AOI includes the event
@@ -6204,5 +6204,166 @@ mod tests {
         assert_eq!(inventory.get(&sim::STONE), Some(&1));
         assert!(spend_block(&mut inventory, sim::STONE));
         assert!(!spend_block(&mut inventory, sim::STONE), "depleted");
+    }
+
+    /// A sequential reference for `broadcast_snapshot`: the same per-connection AOI-filter + keyframe/delta
+    /// encode + baseline update the parallel path does, run one player at a time. The parallel broadcast
+    /// must produce byte-identical frames and baselines to this regardless of the order it processed
+    /// connections — that is the safety property of parallelizing only the read-only encode/send.
+    fn sequential_broadcast(
+        room: &mut Room,
+        tick: u64,
+        players: &[PlayerState],
+        creatures: &[CreatureState],
+        hearts: &[HeartDropState],
+    ) {
+        let periodic_keyframe = tick.is_multiple_of(KEYFRAME_INTERVAL_TICKS);
+        let grids = AoiGrids::build(players, creatures, hearts);
+        let ids: Vec<PlayerId> = room.players.keys().copied().collect();
+        for id in ids {
+            let receiver = room.players.get(&id).unwrap();
+            let center = receiver_center(id, players);
+            let view = aoi_view(
+                id,
+                center,
+                &receiver.snapshot_baseline,
+                &grids,
+                players,
+                creatures,
+                hearts,
+            );
+            let send_keyframe = periodic_keyframe || receiver.needs_keyframe;
+            let bytes: Arc<[u8]> = if send_keyframe {
+                encode_keyframe(tick, &view.players, &view.creatures, &view.hearts).into()
+            } else {
+                let baseline = &receiver.snapshot_baseline;
+                encode_delta(
+                    SnapshotView {
+                        tick: baseline.tick,
+                        players: &baseline.players,
+                        creatures: &baseline.creatures,
+                        hearts: &baseline.hearts,
+                    },
+                    SnapshotView {
+                        tick,
+                        players: &view.players,
+                        creatures: &view.creatures,
+                        hearts: &view.hearts,
+                    },
+                )
+                .into()
+            };
+            let receiver = room.players.get_mut(&id).unwrap();
+            let _ = receiver.conn.try_send(Outbound::Binary(bytes));
+            receiver.needs_keyframe = false;
+            receiver.snapshot_baseline = SnapshotBaseline {
+                tick,
+                players: view.players,
+                creatures: view.creatures,
+                hearts: view.hearts,
+            };
+        }
+    }
+
+    /// Encode a stored baseline as a keyframe so two baselines compare by their wire bytes (the state
+    /// structs don't derive PartialEq, and the bytes are exactly what the next delta is built against).
+    fn encode_baseline(baseline: &SnapshotBaseline) -> Vec<u8> {
+        encode_keyframe(
+            baseline.tick,
+            &baseline.players,
+            &baseline.creatures,
+            &baseline.hearts,
+        )
+    }
+
+    /// Drain every Binary frame a connection received, in order.
+    fn drain_binaries(rx: &mut mpsc::Receiver<Outbound>) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        while let Ok(o) = rx.try_recv() {
+            if let Outbound::Binary(bytes) = o {
+                out.push(bytes.to_vec());
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn parallel_broadcast_is_byte_identical_to_a_sequential_reference() {
+        // Build the SAME room state twice and broadcast a keyframe tick then a delta tick: once through the
+        // real (parallel) `broadcast_snapshot`, once through the sequential reference. For every receiver the
+        // sent bytes AND the resulting baseline must match exactly — parallelism only reorders the work.
+        let layout = [(1u32, 0.0, 0.0), (2, 6.0, 0.0), (3, 50_000.0, 0.0)];
+        let creatures = vec![
+            CreatureState(10, 0, 4.0, 64.0, 0.0, 0.0, 2, 2),
+            CreatureState(11, 0, 50_004.0, 64.0, 0.0, 0.0, 2, 2),
+        ];
+        let hearts = vec![HeartDropState(20, 3.0, 64.0, 0.0)];
+
+        let mut par_room = test_room().await;
+        let mut seq_room = test_room().await;
+        let mut par_rx = HashMap::new();
+        let mut seq_rx = HashMap::new();
+        for (id, x, z) in layout {
+            par_rx.insert(id, add_player_at(&mut par_room, id, x, z));
+            seq_rx.insert(id, add_player_at(&mut seq_room, id, x, z));
+        }
+        let states = states_of(&par_room);
+
+        // Tick 1: every connection is fresh -> keyframe of its own AOI view.
+        par_room.broadcast_snapshot(1, &states, &creatures, &hearts);
+        sequential_broadcast(&mut seq_room, 1, &states, &creatures, &hearts);
+        // Tick 2: everyone in-sync -> a per-connection delta against its own baseline.
+        par_room.broadcast_snapshot(2, &states, &creatures, &hearts);
+        sequential_broadcast(&mut seq_room, 2, &states, &creatures, &hearts);
+
+        for (id, _, _) in layout {
+            assert_eq!(
+                drain_binaries(par_rx.get_mut(&id).unwrap()),
+                drain_binaries(seq_rx.get_mut(&id).unwrap()),
+                "receiver {id} got byte-identical frames under the parallel path"
+            );
+            let par_baseline = &par_room.players.get(&id).unwrap().snapshot_baseline;
+            let seq_baseline = &seq_room.players.get(&id).unwrap().snapshot_baseline;
+            assert_eq!(par_baseline.tick, seq_baseline.tick, "baseline tick {id}");
+            assert_eq!(
+                encode_baseline(par_baseline),
+                encode_baseline(seq_baseline),
+                "baseline contents {id}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_parallel_broadcast_serves_correct_views_to_two_hundred_players() {
+        // At high single-room counts the parallel path must still produce each receiver's correct AOI view.
+        // Place 200 players in tight pairs spread far apart: each player sees only itself and its pair-mate.
+        let mut room = test_room().await;
+        let mut receivers = HashMap::new();
+        let pairs = 100u32;
+        for pair in 0..pairs {
+            let base = pair * 2 + 1;
+            let x = pair as f32 * 10_000.0;
+            receivers.insert(base, add_player_at(&mut room, base, x, 0.0));
+            receivers.insert(base + 1, add_player_at(&mut room, base + 1, x + 3.0, 0.0));
+        }
+        let states = states_of(&room);
+        room.broadcast_snapshot(1, &states, &[], &[]);
+
+        for pair in 0..pairs {
+            let base = pair * 2 + 1;
+            for id in [base, base + 1] {
+                let Outbound::Binary(frame) = receivers.get_mut(&id).unwrap().try_recv().unwrap()
+                else {
+                    panic!("player {id} must get a Binary keyframe");
+                };
+                let mut seen = keyframe_ids(&frame).0;
+                seen.sort_unstable();
+                assert_eq!(
+                    seen,
+                    vec![base, base + 1],
+                    "player {id} sees only its own pair, not the distant others"
+                );
+            }
+        }
     }
 }
