@@ -15,7 +15,7 @@ window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as ty
 
 import { useGame } from './use-game';
 
-afterEach(() => { cleanup(); document.body.innerHTML = ''; });
+afterEach(() => { cleanup(); document.body.innerHTML = ''; window.localStorage.clear(); });
 
 // The engine now loads on Play, not on mount, so the bridge only exists after the player presses Play.
 // A #playBtn node (normally rendered by Game.tsx) is injected and clicked to drive bootEngine.
@@ -29,6 +29,18 @@ async function mountWithBridge(): Promise<{ result: ReturnType<typeof renderHook
   act(() => { playBtn.click(); });
   await waitFor(() => expect(initGame).toHaveBeenCalled());
   return { result, bridge: initGame.mock.calls[0][1] as CoopBridge };
+}
+
+// Mount the hook with a #playBtn ready to click (the engine's own start listener lives on it), without
+// auto-firing Play — so a test can choose mode/name first and assert the login gate's decision.
+async function mountReady(): Promise<{ result: ReturnType<typeof renderHook<ReturnType<typeof useGame>, unknown>>['result']; playBtn: HTMLButtonElement }> {
+  initGame.mockClear();
+  const playBtn = document.createElement('button');
+  playBtn.id = 'playBtn';
+  document.body.appendChild(playBtn);
+  const { result } = renderHook(() => useGame());
+  await waitFor(() => expect(result.current.brand).not.toBeNull());
+  return { result, playBtn };
 }
 
 describe('useGame', () => {
@@ -95,5 +107,42 @@ describe('useGame', () => {
     act(() => bridge.hud.onPendingApprovals([guest]));
     await waitFor(() => expect(result.current.pendingApprovals).toHaveLength(1));
     expect(result.current.feed.filter((entry) => entry.kind === 'approval')).toHaveLength(1);
+  });
+
+  it('a named ONLINE player with no claim still gets the login gate (does not boot)', async () => {
+    window.localStorage.setItem('bl-name', 'Maria');
+    const { result, playBtn } = await mountReady();
+    expect(result.current.solo).toBe(false);
+
+    act(() => { playBtn.click(); });
+    await waitFor(() => expect(result.current.loginStep).toBe('email'));
+    expect(initGame).not.toHaveBeenCalled();
+  });
+
+  it('a named SOLO/offline player boots straight in, skipping the login flow', async () => {
+    window.localStorage.setItem('bl-name', 'Maria');
+    const { result, playBtn } = await mountReady();
+    act(() => { result.current.setSolo(true); result.current.soloRef.current = true; });
+
+    act(() => { playBtn.click(); });
+    await waitFor(() => expect(initGame).toHaveBeenCalledOnce());
+    expect(result.current.loginStep).toBeNull();
+  });
+
+  it('playOffline boots offline with the entered name and skips auth', async () => {
+    window.localStorage.setItem('bl-name', 'Maria');
+    const { result, playBtn } = await mountReady();
+
+    act(() => { playBtn.click(); });
+    await waitFor(() => expect(result.current.loginStep).toBe('email'));
+    expect(initGame).not.toHaveBeenCalled();
+
+    act(() => { result.current.playOffline(); });
+    await waitFor(() => expect(initGame).toHaveBeenCalledOnce());
+    expect(result.current.loginStep).toBeNull();
+    expect(result.current.solo).toBe(true);
+    const bridge = initGame.mock.calls[0][1] as CoopBridge;
+    expect(bridge.resolveName()).toBe('Maria');
+    expect(bridge.resolveOffline()).toBe(true);
   });
 });

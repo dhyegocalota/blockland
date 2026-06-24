@@ -33,7 +33,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     pendingApprovals: [], toggleApprovalRequired: () => {}, approvePlayer: () => {}, rejectPlayer: () => {}, banPending: () => {},
     bans: [], unban: () => {}, setLimits: () => {}, toggleOnlineAllowed: () => {}, toggleOfflineAllowed: () => {}, updateRequired: false,
     chatLines: [], chatOpen: false, chatDraft: '', setChatDraft: () => {}, chatInputRef: { current: null }, openChat: () => {}, sendChat: () => {}, closeChat: () => {},
-    onNameChange: () => {}, onLookChange: () => {}, requestCode: () => {}, verifyCode: () => {}, logout: () => {}, playAsGuest: () => {}, discardName: () => {},
+    onNameChange: () => {}, onLookChange: () => {}, requestCode: () => {}, verifyCode: () => {}, logout: () => {}, playAsGuest: () => {}, playOffline: () => {}, discardName: () => {},
     ...overrides,
   };
 }
@@ -289,5 +289,31 @@ describe('Game', () => {
     const rows = within(document.getElementById('adminPlayers')!).getAllByRole('listitem');
     expect(rows[0].querySelector('.kick')).toBeNull();
     expect(rows[1].querySelector('.kick')).not.toBeNull();
+  });
+
+  it('offers a "Play offline" button on the email login step that boots offline with the name', () => {
+    const playOffline = vi.fn();
+    useGame.mockReturnValue(gameState({ loginStep: 'email', playOffline }));
+    render(<Game />);
+    const offline = document.getElementById('loginOffline')!;
+    expect(offline).toBeInTheDocument();
+    expect(offline.textContent).toBe('🔵 Jogar offline com esse nome');
+    fireEvent.click(offline);
+    expect(playOffline).toHaveBeenCalledOnce();
+  });
+
+  it('offers the "Play offline" button on the code login step too', () => {
+    useGame.mockReturnValue(gameState({ loginStep: 'code' }));
+    render(<Game />);
+    expect(document.getElementById('loginOffline')).toBeInTheDocument();
+  });
+
+  it('frames the login modal as an online-name claim (reworded title + body)', () => {
+    useGame.mockReturnValue(gameState({ loginStep: 'email', name: 'Maria' }));
+    render(<Game />);
+    const modal = document.getElementById('loginModal')!;
+    expect(within(modal).getByRole('heading').textContent).toBe('Jogar online com "Maria"');
+    expect(modal.textContent).toContain('online');
+    expect(modal.textContent).toContain('offline');
   });
 });
