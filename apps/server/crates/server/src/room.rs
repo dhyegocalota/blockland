@@ -2621,7 +2621,14 @@ impl Room {
                 .map(|p| [p.x, p.z]),
         );
         let mut rng = rand::thread_rng();
-        let (base_x, base_z) = sim::random_spawn_base(rng.gen(), rng.gen());
+        // Stress affordance: STRESS_SPAWN_RADIUS scatters spawns across a wide area so a load test can
+        // place players far enough apart for AOI to engage. Unset/too-small → the normal spawn ring.
+        let spawn_radius = std::env::var("STRESS_SPAWN_RADIUS")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .filter(|r| *r > sim::SPAWN_AREA_RADIUS)
+            .unwrap_or(sim::SPAWN_AREA_RADIUS);
+        let (base_x, base_z) = sim::random_spawn_base_with_radius(rng.gen(), rng.gen(), spawn_radius);
         let (x, z) = sim::find_spawn_slot(base_x, base_z, sim::SPAWN_SEARCH_RADIUS, |x, z| {
             sim::spawn_column_clear(x, z, sim::SPAWN_CLEARANCE_GAP, &self.world, &actors)
         });

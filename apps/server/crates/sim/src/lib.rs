@@ -464,10 +464,17 @@ pub fn spawn_column_clear(
 /// a clear column. Deterministic in its draws (no `rand` here) so the sim stays pure; room.rs supplies
 /// the randomness. Mirrors the web `randomSpawnBase`.
 pub fn random_spawn_base(random_x: f32, random_z: f32) -> (i32, i32) {
+    random_spawn_base_with_radius(random_x, random_z, SPAWN_AREA_RADIUS)
+}
+
+/// Like [`random_spawn_base`] but with a caller-chosen radius. Normal play uses `SPAWN_AREA_RADIUS`;
+/// a load test can pass a much larger radius (via the `STRESS_SPAWN_RADIUS` env in room.rs) to scatter
+/// many players far enough apart that AOI culling actually engages.
+pub fn random_spawn_base_with_radius(random_x: f32, random_z: f32, radius: i32) -> (i32, i32) {
     let (center_x, center_z) = World::spawn_base();
-    let span = (SPAWN_AREA_RADIUS * 2 + 1) as f32;
-    let offset_x = (random_x * span).floor() as i32 - SPAWN_AREA_RADIUS;
-    let offset_z = (random_z * span).floor() as i32 - SPAWN_AREA_RADIUS;
+    let span = (radius * 2 + 1) as f32;
+    let offset_x = (random_x * span).floor() as i32 - radius;
+    let offset_z = (random_z * span).floor() as i32 - radius;
     (center_x + offset_x, center_z + offset_z)
 }
 
@@ -857,6 +864,23 @@ mod tests {
     #[test]
     fn random_spawn_base_differs_for_different_draws() {
         assert_ne!(random_spawn_base(0.05, 0.05), random_spawn_base(0.95, 0.95));
+    }
+
+    #[test]
+    fn random_spawn_base_with_radius_scatters_within_the_given_radius() {
+        let (center_x, center_z) = World::spawn_base();
+        let radius = 20_000;
+        let mut max_off = 0;
+        for i in 0..100 {
+            let rx = i as f32 / 100.0;
+            let rz = ((i * 13) % 100) as f32 / 100.0;
+            let (x, z) = random_spawn_base_with_radius(rx, rz, radius);
+            assert!((x - center_x).abs() <= radius);
+            assert!((z - center_z).abs() <= radius);
+            max_off = max_off.max((x - center_x).abs());
+        }
+        // The wide radius really does scatter far beyond the normal spawn ring.
+        assert!(max_off > SPAWN_AREA_RADIUS * 100);
     }
 
     #[test]
