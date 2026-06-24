@@ -4,9 +4,11 @@
 // — they just receive their `ServerMsg`s from the in-process core rather than the wire.
 //
 // The driver mirrors the WebSocket split exactly: every `send*` becomes a `core.input(playerId, ClientMsg
-// JSON, now)`; an internal rAF loop ticks the core and drains its outbound queue; each drained message is
-// routed to the matching handler — JSON `ServerMsg` through `parseServerMsg` + the same `t`-switch net.ts
-// uses, binary snapshots through the same wasm `SnapshotDecoder`. The first Welcome flips state to online.
+// BINARY, now)` — encoded through the SAME shared Rust codec the socket path uses (the wasm `encode_client_
+// msg`), so online + offline speak one wire format; an internal rAF loop ticks the core and drains its
+// outbound queue; each drained message is routed to the matching handler — JSON `ServerMsg` through
+// `parseServerMsg` + the same `t`-switch net.ts uses, binary snapshots through the same wasm
+// `SnapshotDecoder`. The first Welcome flips state to online.
 
 import { debug, warn } from '../../log';
 import { decodeSnapshot } from './wasm-snapshot-decoder';
@@ -18,8 +20,8 @@ import {
   editBatch, encodeClientMsg, hit, move, respawn, type ClientMsg, type EditCell, type EditOp, type Role,
 } from '../../protocol';
 import {
-  createSnapshotDecoder, createWasmCore, OutboundKind, type WasmCore, type WasmCoreInit,
-  type WasmSnapshotDecoder,
+  createClientEncoder, createSnapshotDecoder, createWasmCore, OutboundKind, type EncodeClientMsg,
+  type WasmCore, type WasmCoreInit, type WasmSnapshotDecoder,
 } from './wasm-core-loader';
 
 // Cells per EditBatch input; matches net.ts so the server-side batch handling sees identical-sized frames.
@@ -103,6 +105,8 @@ export interface WasmCoreSourceOptions {
   createCore?: (init: WasmCoreInit) => Promise<WasmCore>;
   // Builds the wasm snapshot decoder (default: the real wasm `SnapshotDecoder`). Injected as a fake in tests.
   createDecoder?: () => Promise<WasmSnapshotDecoder>;
+  // Builds the wasm client-message encoder (default: the real wasm `encode_client_msg`). Injected in tests.
+  createEncoder?: () => Promise<EncodeClientMsg>;
 }
 
 function defaultSchedule(step: () => void): () => void {
@@ -117,9 +121,11 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
   const wall = opts.wall ?? Date.now;
   const createCore = opts.createCore ?? createWasmCore;
   const createDecoder = opts.createDecoder ?? createSnapshotDecoder;
+  const createEncoder = opts.createEncoder ?? createClientEncoder;
 
   let core: WasmCore | null = null;
   let decoder: WasmSnapshotDecoder | null = null;
+  let encoder: EncodeClientMsg | null = null;
   let playerId: number | null = null;
   let state: NetState = 'offline';
   let ping = 0;
@@ -184,8 +190,8 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
   }
 
   function feed(msg: ClientMsg): void {
-    if (core === null || playerId === null) return;
-    core.input(playerId, encodeClientMsg(msg), now());
+    if (core === null || playerId === null || encoder === null) return;
+    core.input(playerId, encodeClientMsg(encoder, msg), now());
   }
 
   return {
@@ -193,13 +199,15 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
       closed = false;
       setState('connecting');
       debug('wasmcore', 'connecting', { name: opts.name });
-      // Build the core AND the snapshot decoder before the first step drains the core's snapshots, so the
-      // very first keyframe the core emits is decoded (no dropped frame). Both run on the inited wasm.
-      Promise.all([createCore({ ...opts.init, nowMs: now(), wallMs: wall() }), createDecoder()])
-        .then(([builtCore, builtDecoder]) => {
+      // Build the core, the snapshot decoder AND the client encoder before the first step drains/feeds, so the
+      // very first keyframe the core emits is decoded (no dropped frame) and the first input encodes. All run
+      // on the inited wasm.
+      Promise.all([createCore({ ...opts.init, nowMs: now(), wallMs: wall() }), createDecoder(), createEncoder()])
+        .then(([builtCore, builtDecoder, builtEncoder]) => {
           if (closed) { builtCore.free(); builtDecoder.free(); return; }
           core = builtCore;
           decoder = builtDecoder;
+          encoder = builtEncoder;
           playerId = builtCore.add_local_player(opts.name, JSON.stringify(opts.look));
           debug('wasmcore', 'local player admitted', { playerId });
           lastStepAt = now();
@@ -219,6 +227,7 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
       core = null;
       decoder?.free();
       decoder = null;
+      encoder = null;
       playerId = null;
       setState('offline');
     },

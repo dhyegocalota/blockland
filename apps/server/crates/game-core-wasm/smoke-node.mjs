@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const wasmDir = resolve(here, '../../../web/lib/wasm');
 
 const mod = await import(resolve(wasmDir, 'game_core_wasm.js'));
-const { default: init, WasmCore, OutboundKind } = mod;
+const { default: init, WasmCore, OutboundKind, encode_client_msg } = mod;
 
 const bytes = readFileSync(resolve(wasmDir, 'game_core_wasm_bg.wasm'));
 await init({ module_or_path: bytes });
@@ -56,7 +56,8 @@ for (let frame = 0; frame < 5; frame++) {
 if (snapshots < 1) throw new Error(`ticking must emit binary snapshots, got ${snapshots}`);
 
 // A build edit flows through as an Edit ServerMsg (proves input → world → outbound end to end). Place
-// it right next to the player's spawn so it is within edit reach (the spawn is random per seed).
+// it right next to the player's spawn so it is within edit reach (the spawn is random per seed). The
+// input is the BINARY client frame the web client now sends (encoded through the shared Rust codec).
 const [sx, sy, sz] = welcome.spawn;
 const editCell = {
   t: 'edit',
@@ -66,7 +67,7 @@ const editCell = {
   z: Math.round(sz),
   id: 3,
 };
-core.input(id, JSON.stringify(editCell), (t += 5));
+core.input(id, encode_client_msg(JSON.stringify(editCell)), (t += 5));
 const editMsgs = core
   .drain_outbound()
   .filter((m) => m.kind === OutboundKind.Json)

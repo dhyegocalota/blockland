@@ -1,18 +1,22 @@
-//! Wire protocol shared between the authoritative server and the web client.
-//! JSON over WebSocket for now; swap to a binary codec later without touching call sites.
+//! Wire protocol shared between the authoritative server and the web client. The hot frames are BINARY:
+//! client→server [`ClientMsg`] via [`client_codec`] and the server→client per-tick snapshot via
+//! [`snapshot_codec`]; every other server→client message stays JSON text. The client encodes/decodes both
+//! through these SAME Rust codecs (compiled to wasm), so neither side hand-writes the wire.
 //!
-//! The TypeScript counterpart is generated from these types by the `export_typescript_bindings`
-//! test (ts-rs) into `shared/ts/protocol.ts`, so the client never hand-writes the wire shapes.
+//! The TypeScript counterpart of the message TYPES is generated from these definitions by the
+//! `export_typescript_bindings` test (ts-rs) into `apps/web/lib/protocol.gen.ts`, so the client never
+//! hand-writes the wire shapes either.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub mod client_codec;
 pub mod snapshot_codec;
 
 pub type PlayerId = u32;
 
 /// Messages the client sends to the server.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientMsg {
     Join {
@@ -168,7 +172,7 @@ pub enum EditOp {
 
 /// One absolute voxel write; `id` of 0 (air) means break. Used for bulk edits (structures) and to
 /// hand the current world to a player who just joined.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 pub struct EditCell {
     pub x: i32,
     pub y: i32,

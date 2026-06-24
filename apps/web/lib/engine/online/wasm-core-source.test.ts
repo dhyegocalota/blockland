@@ -18,6 +18,13 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// A fake client encoder mirroring the production seam: the driver builds a JSON `ClientMsg` and hands it to
+// the encoder, which returns the bytes fed to `core.input`. The real encoder is the wasm `encode_client_msg`
+// (covered by the cross-language fixtures); here a JSON-as-bytes stand-in lets the fake core read the message
+// back, so the test asserts the DRIVER feeds the right `ClientMsg` per send* without depending on the codec.
+const fakeEncode = (json: string): Uint8Array => new TextEncoder().encode(json);
+const fakeDecode = (bytes: Uint8Array): Record<string, unknown> => JSON.parse(new TextDecoder().decode(bytes));
+
 // A fake WasmCore: records every input + tick, and hands back queued outbound messages on drain so a test
 // can stage what the "server" produces. No real wasm — the driver logic is what's under test.
 function makeFakeCore() {
@@ -26,7 +33,7 @@ function makeFakeCore() {
   let ticks = 0;
   const core = {
     add_local_player: vi.fn(() => 7),
-    input: vi.fn((playerId: number, msg: string) => { inputs.push({ playerId, msg: JSON.parse(msg) }); }),
+    input: vi.fn((playerId: number, msg: Uint8Array) => { inputs.push({ playerId, msg: fakeDecode(msg) }); }),
     tick: vi.fn(() => { ticks += 1; return true; }),
     drain_outbound: vi.fn(() => outbound.splice(0, outbound.length)),
     chunk_edits: vi.fn(() => new Int32Array()),
@@ -53,6 +60,7 @@ function makeDriver(handlers: NetHandlers) {
     init: { seed: 1, config: '{}', debug: false },
     createCore: () => Promise.resolve(fake.core),
     createDecoder: createTestSnapshotDecoder,
+    createEncoder: () => Promise.resolve(fakeEncode),
     schedule: (step) => { pendingStep = step; return () => { pendingStep = null; }; },
     now: () => 1000,
     wall: () => 2000,

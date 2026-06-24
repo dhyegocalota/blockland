@@ -386,14 +386,15 @@ export class WasmCore {
         return ret !== 0;
     }
     /**
-     * Feed one client input (a JSON `ClientMsg`, the exact wire shape the web client already speaks) for
-     * the given player. `now_ms` advances the monotonic clock first, so the room timestamps it correctly.
+     * Feed one client input (a BINARY `ClientMsg`, the exact wire frame the web client now sends over the
+     * socket — see `protocol::client_codec`) for the given player. `now_ms` advances the monotonic clock
+     * first, so the room timestamps it correctly. One format (binary) drives online + offline alike.
      * @param {number} player_id
-     * @param {string} msg
+     * @param {Uint8Array} msg
      * @param {number} now_ms
      */
     input(player_id, msg, now_ms) {
-        const ptr0 = passStringToWasm0(msg, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passArray8ToWasm0(msg, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmcore_input(this.__wbg_ptr, player_id, ptr0, len0, now_ms);
         if (ret[1]) {
@@ -402,6 +403,24 @@ export class WasmCore {
     }
 }
 if (Symbol.dispose) WasmCore.prototype[Symbol.dispose] = WasmCore.prototype.free;
+
+/**
+ * Encode one client message to its compact BINARY wire frame (`protocol::client_codec`), the single Rust
+ * encoder the web client sends through. `msg` is the JSON `ClientMsg` the TS factories build (so the client
+ * keeps no hand-written encoder); this parses it and returns the bytes the socket sends as a binary frame
+ * (and the offline core feeds straight into `WasmCore::input`). STANDALONE — no Room/WasmCore needed.
+ * @param {string} json
+ * @returns {Uint8Array}
+ */
+export function encode_client_msg(json) {
+    const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.encode_client_msg(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
 
 /**
  * The full procedural base of one chunk `(cx, cz)` as a flat `CHUNK*CHUNK*SIZE_Y` byte array (the TS

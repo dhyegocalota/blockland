@@ -32,7 +32,8 @@ on every `new`/`input`/`tick`. The room's `StdRng` is reseeded from a JS-provide
 ```ts
 const core = new WasmCore(seed, configJson, performance.now(), Date.now(), debug);
 const playerId = core.add_local_player(name, lookJson); // the player is the room admin
-core.input(playerId, clientMsgJson, performance.now());  // JSON ClientMsg, the wire shape
+const bytes = encode_client_msg(clientMsgJson);         // shared Rust codec → binary ClientMsg frame
+core.input(playerId, bytes, performance.now());          // BINARY ClientMsg, the same wire the socket sends
 const open = core.tick(performance.now(), Date.now(), dt);
 for (const m of core.drain_outbound()) {                 // Welcome/roster/edits/snapshots
   if (m.kind === OutboundKind.Json) handleServerMsg(JSON.parse(m.json));

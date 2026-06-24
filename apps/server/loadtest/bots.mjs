@@ -1,14 +1,16 @@
 // 1000-bot load/stress harness for the Blockland Rust server. Each bot opens a WebSocket, joins as a
 // guest, then runs a realistic MIX of actions (run, fly, dig/place, hit a creature, pvp, chat) at the
 // server's rate-limit cadence — a worst case for the per-connection AOI snapshot encode and every
-// broadcast path. It decodes the binary snapshot frames (see snapshot-decoder.mjs) to learn which
-// creatures/players are nearby, and counts RX bytes/frames so we can report the real wire cost per bot.
+// broadcast path. It sends each action as the compact BINARY client frame the web client now sends
+// (see client-codec.mjs) and decodes the binary snapshot frames (see snapshot-decoder.mjs) to learn
+// which creatures/players are nearby, counting RX bytes/frames to report the real wire cost per bot.
 //
 // Run: BOTS=1000 DURATION_S=30 URL=ws://localhost:8080/ws TENANT=acme node bots.mjs
 // See README.md for running it against the docker server (raise the two server caps via env).
 
 import WebSocket from 'ws';
 import { decodeFrame, SnapshotState, nearestWithin } from './snapshot-decoder.mjs';
+import { encodeClientMsg } from './client-codec.mjs';
 
 // --- config (env / CLI) ---
 const BOTS = intEnv('BOTS', 1000);
@@ -261,7 +263,9 @@ class Bot {
 
   send(msg) {
     if (this.socket.readyState !== WebSocket.OPEN) return;
-    this.socket.send(JSON.stringify(msg));
+    // The server only accepts BINARY client frames now (symmetric with the binary snapshots it sends);
+    // encode through the shared client codec mirror, same wire as the web client.
+    this.socket.send(encodeClientMsg(msg));
   }
 
   clearTimers() {

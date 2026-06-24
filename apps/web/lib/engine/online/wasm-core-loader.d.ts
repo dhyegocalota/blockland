@@ -9,4 +9,5 @@ declare module '*/wasm/game_core_wasm.js' {
   export const OutboundMessage: unknown;
   export const OutboundKind: unknown;
   export function worldgen_chunk(cx: number, cz: number): Uint8Array;
+  export function encode_client_msg(json: string): Uint8Array;
 }

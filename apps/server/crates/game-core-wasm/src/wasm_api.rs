@@ -9,6 +9,7 @@ use std::sync::Arc;
 use game_core::time::{set_now_ms, set_wall_ms, Instant};
 use game_core::{playtime_key, Admission, Appearance, Conn, Role, Room, RoomConfig};
 use js_sys::Uint8Array;
+use protocol::client_codec::{decode_client_msg, encode_client_msg as codec_encode_client_msg};
 use protocol::{ClientMsg, PlayerId};
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
@@ -188,12 +189,13 @@ impl WasmCore {
         Ok(id)
     }
 
-    /// Feed one client input (a JSON `ClientMsg`, the exact wire shape the web client already speaks) for
-    /// the given player. `now_ms` advances the monotonic clock first, so the room timestamps it correctly.
+    /// Feed one client input (a BINARY `ClientMsg`, the exact wire frame the web client now sends over the
+    /// socket — see `protocol::client_codec`) for the given player. `now_ms` advances the monotonic clock
+    /// first, so the room timestamps it correctly. One format (binary) drives online + offline alike.
     #[wasm_bindgen]
-    pub fn input(&mut self, player_id: PlayerId, msg: &str, now_ms: f64) -> Result<(), JsValue> {
+    pub fn input(&mut self, player_id: PlayerId, msg: &[u8], now_ms: f64) -> Result<(), JsValue> {
         set_now_ms(now_ms);
-        let msg: ClientMsg = serde_json::from_str(msg)
+        let msg: ClientMsg = decode_client_msg(msg)
             .map_err(|e| JsValue::from_str(&format!("invalid client message: {e}")))?;
         self.room.on_input(Instant::now(), player_id, msg);
         Ok(())
@@ -237,6 +239,17 @@ impl WasmCore {
     pub fn world_blob(&self) -> Uint8Array {
         Uint8Array::from(self.room.world_snapshot_blob().as_slice())
     }
+}
+
+/// Encode one client message to its compact BINARY wire frame (`protocol::client_codec`), the single Rust
+/// encoder the web client sends through. `msg` is the JSON `ClientMsg` the TS factories build (so the client
+/// keeps no hand-written encoder); this parses it and returns the bytes the socket sends as a binary frame
+/// (and the offline core feeds straight into `WasmCore::input`). STANDALONE — no Room/WasmCore needed.
+#[wasm_bindgen]
+pub fn encode_client_msg(json: &str) -> Result<Uint8Array, JsValue> {
+    let msg: ClientMsg = serde_json::from_str(json)
+        .map_err(|e| JsValue::from_str(&format!("invalid client message: {e}")))?;
+    Ok(Uint8Array::from(codec_encode_client_msg(&msg).as_slice()))
 }
 
 /// The full procedural base of one chunk `(cx, cz)` as a flat `CHUNK*CHUNK*SIZE_Y` byte array (the TS

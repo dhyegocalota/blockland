@@ -6,18 +6,22 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { WasmSnapshotDecoder } from './wasm-core-loader';
+import type { EncodeClientMsg, WasmSnapshotDecoder } from './wasm-core-loader';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let modulePromise: Promise<any> | null = null;
+interface TestWasmModule {
+  SnapshotDecoder: new () => WasmSnapshotDecoder;
+  encode_client_msg: EncodeClientMsg;
+}
 
-async function loadModule(): Promise<{ SnapshotDecoder: new () => WasmSnapshotDecoder }> {
+let modulePromise: Promise<TestWasmModule> | null = null;
+
+async function loadModule(): Promise<TestWasmModule> {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
     const wasm = await import('../../wasm/game_core_wasm.js');
     const bytes = readFileSync(fileURLToPath(new URL('../../wasm/game_core_wasm_bg.wasm', import.meta.url)));
     wasm.initSync({ module: bytes });
-    return wasm;
+    return wasm as unknown as TestWasmModule;
   })();
   return modulePromise;
 }
@@ -26,4 +30,11 @@ async function loadModule(): Promise<{ SnapshotDecoder: new () => WasmSnapshotDe
 export async function createTestSnapshotDecoder(): Promise<WasmSnapshotDecoder> {
   const mod = await loadModule();
   return new mod.SnapshotDecoder();
+}
+
+// An `encoderFactory`/`createEncoder` drop-in (matches the production signature) backed by the real wasm,
+// so the send-path + protocol tests encode `ClientMsg` through the SAME Rust codec the server decodes.
+export async function createTestClientEncoder(): Promise<EncodeClientMsg> {
+  const mod = await loadModule();
+  return (json) => mod.encode_client_msg(json);
 }

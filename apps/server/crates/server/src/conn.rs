@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
+use protocol::client_codec::decode_client_msg;
 use protocol::{ClientMsg, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
@@ -16,8 +17,10 @@ use game_core::{Appearance, Conn, Outbound};
 use crate::hub::Hub;
 use crate::room_io::{NativeSink, RoomCmd};
 
-// Large enough for a chunked EditBatch (the client caps each batch to BATCH_CHUNK cells).
-const MAX_TEXT_BYTES: usize = 32 * 1024;
+// Largest accepted client frame: large enough for a chunked EditBatch (the client caps each batch to
+// BATCH_CHUNK cells). Client input is now a compact BINARY `ClientMsg` (`protocol::client_codec`), so a
+// batch is even smaller than the old JSON, but the cap stays generous.
+const MAX_MSG_BYTES: usize = 32 * 1024;
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 // Steady heartbeat cadence, measured ON THE CONNECTION TASK (not the room tick) so a busy room never
 // inflates a player's reported ping. Matches the old tick cadence (2s) so latency reads identically.
@@ -75,11 +78,9 @@ pub async fn handle(socket: WebSocket, hub: Arc<Hub>, ip: IpAddr) {
 async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     let (mut sink, mut stream) = socket.split();
 
-    // First message must be a Join, within a timeout.
+    // First message must be a Join (a binary `ClientMsg` frame), within a timeout.
     let join = match tokio::time::timeout(JOIN_TIMEOUT, stream.next()).await {
-        Ok(Some(Ok(Message::Text(t)))) if t.len() <= MAX_TEXT_BYTES => {
-            serde_json::from_str::<ClientMsg>(t.as_str()).ok()
-        }
+        Ok(Some(Ok(Message::Binary(b)))) if b.len() <= MAX_MSG_BYTES => decode_client_msg(&b).ok(),
         _ => None,
     };
     let Some(ClientMsg::Join {
@@ -211,11 +212,11 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
     let mut clean_close = false;
     while let Some(Ok(msg)) = stream.next().await {
         match msg {
-            Message::Text(t) => {
-                if t.len() > MAX_TEXT_BYTES {
+            Message::Binary(b) => {
+                if b.len() > MAX_MSG_BYTES {
                     continue;
                 }
-                if let Ok(cm) = serde_json::from_str::<ClientMsg>(t.as_str()) {
+                if let Ok(cm) = decode_client_msg(&b) {
                     // The Pong answers THIS task's heartbeat: measure the RTT here and never forward it to
                     // the room (latency is connection-local now; the room only reads the measured atomic).
                     if let ClientMsg::Pong { nonce } = cm {

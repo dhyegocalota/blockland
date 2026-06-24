@@ -75,11 +75,20 @@ export class WasmCore {
    */
   tick(now_ms: number, wall_ms: number, dt: number): boolean;
   /**
-   * Feed one client input (a JSON `ClientMsg`, the exact wire shape the web client already speaks) for
-   * the given player. `now_ms` advances the monotonic clock first, so the room timestamps it correctly.
+   * Feed one client input (a BINARY `ClientMsg`, the exact wire frame the web client now sends over the
+   * socket — see `protocol::client_codec`) for the given player. `now_ms` advances the monotonic clock
+   * first, so the room timestamps it correctly. One format (binary) drives online + offline alike.
    */
-  input(player_id: number, msg: string, now_ms: number): void;
+  input(player_id: number, msg: Uint8Array, now_ms: number): void;
 }
+
+/**
+ * Encode one client message to its compact BINARY wire frame (`protocol::client_codec`), the single Rust
+ * encoder the web client sends through. `msg` is the JSON `ClientMsg` the TS factories build (so the client
+ * keeps no hand-written encoder); this parses it and returns the bytes the socket sends as a binary frame
+ * (and the offline core feeds straight into `WasmCore::input`). STANDALONE — no Room/WasmCore needed.
+ */
+export function encode_client_msg(json: string): Uint8Array;
 
 /**
  * The full procedural base of one chunk `(cx, cz)` as a flat `CHUNK*CHUNK*SIZE_Y` byte array (the TS
@@ -97,6 +106,7 @@ export interface InitOutput {
   readonly __wbg_outboundmessage_free: (a: number, b: number) => void;
   readonly __wbg_snapshotdecoder_free: (a: number, b: number) => void;
   readonly __wbg_wasmcore_free: (a: number, b: number) => void;
+  readonly encode_client_msg: (a: number, b: number) => [number, number, number];
   readonly outboundmessage_binary: (a: number) => any;
   readonly outboundmessage_json: (a: number) => [number, number];
   readonly outboundmessage_kind: (a: number) => number;
@@ -116,8 +126,8 @@ export interface InitOutput {
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-  readonly __externref_drop_slice: (a: number, b: number) => void;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+  readonly __externref_drop_slice: (a: number, b: number) => void;
   readonly __wbindgen_start: () => void;
 }
 

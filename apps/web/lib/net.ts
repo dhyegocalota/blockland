@@ -5,7 +5,12 @@
 
 import { debug, warn } from './log';
 import { DebugEventDir, DebugEventKind, debugReportRing, type Vec3Like } from './engine/debug-report';
-import { createSnapshotDecoder, type WasmSnapshotDecoder } from './engine/online/wasm-core-loader';
+import {
+  createClientEncoder,
+  createSnapshotDecoder,
+  type EncodeClientMsg,
+  type WasmSnapshotDecoder,
+} from './engine/online/wasm-core-loader';
 import { decodeSnapshot } from './engine/online/wasm-snapshot-decoder';
 import type { SnapshotMsg } from './net-snapshot';
 import {
@@ -39,13 +44,14 @@ import {
   parseServerMsg,
   pong,
   respawn,
+  type ClientMsg,
   type EditCell,
   type EditOp,
   type Role,
   type ServerMsg,
 } from './protocol';
 
-// Cells per EditBatch frame; keeps each WebSocket message well under the server's text-size cap.
+// Cells per EditBatch frame; keeps each WebSocket message well under the server's per-frame byte cap.
 const BATCH_CHUNK = 256;
 // WebSocket.OPEN, by value — `WebSocket` is not a global in the Node test/CI environment.
 const WS_OPEN = 1;
@@ -64,9 +70,10 @@ export type NetState =
   | 'needs_login'
   | 'rejected';
 
-// The per-tick Snapshot is the one message that travels as a compact BINARY frame (every other message
-// stays JSON text). The wasm `SnapshotDecoder` (the single Rust decode in `protocol::snapshot_codec`)
-// reconstructs each keyframe/delta into the named shape the rest of the client consumes;
+// Server→client: the per-tick Snapshot travels as a compact BINARY frame (every other server message stays
+// JSON text). Client→server is now ALL binary (the `ClientMsg` codec). The wasm `SnapshotDecoder` (the single
+// Rust decode in `protocol::snapshot_codec`) reconstructs each keyframe/delta into the named shape the rest of
+// the client consumes;
 // `net-snapshot.ts` owns the shared shapes + kind table. We re-export them here so the engine keeps
 // importing snapshot types from `net` unchanged.
 export type {
@@ -114,7 +121,9 @@ export interface NetHandlers {
 }
 
 export interface WebSocketLike {
-  send(data: string): void;
+  // Client→server messages are now BINARY frames (the compact `ClientMsg` codec, symmetric with the binary
+  // server→client snapshots). The real `WebSocket.send` accepts a `Uint8Array` (sent as a binary frame).
+  send(data: Uint8Array): void;
   close(): void;
   readyState: number;
   // 'arraybuffer' so the per-tick snapshot binary frame arrives as an ArrayBuffer we can decode directly,
@@ -143,6 +152,10 @@ export interface NetOptions {
   // the real wasm decoder, which is already inited before connect (the engine awaits the wasm load at
   // boot). Injectable so tests drive decode with a fake without the wasm.
   decoderFactory?: () => Promise<WasmSnapshotDecoder>;
+  // Builds the binary client-message encoder (the wasm `encode_client_msg` over the shared Rust codec).
+  // Default: the real wasm encoder, already inited before connect (the engine awaits the wasm at boot).
+  // Injectable so tests drive the send path with the real wasm encoder (or a fake) without the bundler.
+  encoderFactory?: () => Promise<EncodeClientMsg>;
   now?: () => number;
   reconnect?: boolean;
   // Source of browser connectivity events (default: window online/offline). The browser flips these the
@@ -221,6 +234,7 @@ const defaultSocketFactory = (url: string): WebSocketLike =>
 export function createNet(opts: NetOptions): NetClient {
   const socketFactory = opts.socketFactory ?? defaultSocketFactory;
   const decoderFactory = opts.decoderFactory ?? createSnapshotDecoder;
+  const encoderFactory = opts.encoderFactory ?? createClientEncoder;
   const now = opts.now ?? Date.now;
   const reconnect = opts.reconnect ?? true;
   const connectivity = opts.connectivity ?? windowConnectivity();
@@ -243,6 +257,10 @@ export function createNet(opts: NetOptions): NetClient {
   // full object every tick. Built once on connect (the wasm is already inited at boot — see `open`); null
   // only in the sub-millisecond window before that resolves, during which no binary frame can yet arrive.
   let decoder: WasmSnapshotDecoder | null = null;
+  // The wasm client-message encoder (the shared Rust codec): turns each `ClientMsg` into the binary frame the
+  // socket sends. Built once on connect (the wasm is inited at boot — see `open`); null only in the sub-
+  // millisecond window before that resolves, during which `rawSend` drops the (re)send rather than guess bytes.
+  let encoder: EncodeClientMsg | null = null;
   // The freshest client player position the engine has thrown out as a Move; we stamp every recorded
   // Dig/Hit/Edit with it so the diagnostics ring shows where the client believed it was aiming from.
   let lastMovePos: Vec3Like = { x: 0, y: 0, z: 0 };
@@ -312,10 +330,17 @@ export function createNet(opts: NetOptions): NetClient {
     return Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt);
   }
 
-  function rawSend(data: string): void {
+  // Encode a `ClientMsg` to its binary frame (the shared Rust codec via the wasm encoder) and send it. No-op
+  // if the socket isn't open or the encoder hasn't resolved yet (the wasm is inited at boot, so the latter is
+  // a sub-millisecond window before the first send).
+  function rawSend(msg: ClientMsg): void {
     if (socket === null) return;
     if (socket.readyState !== WS_OPEN) return;
-    socket.send(data);
+    if (encoder === null) {
+      warn('net', 'send dropped (encoder not ready)', { t: msg.t });
+      return;
+    }
+    socket.send(encodeClientMsg(encoder, msg));
   }
 
   function recordSend(kind: DebugEventKind, fields: { cell?: Vec3Like; id?: number }): void {
@@ -437,7 +462,7 @@ export function createNet(opts: NetOptions): NetClient {
       const arrivedAt = now();
       if (lastPingAt !== null) ping = arrivedAt - lastPingAt;
       lastPingAt = arrivedAt;
-      rawSend(encodeClientMsg(pong(msg.nonce)));
+      rawSend(pong(msg.nonce));
       return;
     }
     if (msg.t === 'error') {
@@ -510,13 +535,18 @@ export function createNet(opts: NetOptions): NetClient {
     decoderFactory()
       .then((built) => { decoder = built; debug('net', 'snapshot decoder ready'); })
       .catch((error) => warn('net', 'snapshot decoder init failed', { error: String(error) }));
+    // The binary client-message encoder (the shared Rust codec). Like the decoder, the wasm is inited at
+    // boot so this resolves in a microtask before the join goes out; built once per (re)connect.
+    encoderFactory()
+      .then((built) => { encoder = built; debug('net', 'client encoder ready'); })
+      .catch((error) => warn('net', 'client encoder init failed', { error: String(error) }));
     debug('net', 'opening socket', { url: opts.url, tenant: opts.tenant, attempt, waitingApproval });
     const next = socketFactory(opts.url);
     socket = next;
     next.binaryType = 'arraybuffer';
     next.onopen = () => {
       debug('net', 'socket open, joining', { name: opts.name, world: opts.world });
-      rawSend(encodeClientMsg(join({
+      rawSend(join({
         tenant: opts.tenant,
         world: opts.world,
         name: opts.name,
@@ -524,7 +554,7 @@ export function createNet(opts: NetOptions): NetClient {
         shirt: opts.shirt,
         hair: opts.hair,
         claim: opts.claim,
-      })));
+      }));
     };
     next.onmessage = (event) => handleData(event.data);
     next.onclose = () => handleClose();
@@ -563,96 +593,97 @@ export function createNet(opts: NetOptions): NetClient {
       clearLivenessTimer();
       decoder?.free();
       decoder = null;
+      encoder = null;
       socket?.close();
       if (socket === null) setState('offline');
     },
     sendMove(x, y, z, yaw, pitch): void {
       lastMovePos = { x, y, z };
       debugReportRing.push({ dir: DebugEventDir.Send, kind: DebugEventKind.Move, pos: { x, y, z } });
-      rawSend(encodeClientMsg(move(x, y, z, yaw, pitch)));
+      rawSend(move(x, y, z, yaw, pitch));
     },
     sendEdit(op, x, y, z, id): void {
       recordSend(DebugEventKind.Edit, { cell: { x, y, z }, id });
       debug('action', 'edit send', { op, x, y, z, id, px: lastMovePos.x, py: lastMovePos.y, pz: lastMovePos.z, reach: reachTo({ x, y, z }) });
-      rawSend(encodeClientMsg(edit(op, x, y, z, id)));
+      rawSend(edit(op, x, y, z, id));
     },
     sendEditBatch(edits): void {
       for (let i = 0; i < edits.length; i += BATCH_CHUNK) {
-        rawSend(encodeClientMsg(editBatch(edits.slice(i, i + BATCH_CHUNK))));
+        rawSend(editBatch(edits.slice(i, i + BATCH_CHUNK)));
       }
     },
     sendChat(text): void {
-      rawSend(encodeClientMsg(chat(text)));
+      rawSend(chat(text));
     },
     sendHit(id): void {
       recordSend(DebugEventKind.Hit, { id });
       debug('action', 'hit send', { id, px: lastMovePos.x, py: lastMovePos.y, pz: lastMovePos.z });
-      rawSend(encodeClientMsg(hit(id)));
+      rawSend(hit(id));
     },
     sendRespawn(): void {
-      rawSend(encodeClientMsg(respawn()));
+      rawSend(respawn());
     },
     sendDig(x, y, z): void {
       recordSend(DebugEventKind.Dig, { cell: { x, y, z } });
       debug('action', 'dig send', { x, y, z, px: lastMovePos.x, py: lastMovePos.y, pz: lastMovePos.z, reach: reachTo({ x, y, z }) });
-      rawSend(encodeClientMsg(dig(x, y, z)));
+      rawSend(dig(x, y, z));
     },
     sendAdminSetPeace(on): void {
-      rawSend(encodeClientMsg(adminSetPeace(on)));
+      rawSend(adminSetPeace(on));
     },
     sendAdminSetStructure(kind, allowed): void {
-      rawSend(encodeClientMsg(adminSetStructure(kind, allowed)));
+      rawSend(adminSetStructure(kind, allowed));
     },
     sendAdminSetPvp(on): void {
-      rawSend(encodeClientMsg(adminSetPvp(on)));
+      rawSend(adminSetPvp(on));
     },
     sendAdminSetChat(on): void {
-      rawSend(encodeClientMsg(adminSetChat(on)));
+      rawSend(adminSetChat(on));
     },
     sendAdminKick(id): void {
-      rawSend(encodeClientMsg(adminKick(id)));
+      rawSend(adminKick(id));
     },
     sendAdminBan(id): void {
-      rawSend(encodeClientMsg(adminBan(id)));
+      rawSend(adminBan(id));
     },
     sendAttackPlayer(id): void {
-      rawSend(encodeClientMsg(attackPlayer(id)));
+      rawSend(attackPlayer(id));
     },
     sendAdminResetWorld(): void {
-      rawSend(encodeClientMsg(adminResetWorld()));
+      rawSend(adminResetWorld());
     },
     sendAdminResetScores(): void {
-      rawSend(encodeClientMsg(adminResetScores()));
+      rawSend(adminResetScores());
     },
     sendAdminSuspend(on): void {
-      rawSend(encodeClientMsg(adminSuspend(on)));
+      rawSend(adminSuspend(on));
     },
     sendAdminSetRole(id, role): void {
-      rawSend(encodeClientMsg(adminSetRole(id, role)));
+      rawSend(adminSetRole(id, role));
     },
     sendAdminSetInfinite(on): void {
-      rawSend(encodeClientMsg(adminSetInfinite(on)));
+      rawSend(adminSetInfinite(on));
     },
     sendAdminSetApproval(on): void {
-      rawSend(encodeClientMsg(adminSetApproval(on)));
+      rawSend(adminSetApproval(on));
     },
     sendAdminApprove(accountId): void {
-      rawSend(encodeClientMsg(adminApprove(accountId)));
+      rawSend(adminApprove(accountId));
     },
     sendAdminReject(accountId): void {
-      rawSend(encodeClientMsg(adminReject(accountId)));
+      rawSend(adminReject(accountId));
     },
     sendAdminBanPending(accountId): void {
-      rawSend(encodeClientMsg(adminBanPending(accountId)));
+      rawSend(adminBanPending(accountId));
     },
     sendAdminUnban(ip): void {
-      rawSend(encodeClientMsg(adminUnban(ip)));
+      rawSend(adminUnban(ip));
     },
     sendAdminSetLimits(playtimeLimitMin, playtimeWindowH): void {
-      rawSend(encodeClientMsg(adminSetLimits(playtimeLimitMin, playtimeWindowH)));
+      rawSend(adminSetLimits(playtimeLimitMin, playtimeWindowH));
     },
     sendAdminSetModes(onlineAllowed, offlineAllowed): void {
-      rawSend(encodeClientMsg(adminSetModes(onlineAllowed, offlineAllowed)));
+      rawSend(adminSetModes(onlineAllowed, offlineAllowed));
     },
     get ping(): number {
       return ping;

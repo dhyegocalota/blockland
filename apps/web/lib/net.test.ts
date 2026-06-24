@@ -1,19 +1,33 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNet, type NetState, type WebSocketLike } from './net';
 import { encodeKeyframe, encodeDelta } from './engine/online/snapshot-test-codec';
-import { createTestSnapshotDecoder } from './engine/online/wasm-test-loader';
+import { createTestClientEncoder, createTestSnapshotDecoder } from './engine/online/wasm-test-loader';
+import { encodeClientMsg, type ClientMsg, type EncodeClientMsg } from './protocol';
 import type { SnapshotMsg } from './net-snapshot';
 
-// Pre-init the real wasm decoder once so the injected factory below resolves on a microtask (the module is
-// already loaded), mirroring production where the wasm is inited at boot before connect.
+// A reference encoder (the SAME wasm `encode_client_msg` the client uses), so a sent binary frame can be
+// asserted against the exact bytes the matching `ClientMsg` encodes to — proving the send path sends the
+// right message in the new binary wire. Built once in `beforeAll`.
+let refEncoder: EncodeClientMsg;
+
+// Pre-init the real wasm decoder + encoder once so the injected factories below resolve on a microtask (the
+// module is already loaded), mirroring production where the wasm is inited at boot before connect.
 beforeAll(async () => {
   (await createTestSnapshotDecoder()).free();
+  refEncoder = await createTestClientEncoder();
 });
 
-// Let net's `decoderFactory().then(...)` (and any pending microtask) run, so the decoder is set before the
-// test delivers a binary frame — the production path has the same ordering (decoder ready before snapshots).
-async function flushDecoder(): Promise<void> {
+// Let net's `decoderFactory()`/`encoderFactory()` `.then(...)` (and any pending microtask) run, so the decoder
+// + encoder are set before the test delivers a binary frame or sends — the production path has the same
+// ordering (both ready before the socket opens / snapshots arrive).
+async function flushWasm(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
+}
+
+// The bytes the given `ClientMsg` encodes to through the shared codec — what a correct send must have put on
+// the wire.
+function frameOf(msg: ClientMsg): Uint8Array {
+  return encodeClientMsg(refEncoder, msg);
 }
 
 class MockWebSocket implements WebSocketLike {
@@ -21,7 +35,7 @@ class MockWebSocket implements WebSocketLike {
 
   readyState: number = 0;
   binaryType = '';
-  sent: string[] = [];
+  sent: Uint8Array[] = [];
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: string | ArrayBuffer | Blob }) => void) | null = null;
   onclose: ((event: unknown) => void) | null = null;
@@ -31,7 +45,7 @@ class MockWebSocket implements WebSocketLike {
     MockWebSocket.instances.push(this);
   }
 
-  send(data: string): void {
+  send(data: Uint8Array): void {
     this.sent.push(data);
   }
 
@@ -105,6 +119,7 @@ function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
     },
     socketFactory: (url) => new MockWebSocket(url),
     decoderFactory: createTestSnapshotDecoder,
+    encoderFactory: createTestClientEncoder,
     now: () => clock,
     connectivity: {
       subscribe: (onOffline, onOnline) => {
@@ -136,14 +151,15 @@ describe('net client', () => {
     vi.useRealTimers();
   });
 
-  it('connect -> open -> welcome transitions to online', () => {
+  it('connect -> open -> welcome transitions to online', async () => {
     const { client, states } = makeClient();
     client.connect();
     expect(client.state).toBe('connecting');
 
     const socket = MockWebSocket.instances[0];
+    await flushWasm();
     socket.open();
-    expect(socket.sent[0]).toBe(JSON.stringify({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok' }));
+    expect(socket.sent[0]).toEqual(frameOf({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok' }));
 
     socket.receive(welcome);
     expect(client.state).toBe('online');
@@ -155,7 +171,7 @@ describe('net client', () => {
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
-    await flushDecoder();
+    await flushWasm();
     socket.receive(welcome);
 
     socket.receiveSnapshot({
@@ -181,7 +197,7 @@ describe('net client', () => {
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
-    await flushDecoder();
+    await flushWasm();
     socket.receive(welcome);
 
     const keyframe: SnapshotMsg = {
@@ -213,7 +229,7 @@ describe('net client', () => {
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
-    await flushDecoder();
+    await flushWasm();
     socket.receive(welcome);
 
     const keyframe: SnapshotMsg = {
@@ -254,19 +270,20 @@ describe('net client', () => {
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
-    await flushDecoder();
+    await flushWasm();
     socket.receive(welcome);
 
     socket.receiveSnapshot({ t: 'snapshot', tick: 6, players: [], creatures: [], hearts: [] });
     expect(snapshots).toEqual([{ t: 'snapshot', tick: 6, players: [], creatures: [], hearts: [] }]);
   });
 
-  it('routes edit_batch to onEditBatch and serializes sendEditBatch', () => {
+  it('routes edit_batch to onEditBatch and serializes sendEditBatch', async () => {
     const batches: unknown[] = [];
     const { client } = makeClient({ handlers: { onEditBatch: (m) => batches.push(m) } });
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     const incoming = { t: 'edit_batch', edits: [{ x: 1, y: 2, z: 3, id: 4 }], by: 7 };
@@ -274,7 +291,7 @@ describe('net client', () => {
     expect(batches).toEqual([incoming]);
 
     client.sendEditBatch([{ x: 5, y: 6, z: 7, id: 8 }]);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'edit_batch', edits: [{ x: 5, y: 6, z: 7, id: 8 }] }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'edit_batch', edits: [{ x: 5, y: 6, z: 7, id: 8 }] }));
   });
 
   it('a banned error transitions to banned and does not reconnect', () => {
@@ -435,45 +452,48 @@ describe('net client', () => {
     expect(states).toEqual(['connecting', 'online', 'offline']);
   });
 
-  it('ping/pong replies with pong and updates ping', () => {
+  it('ping/pong replies with pong and updates ping', async () => {
     const { client, setClock } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     setClock(1_000);
     socket.receive({ t: 'ping', nonce: 42 });
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'pong', nonce: 42 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'pong', nonce: 42 }));
 
     setClock(1_080);
     socket.receive({ t: 'ping', nonce: 43 });
     expect(client.ping).toBe(80);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'pong', nonce: 43 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'pong', nonce: 43 }));
   });
 
-  it('sendMove and sendChat serialize the right JSON', () => {
+  it('sendMove and sendChat serialize the right JSON', async () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     client.sendMove(1, 2, 3, 0.5, -0.2);
     client.sendChat('hello');
-    expect(socket.sent.at(-2)).toBe(JSON.stringify({ t: 'move', x: 1, y: 2, z: 3, yaw: 0.5, pitch: -0.2 }));
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'chat', text: 'hello' }));
+    expect(socket.sent.at(-2)).toEqual(frameOf({ t: 'move', x: 1, y: 2, z: 3, yaw: 0.5, pitch: -0.2 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'chat', text: 'hello' }));
   });
 
-  it('sendHit serializes the attacked creature id', () => {
+  it('sendHit serializes the attacked creature id', async () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     client.sendHit(7);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'hit', id: 7 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'hit', id: 7 }));
   });
 
   it('routes a timeline event to onEvent', () => {
@@ -559,19 +579,20 @@ describe('net client', () => {
     expect(client.state).toBe('rejected');
   });
 
-  it('serializes admin reject and unban messages', () => {
+  it('serializes admin reject and unban messages', async () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     client.sendAdminReject('acc1');
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_reject', account_id: 'acc1' }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_reject', account_id: 'acc1' }));
     client.sendAdminBanPending('ip:1.2.3.4');
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_ban_pending', account_id: 'ip:1.2.3.4' }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_ban_pending', account_id: 'ip:1.2.3.4' }));
     client.sendAdminUnban('1.2.3.4');
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_unban', ip: '1.2.3.4' }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_unban', ip: '1.2.3.4' }));
   });
 
   it('a needs_approval hold freezes on a waiting state and silently re-joins until approved', () => {
@@ -595,17 +616,18 @@ describe('net client', () => {
     expect(client.state).toBe('online');
   });
 
-  it('serializes admin approval toggle and approve messages', () => {
+  it('serializes admin approval toggle and approve messages', async () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     client.sendAdminSetApproval(true);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_approval', on: true }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_set_approval', on: true }));
     client.sendAdminApprove('acc1');
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_approve', account_id: 'acc1' }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_approve', account_id: 'acc1' }));
   });
 
   it('routes hurt to onHurt', () => {
@@ -632,53 +654,56 @@ describe('net client', () => {
     expect(swings).toEqual([{ t: 'swing', id: 7 }]);
   });
 
-  it('routes inventory to onInventory and serializes sendAdminSetInfinite', () => {
+  it('routes inventory to onInventory and serializes sendAdminSetInfinite', async () => {
     const inventories: unknown[] = [];
     const { client } = makeClient({ handlers: { onInventory: (m) => inventories.push(m) } });
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     socket.receive({ t: 'inventory', items: [{ id: 3, count: 2 }], infinite: false });
     expect(inventories).toEqual([{ t: 'inventory', items: [{ id: 3, count: 2 }], infinite: false }]);
 
     client.sendAdminSetInfinite(true);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_infinite', on: true }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_set_infinite', on: true }));
   });
 
-  it('sendAdminSetPeace and sendAdminSetStructure serialize the right JSON', () => {
+  it('sendAdminSetPeace and sendAdminSetStructure serialize the right JSON', async () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     client.sendAdminSetPeace(true);
     client.sendAdminSetStructure('cola', false);
-    expect(socket.sent.at(-2)).toBe(JSON.stringify({ t: 'admin_set_peace', on: true }));
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_structure', kind: 'cola', allowed: false }));
+    expect(socket.sent.at(-2)).toEqual(frameOf({ t: 'admin_set_peace', on: true }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_set_structure', kind: 'cola', allowed: false }));
   });
 
-  it('serializes pvp/chat/kick/ban admin and attack_player messages', () => {
+  it('serializes pvp/chat/kick/ban admin and attack_player messages', async () => {
     const { client } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushWasm();
     socket.receive(welcome);
 
     client.sendAdminSetPvp(true);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_pvp', on: true }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_set_pvp', on: true }));
     client.sendAdminSetChat(false);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_set_chat', on: false }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_set_chat', on: false }));
     client.sendAdminKick(3);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_kick', id: 3 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_kick', id: 3 }));
     client.sendAdminBan(4);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_ban', id: 4 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_ban', id: 4 }));
     client.sendAttackPlayer(5);
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'attack_player', id: 5 }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'attack_player', id: 5 }));
     client.sendAdminResetWorld();
-    expect(socket.sent.at(-1)).toBe(JSON.stringify({ t: 'admin_reset_world' }));
+    expect(socket.sent.at(-1)).toEqual(frameOf({ t: 'admin_reset_world' }));
   });
 
   it('does not reconnect when reconnect is disabled', () => {

@@ -2,9 +2,11 @@
 // AUTO-GENERATED from the Rust `protocol` crate (cargo test -p protocol) — so client and server
 // can never drift. This module adds small typed factories the client uses to build messages.
 
+import type { EncodeClientMsg } from './engine/online/wasm-core-loader';
 import type { ClientMsg, EditCell, EditOp, Role, ServerMsg } from './protocol.gen';
 
 export type { BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, InventoryItem, PlayerState, Role, ServerMsg } from './protocol.gen';
+export type { EncodeClientMsg } from './engine/online/wasm-core-loader';
 
 export const join = (params: {
   tenant: string;
@@ -96,6 +98,11 @@ export const adminSetModes = (onlineAllowed: boolean, offlineAllowed: boolean): 
   offline_allowed: offlineAllowed,
 });
 
-export const encodeClientMsg = (msg: ClientMsg): string => JSON.stringify(msg);
+// Encode a `ClientMsg` to its binary wire frame through the shared Rust codec (`encode`, the wasm
+// `encode_client_msg`) — the client never hand-writes the wire, symmetric with the binary snapshots it
+// decodes. The factories above build the JSON shape; this hands it to Rust and returns the exact bytes the
+// socket sends (and the offline core feeds to `WasmCore::input`).
+export const encodeClientMsg = (encode: EncodeClientMsg, msg: ClientMsg): Uint8Array =>
+  encode(JSON.stringify(msg));
 
 export const parseServerMsg = (data: string): ServerMsg => JSON.parse(data) as ServerMsg;
