@@ -11,9 +11,11 @@ the engine.
 
 The defining property of the codebase: **the authoritative game simulation is one Rust crate
 (`game-core`) that runs natively inside the multiplayer server for online play AND compiles to
-WASM in the browser for offline single-player.** There is no client/server gameplay
-duplication — the same Rust `Room` owns the world, creatures, combat, hearts, scores and admin
-state in both modes.
+WASM in the browser for offline single-player.** The Rust↔TS gameplay duplication has been
+**eliminated**: the same Rust `Room` owns the world, creatures, combat, hearts, scores and admin
+state in both modes; worldgen, the snapshot codec, the shared constants and block ids all have a
+**single Rust source** the client consumes (generated or via WASM). What remains on the client is
+only **prediction and rendering** — never gameplay logic (see [the unification section](#the-game-core--wasm-unification)).
 
 ---
 
@@ -22,7 +24,9 @@ state in both modes.
 - [What the game does](#what-the-game-does)
 - [Architecture at a glance](#architecture-at-a-glance)
 - [The game-core / WASM unification](#the-game-core--wasm-unification)
+- [Single Rust source: what the client no longer duplicates](#single-rust-source-what-the-client-no-longer-duplicates)
 - [Monorepo layout](#monorepo-layout)
+- [Client bundle & loading](#client-bundle--loading)
 - [Web client engine](#web-client-engine)
 - [Rendering subsystem](#rendering-subsystem)
 - [Multiplayer & snapshot optimization](#multiplayer--snapshot-optimization)
@@ -61,6 +65,9 @@ state in both modes.
 - **Admin / moderation** — an in-game and a headless lobby admin panel with the same command set:
   peace, PvP, chat, approval gating, kick/ban, world reset, score reset, suspend, playtime
   limits, and online/offline mode gates.
+- **Settings menu** — audio (master volume + mute) and look sensitivity (separate mouse + touch),
+  opened by Esc (pointer-lock pause) or a ⚙ gear and persisted per-device in `localStorage`; desktop
+  HUD buttons show their keyboard shortcut as a small **key-cap** badge (hidden on touch).
 - **Debug HUD (F3)** — live snapshot plus a copyable plaintext report.
 
 Online (native server) and offline (in-browser WASM) behave **identically** because both drive
@@ -88,7 +95,8 @@ the same authoritative Rust `Room`.
             │  Hub · room actor · admit policy   │   │  WasmSink/NoPersistence/WasmHost │
             │  HMAC · bans · claims · storage    │   │  JS clock + JS-seeded RNG        │
             └──────────────┬────────────────────┘   └─────────────────┬────────────────┘
-                           │ WebSocket (binary snapshot + JSON)        │ in-process
+                           │ WebSocket  up: all-binary ClientMsg       │ in-process
+                           │  down: binary snapshot + JSON ServerMsg   │
                            ▼                                           ▼
             ┌───────────────────────────────────────────────────────────────────────────┐
             │  apps/web  (Next.js + TS) — one NetClient interface, two sources           │
@@ -134,14 +142,60 @@ reads the clock **once per tick/event** and feeds it in. This is the seam the WA
 
 **WASM surface (`game-core-wasm/src/wasm_api.rs`):** a `#[wasm_bindgen]` `WasmCore` —
 `new(seed, configJson, now, wall, debug)` → `add_local_player(name, lookJson)` (admitted as
-**Admin**, parity with the web offline-admin grant) → `input(playerId, ClientMsgJson, now)` →
-`tick(now, wall, dt)` → `drain_outbound()` yielding `OutboundMessage{kind: Json|Binary}`. Plus
-`chunk_edits(cx,cz)` and `world_blob()`. Inputs/outputs are the **exact wire `ClientMsg`/
-`ServerMsg` shapes** the WebSocket client already speaks. A `log_bridge` maps `tracing` events to
-`console.{debug,warn,error}` as `[BL:<scope>]`, matching the web logger.
+**Admin**, parity with the web offline-admin grant) → `input(playerId, clientMsgBytes, now)` (the
+**binary `ClientMsg`** via `decode_client_msg`, the same codec the WebSocket client encodes with) →
+`tick(now, wall, dt)` → `drain_outbound()` yielding `OutboundMessage{kind: Json|Binary}` (binary
+snapshots + JSON for the rest, exactly like the wire). Plus the standalone `worldgen_chunk(cx,cz)`,
+the `SnapshotDecoder`, the binary `encode_client_msg`, `chunk_edits(cx,cz)` and `world_blob()`.
+Inputs/outputs are the **exact wire `ClientMsg`/`ServerMsg` shapes** the WebSocket client already
+speaks. A `log_bridge` maps `tracing` events to `console.{debug,warn,error}` as `[BL:<scope>]`,
+matching the web logger.
 
 The only `#[cfg]` forks in the hot path are `time` (clock), `broadcast_snapshot` (rayon vs
 `iter_mut`), and the wasm-only API/log/bindings modules. Everything else is shared.
+
+---
+
+## Single Rust source: what the client no longer duplicates
+
+The client used to hand-mirror server logic in TypeScript; that duplication is now gone. Each
+former mirror has a **single Rust source** the client consumes — generated at build time or called
+through the WASM core:
+
+- **Shared constants** (world dims, dig hits, hearts, hurt cooldown, spawn geometry, creature
+  tuning) are **generated from Rust** into `apps/web/lib/engine/constants.gen.ts` by a committed
+  `#[cfg(test)]` exporter in `game-core/src/web_constants.rs` (the same codegen idea as
+  `protocol.gen.ts`). A `committed_web_constants_are_up_to_date` test fails CI if the committed file
+  drifts. The old hand-mirrored "Mirrors the Rust" literals are gone.
+- **Block ids** (`AIR`/`GRASS`/`DIRT`/…) come from the **same generator** → `constants.gen.ts`, with
+  `sim` as the single source. Only client-only palette colours (no server meaning) and naming
+  aliases stay hand-written in `constants.ts`.
+- **Worldgen.** `apps/web/lib/engine/worldgen.ts` is **deleted**. The TS voxel store
+  (`engine/world.ts`) sources each chunk's procedural base — terrain, water, monument, decoration —
+  from `sim::worldgen_chunk` via the WASM (`game-core-wasm`'s standalone `worldgen_chunk(cx,cz)`),
+  generated **once per chunk on first load and cached** in the in-memory voxel array. Every hot
+  per-voxel read (physics, raycast, meshing) hits that cache — **no per-frame WASM**. A
+  `worldgen-parity` test pins the WASM base against the cached store.
+- **Snapshot codec.** `apps/web/lib/snapshot-codec.ts` and `snapshot-delta.ts` are **deleted**. The
+  client decodes snapshots through the WASM `SnapshotDecoder` (the single Rust
+  `protocol::snapshot_codec` + its `SnapshotReconstructor`), which keyframes/deltas internally and
+  hands JS a packed `Float64Array`; `engine/online/wasm-snapshot-decoder.ts` is the thin seam that
+  unpacks it (dividing centimetre integers back to f64) into the named `SnapshotMsg`. Cross-language
+  hex fixtures pin the bytes.
+- **The offline sim** (creature AI / combat / spawn population, formerly TS) runs in the WASM
+  game-core. The last dead leftovers — `engine/offline/creature-separation.ts` and `heart-drop.ts`'s
+  pickup/heal rule — were removed too (`heart-drop.ts` now only holds the render-side bob).
+
+**What remains on the client (prediction + rendering, not gameplay):**
+
+- `engine/dig-progress.ts` — the dig-tap UX (local progress so a tap feels instant; the dig itself
+  is server-authoritative).
+- `engine/spawn-slot.ts` — the client's spawn-column pick (mirrors the Rust ring search so the camera
+  starts in a sane place before the first snapshot).
+- `engine/offline/creatures.ts` + `lib/net-snapshot.ts`'s creature **kind/def table** — the client
+  needs creature names/sizes/colours and the `kind_index → slug` mapping to **render** snapshots.
+
+These are client concerns (prediction + rendering); none of them decide gameplay outcomes.
 
 ---
 
@@ -156,12 +210,12 @@ apps/
     hooks/use-game.ts          all React state/effects, CoopBridge, lobby/login lifecycle
     lib/game-engine.ts         public surface + one-line boot
     lib/engine/                pure logic + rendering/ (three.js) + online/ + offline/
-    lib/coop.ts net.ts protocol.gen.ts snapshot-codec.ts  netcode
-    lib/wasm/                 COMMITTED wasm-bindgen artifacts (offline core)
+    lib/coop.ts net.ts protocol.gen.ts net-snapshot.ts  netcode (binary up + down)
+    lib/wasm/                 COMMITTED wasm-bindgen artifacts (.wasm + JS bindings + .d.ts)
     lib/i18n/                 flat dotted-key catalog (pt-BR default, en-US)
   server/                    Cargo workspace (resolver 2, release: lto thin, panic=abort)
     crates/
-      protocol/              wire enums (serde) + ts-rs codegen + snapshot_codec
+      protocol/              wire enums (serde) + ts-rs codegen + client_codec + snapshot_codec
       sim/                   pure worldgen/voxel/decoration/spawn + edit codec (LZ4)
       game-core/             authoritative Room (native + WASM); rayon off-wasm only
       game-core-wasm/        cdylib+rlib WASM shell (#[wasm_bindgen])
@@ -169,6 +223,22 @@ apps/
     tenants.toml             fixed global server limits (branding lives in libSQL)
     loadtest/                1000-bot wire-cost harness (Node, ws-only)
 ```
+
+---
+
+## Client bundle & loading
+
+The landing page and lobby stay **light**: three.js, the entire `lib/engine/*`, and the
+**~640KB WASM core** are **code-split out** of the initial bundle. The lobby route (`/`) ships a
+**~199 kB First Load JS** — none of the engine or wasm is in it.
+
+When the player commits to **Play**, `useGame()` dynamic-imports `lib/game-engine` (the engine
+chunk) and inits the wasm core, all behind an **on-brand loading screen** (`components/GameLoader.tsx`
+driven by the pure `lib/engine/loader-state.ts` reducer: `idle → loading(engine) → loading(world)
+→ ready | error`). The loader mirrors the lobby's sky/cloud/hill visual language so it reads as part
+of the game, not a generic spinner, and swaps to a retry message on failure rather than a blank
+screen. Net effect: the landing/lobby experience loads fast on any device, and the heavy 3D payload
+only arrives the moment it's actually needed.
 
 ---
 
@@ -199,7 +269,7 @@ read `runtime.spawnPoof` before the module that assigns it has run, because call
 time. This lets each concern live in its own small module while still calling across boundaries
 (break → poof → stats) exactly as one closure would.
 
-**Pure modules (each colocated with a `*.test.ts`):** `vec3`, `world`, `worldgen`, `blocks`,
+**Pure modules (each colocated with a `*.test.ts`):** `vec3`, `world`, `blocks`,
 `meshing`, `raycast`, `sphere-cast`, `physics`, `movement`, `structures`, `chunk-grid`,
 `mesh-queue`, `actors`, `attack`, `frame-cap`, `spawn-slot`, `terrain-column`, `inventory`,
 `scoreboard`, `interpolation`.
@@ -207,9 +277,10 @@ time. This lets each concern live in its own small module while still calling ac
 - **`vec3.ts`** — a three.js-free vector that is a **verbatim port** of the `THREE.Vector3`
   methods used, each body matching three.js IEEE-754 semantics exactly (golden-proved in
   `vec3.test.ts`, the sole logic file allowed to import three).
-- **`worldgen.ts`** — pure layered sin/cos terrain, biome classification, surface block, and the
-  folded-in welcome monument. **Mirrored bit-for-bit in the Rust `sim`**, pinned by shared golden
-  vectors (`worldgen.golden.json` / `.golden.test.ts`).
+- **`world.ts`** — the sparse voxel store. There is no TS worldgen anymore: each chunk's procedural
+  base is sourced from `sim::worldgen_chunk` via the WASM (the single Rust source), generated once on
+  first load and cached, then every hot per-voxel read hits the in-memory cache (no per-frame WASM).
+  `worldgen-parity.test.ts` pins the WASM base against the cached store.
 - **`physics.ts`** — AABB-vs-voxel collision with per-axis sub-stepping (`MAX_STEP = 0.4`) so a
   fast fall can't tunnel through ground; ground-snap on downward-Y collision.
 - **`raycast.ts` / `sphere-cast.ts`** — DDA voxel traversal for break/place; closest-sphere ray
@@ -267,7 +338,15 @@ into it.
 - **HUD (`hud.ts`).** WebAudio blip/chime, hotbar block swatches, hotkeys, pointer-lock, resize,
   controls/build-menu modals (blocked-structure cards hidden), and full touch controls (look-drag
   with pitch clamp, joystick, hold-to-attack), all gated by the engine abort signal. The damage cue
-  is a red screen wash + heart shake + audio thud over `HURT_FLASH_MS=300`.
+  is a red screen wash + heart shake + audio thud over `HURT_FLASH_MS=300`. The audio gain and the
+  look math read the live **per-device settings** every frame (see below), so a slider move applies
+  instantly.
+- **Settings menu (`hud.ts` + `lib/settings.ts`).** A pause/settings panel — **master volume +
+  mute** and **look sensitivity** (separate mouse and touch multipliers, clamped kid-safe) — opened
+  by **Esc** (which drops pointer-lock and pauses) or a **⚙ gear** button, and closed by Esc again or
+  tapping the canvas. The pure `lib/settings.ts` store (load/save round-trip, clamps, gain/look
+  scaling, `escapeKeyAction`/`shouldOpenOnLockLost`) is unit-tested; React renders the panel and its
+  sliders read/write the store, which **persists per-device** in `localStorage` under `bl-settings`.
 
 Adaptive quality branches touch vs desktop for load radius, fog, far plane, antialias and pixel
 ratio. All numeric decisions (cull, queue order, eviction, swing ease, poof/heart physics, aim
@@ -284,8 +363,11 @@ requests and renders the authoritative result; local flashes/poofs/sounds are co
 truth arrives in the next snapshot.
 
 **Transport & lifecycle (`net.ts`).** One WebSocket (`binaryType='arraybuffer'`) with injectable
-socket/clock/connectivity for deterministic tests. `ArrayBuffer`/`Blob` frames take the binary
-snapshot path; `string` frames are JSON dispatched through a flat `t`-switch to typed handlers.
+socket/clock/connectivity/encoder/decoder for deterministic tests. **Upstream is all binary:** every
+`ClientMsg` is encoded by the WASM `encode_client_msg` (the shared Rust `protocol::client_codec`) and
+sent as a `Message::Binary` frame. **Downstream**, `ArrayBuffer`/`Blob` frames are the binary
+per-tick `Snapshot`; `string` frames are the non-hot JSON `ServerMsg` (Welcome/Roster/Chat/…),
+dispatched through a flat `t`-switch to typed handlers.
 Resilience is layered: browser online/offline events (fastest) → a 5 s silent-message liveness
 watchdog (`dropForReconnect` detaches a half-open socket's `onclose`) → exponential backoff
 (`min(10s, 500ms·2^attempt)`). `TERMINAL_ERRORS` (banned, kicked, idle_timeout, room_closed,
@@ -293,27 +375,35 @@ suspended, time_up, online_blocked, reclaimed, claim_required, needs_login, reje
 reconnect; `needs_approval` re-joins every 3 s until approved; `pagehide` force-closes for a clean
 leave. Ping/pong measures live RTT.
 
-**Wire protocol (`protocol` crate).** `ClientMsg`/`ServerMsg` are `serde(tag="t")` enums, JSON over
-WebSocket **except the hot per-tick `Snapshot`, which is binary**. Hot-path messages use
-single-letter keys + fixed-order numeric tuples (`PlayerState`, `CreatureState`, `HeartDropState`);
-creature kind is an index into a shared kind table. **Identity (name/look/role/pvp-kills/away) is
-split out of the hot path** into an event-driven `roster`, never re-sent 30×/s. TS types are
-generated from the Rust types by a ts-rs **test** that writes `apps/web/lib/protocol.gen.ts`, so
+**Wire protocol (`protocol` crate).** `ClientMsg`/`ServerMsg` are `serde(tag="t")` enums. The wire is
+**binary in both directions for the hot paths**: every `ClientMsg` (all 28 variants — move/edit/hit/
+dig/chat + the admin commands) goes through `client_codec` (`encode_client_msg`/`decode_client_msg`,
+a 1-byte tag + packed fields), and the per-tick `Snapshot` goes through `snapshot_codec`. The old
+JSON-text upstream path (`Message::Text` → `serde_json::from_str::<ClientMsg>`) is **removed**; the
+only JSON left on the wire is the **downstream non-hot `ServerMsg`** (Welcome/Roster/Chat/Error/…).
+Hot-path snapshot records use fixed-order numeric tuples (`PlayerState`, `CreatureState`,
+`HeartDropState`); creature kind is an index into a shared kind table. **Identity
+(name/look/role/pvp-kills/away) is split out of the hot path** into an event-driven `roster`, never
+re-sent 30×/s. TS types are generated from the Rust types by a ts-rs **test** that writes
+`apps/web/lib/protocol.gen.ts`, and **cross-language hex fixtures pin both codecs byte-identical**, so
 the client never hand-writes wire shapes.
 
-**Binary snapshot codec (`snapshot_codec.rs` ↔ `snapshot-codec.ts`).** Little-endian frame:
+**Binary snapshot codec (`protocol::snapshot_codec`, single Rust source).** Little-endian frame:
 version byte + frame kind (`KEYFRAME`/`DELTA`) + u64 tick. Floats are carried as **i32 centimetres**
-(`round(value*100)`), exactly matching the server's snapshot rounding so the binary and old-JSON
-paths are numerically identical. A `DELTA` carries `baseline_tick` + per-category changed/added full
-records and removed ids; absent entities are unchanged. Equality compares **at wire precision** so
-sub-centimetre wobble never resends an entity. The exact keyframe + delta hex is pinned in Rust and
-re-decoded in the TS test — both codecs must agree byte-for-byte; the version tag makes a layout
-change a clean reject.
+(`round(value*100)`); a `DELTA` carries `baseline_tick` + per-category changed/added full records and
+removed ids; absent entities are unchanged. Equality compares **at wire precision** so sub-centimetre
+wobble never resends an entity. The TS codec is **gone** — the client **decodes through the WASM
+`SnapshotDecoder`**, which wraps the same Rust codec + `SnapshotReconstructor` and hands JS a packed
+`Float64Array` (centimetre integers, divided back to f64 in `engine/online/wasm-snapshot-decoder.ts`
+exactly as the old codec did). The exact keyframe + delta hex is pinned in Rust and re-decoded in the
+TS test — server encode and client decode are the **same code**; the version tag makes a layout change
+a clean reject.
 
-**Delta reconstruction (`snapshot-delta.ts`).** `SnapshotReconstructor` holds the running full
-snapshot: a keyframe replaces it; a delta whose `baselineTick` matches upserts changed and drops
-removed; a stale-baseline delta is dropped (wait for the next keyframe). `onSnapshot` always
-receives the same full-shape object regardless of what was on the wire.
+**Delta reconstruction (`protocol::SnapshotReconstructor`, inside the WASM decoder).** It holds the
+running full snapshot: a keyframe replaces it; a delta whose `baseline_tick` matches upserts changed
+and drops removed; a stale-baseline delta is dropped (the decoder returns an empty buffer → `net.ts`
+waits for the next keyframe). `onSnapshot` always receives the same full-shape object regardless of
+what was on the wire.
 
 **Per-player AOI culling (`aoi.rs` + `spatial_grid.rs`).** Each connection gets only the entities
 near it. `in_view` is a horizontal squared-distance test (no per-entity `sqrt`) with **hysteresis**
@@ -362,11 +452,12 @@ tests; one dependency, `lz4_flex`). No I/O, rendering, networking or `rand`. Run
 (server) and as WASM (offline) via `game-core`, so one implementation is the source of truth on
 both sides.
 
-- **Procedural terrain** is a pure function of coordinates: `height_at` (continent + hills +
-  detail + squared-ridge mountains, all f64 in exact constant/operation order mirroring
-  `worldgen.ts`); `biome_at` (height + temperature/humidity); `base_voxel` (air/water/bedrock/
-  surface/dirt/stone); `welcome_monument_block` folded into `base_voxel` so the monument is **real
-  terrain** — solid, diggable, visible to creature AI — never a render overlay.
+- **Procedural terrain** is a pure function of coordinates and the **single source** the client now
+  consumes via WASM: `height_at` (continent + hills + detail + squared-ridge mountains, all f64);
+  `biome_at` (height + temperature/humidity); `base_voxel` (air/water/bedrock/surface/dirt/stone);
+  `welcome_monument_block` folded into `base_voxel` so the monument is **real terrain** — solid,
+  diggable, visible to creature AI — never a render overlay. `worldgen_chunk` packs a whole chunk's
+  base for the client; a TS `worldgen-parity` test (against `worldgen.golden.json`) pins it.
 - **Deterministic decoration** uses a `Mulberry32` PRNG seeded by a chunk spatial hash, **bit-for-bit
   identical to the TS `mulberry32`** (JS `Math.imul` == Rust `wrapping_mul`, pinned by a
   Node-computed test). Trees and plants are placed per-biome density, identical for every player and
@@ -422,9 +513,13 @@ snapshots, aims the crosshair and sends intent.
   offline neutralizes only the *movement* speed/budget clamp (`1_000_000`) since there's one local
   player.
 
-The web TS modules (`offline/creatures.ts`, `hurt.ts`, `heart-drop.ts`, `creature-separation.ts`,
-`attack.ts`, `scoreboard.ts`) are deliberate mirrors holding the same constants so client prediction
-and server truth agree.
+The creature AI / combat / spawn simulation runs in the WASM `Room`; the client only renders its
+snapshots, aims and sends intent. The remaining web TS modules are **prediction + rendering**
+helpers, not the simulation: `offline/creatures.ts` and `net-snapshot.ts`'s creature kind/def table
+(names/sizes/colours to render), `dig-progress.ts` (dig-tap UX), `spawn-slot.ts` (client spawn pick),
+`attack.ts` and `scoreboard.ts` — each pinned to the same shared constants so prediction and server
+truth agree. (The dead `creature-separation.ts` and `heart-drop.ts`'s pickup rule were removed once
+the offline sim moved into the WASM core.)
 
 ---
 
@@ -557,9 +652,10 @@ The wasm-bindgen crate↔CLI version (`=0.2.106`) is pinned in three places (cra
 from Rust, the gameplay/physics/world constants are generated from the Rust source into
 `engine/constants.gen.ts` (a `committed_web_constants_are_up_to_date` test fails CI if the committed
 file is stale, so the client can never hand-mirror a server number that drifts), a `snapshot_size`
-test asserts the compact snapshot stays small, shared **hex fixtures** pin the binary codec
-byte-for-byte across Rust↔TS, and a golden HMAC vector locks both directions of the Next↔Rust channel. The offline core can't diverge from online (shared crate + shared `NetClient`
-routing + same room limits).
+test asserts the compact snapshot stays small, shared **hex fixtures** pin **both binary codecs**
+(`client_codec` upstream + `snapshot_codec` downstream) byte-for-byte across Rust↔TS, and a golden
+HMAC vector locks both directions of the Next↔Rust channel. The offline core can't diverge from
+online (shared crate + shared `NetClient` routing + same room limits).
 
 **Tests.** Colocated everywhere: TS `*.test.ts(x)` next to each module (vitest, jsdom available; ~68
 engine modules each colocate a test), golden tests for worldgen/vec3, Rust `#[cfg(test)] mod tests`
@@ -580,8 +676,9 @@ cargo clippy --all-targets -D warnings
 cargo test
 ```
 
-**Loadtest.** `apps/server/loadtest/` ramps 1000 ws bots (in batches) that decode binary snapshots
-(mirroring `snapshot_codec.rs`) to target nearby entities; `SPREAD` toggles whole-map AOI vs the
+**Loadtest.** `apps/server/loadtest/` ramps 1000 ws bots (in batches) that **encode binary input**
+(`client-codec.mjs`) and **decode binary snapshots** (`snapshot-decoder.mjs`) — both mirroring the
+Rust codecs — to target nearby entities; `SPREAD` toggles whole-map AOI vs the
 origin-cluster worst case. It reports avg RX bytes/s/bot, frames/s, p50/p95 and the per-action send
 mix — capacity confidence before shipping.
 
