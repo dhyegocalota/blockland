@@ -520,7 +520,7 @@ export default function Game() {
               <div className="card"><b>{t('controls.fight')}</b> {t('controls.fight_keys')}</div>
               <div className="card"><b>{t('controls.collect')}</b> {t('controls.collect_keys')}</div>
               <div className="card"><b>{t('controls.your_face')}</b> {t('controls.your_face_keys')}</div>
-              <div className="card"><b>{t('controls.peace_mode')}</b> {t('controls.peace_mode_keys')}</div>
+              {(isAdmin || isModerator) && <div className="card"><b>{t('controls.peace_mode')}</b> {t('controls.peace_mode_keys')}</div>}
               <div className="card"><b>{t('controls.structures')}</b> {t('controls.structures_keys')}</div>
               <div className="card"><b>{t('controls.show_controls')}</b> {t('controls.show_controls_keys')}</div>
             </div>

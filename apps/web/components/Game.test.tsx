@@ -131,6 +131,16 @@ describe('Game', () => {
     expect(badge?.className).toBe('offline');
   });
 
+  it('hides the admin-only peace keybind from a normal player in the controls help', () => {
+    useGame.mockReturnValue(gameState({ isAdmin: false, isModerator: false }));
+    render(<Game />);
+    expect(within(document.getElementById('controls')!).queryByText('Modo paz 🕊️')).toBeNull();
+    cleanup();
+    useGame.mockReturnValue(gameState({ isAdmin: true }));
+    render(<Game />);
+    expect(within(document.getElementById('controls')!).queryByText('Modo paz 🕊️')).toBeInTheDocument();
+  });
+
   it('shows my own pvp kills in the HUD when pvp is on, and hides the stat when off', () => {
     const pvpRoom = { peace: true, blockedStructures: [], pvp: true, chatEnabled: false, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true };
     useGame.mockReturnValue(gameState({
