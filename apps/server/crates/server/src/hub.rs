@@ -184,7 +184,7 @@ impl Hub {
     pub async fn load(db: Arc<Db>) -> Self {
         let admin_token =
             std::env::var("ADMIN_TOKEN").unwrap_or_else(|_| "dev-admin-secret".into());
-        let limits = load_limits();
+        let limits = apply_env_overrides(load_limits());
 
         let tenants = db.list_tenants().await.unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to load tenants from db");
@@ -407,6 +407,33 @@ fn load_limits() -> Limits {
     }
 }
 
+// Env overrides for the two capacity limits a load/stress test needs to raise without a config file:
+// the per-room player cap (MAX_PLAYERS_PER_ROOM) and the per-IP connection cap (MAX_CONNECTIONS_PER_IP).
+// Each falls back to the value already in `limits` (the file/default) when unset or unparseable, so the
+// shipped defaults are unchanged; only an explicit, valid env value takes effect.
+const MAX_PLAYERS_PER_ROOM_ENV: &str = "MAX_PLAYERS_PER_ROOM";
+const MAX_CONNECTIONS_PER_IP_ENV: &str = "MAX_CONNECTIONS_PER_IP";
+
+fn apply_env_overrides(mut limits: Limits) -> Limits {
+    limits.max_players_per_room =
+        env_override(MAX_PLAYERS_PER_ROOM_ENV, limits.max_players_per_room);
+    limits.max_conns_per_ip = env_override(MAX_CONNECTIONS_PER_IP_ENV, limits.max_conns_per_ip);
+    limits
+}
+
+fn env_override<T: std::str::FromStr>(name: &str, fallback: T) -> T {
+    let Ok(raw) = std::env::var(name) else {
+        return fallback;
+    };
+    match raw.parse::<T>() {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::warn!(env = name, value = %raw, "invalid limit override, using default");
+            fallback
+        }
+    }
+}
+
 // The room/brand path only needs id, name and the one branding image.
 fn tenant_to_cfg(tenant: Tenant) -> TenantCfg {
     TenantCfg {
@@ -444,6 +471,26 @@ mod tests {
         assert_eq!(claims.get("acc-a").as_deref(), Some("tokB"));
         claims.remove("acc-a", "tokB");
         assert!(claims.get("acc-a").is_none());
+    }
+
+    #[test]
+    fn env_override_parses_a_valid_value_and_falls_back_otherwise() {
+        // Unique names so this never races another test touching the same process-global env.
+        let set = "BL_TEST_OVERRIDE_SET";
+        let garbage = "BL_TEST_OVERRIDE_GARBAGE";
+        let unset = "BL_TEST_OVERRIDE_UNSET";
+
+        std::env::set_var(set, "1000");
+        assert_eq!(env_override::<usize>(set, 10), 1000);
+
+        std::env::set_var(garbage, "not-a-number");
+        assert_eq!(env_override::<u32>(garbage, 6), 6);
+
+        std::env::remove_var(unset);
+        assert_eq!(env_override::<u32>(unset, 6), 6);
+
+        std::env::remove_var(set);
+        std::env::remove_var(garbage);
     }
 
     fn tenant(id: &str) -> Tenant {

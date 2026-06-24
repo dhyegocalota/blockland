@@ -1,0 +1,13 @@
+{
+  "name": "blockland-loadtest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "1000-bot load/stress harness for the Blockland Rust multiplayer server.",
+  "scripts": {
+    "start": "node bots.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

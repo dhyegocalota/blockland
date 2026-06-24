@@ -654,3 +654,288 @@ mod tests {
         from.retain(|item| !ids.contains(&id_of(item)));
     }
 }
+
+/// Bandwidth-gain benchmark: how many wire bytes/tick each snapshot optimisation saves, for two
+/// representative scenarios. Deterministic (no rng), and prints a copy-pasteable table — run with:
+///
+/// ```text
+/// cargo test -p protocol bandwidth_gain -- --nocapture
+/// ```
+///
+/// It measures four encodings of the SAME world and reports each one's reduction vs the JSON-full
+/// baseline (the pre-optimization wire):
+///   * JSON full          — `serde_json::to_vec(&ServerMsg::Snapshot{..})` of the whole room.
+///   * binary keyframe     — `encode_keyframe(..)` of the whole room (phase 1).
+///   * binary delta        — `encode_delta(..)` where only ~30% of entities moved (phase 2).
+///   * delta + AOI         — the delta of only the entities within `AOI_RADIUS` of one player (phase 3).
+#[cfg(test)]
+mod bandwidth_gain {
+    use super::*;
+    use crate::ServerMsg;
+
+    // Mirrors `apps/server/crates/server/src/aoi.rs` (a binary crate the protocol crate cannot depend on);
+    // a single player receives only entities within this horizontal radius of them.
+    const AOI_RADIUS: f32 = 512.0;
+    // Mirrors `sim::WORLD_SIZE` (same reason); the huge-map scenario spreads players uniformly across it.
+    const WORLD_SIZE: f32 = 163_840.0;
+    // The busy room: the global per-room cap headroom we benchmark + the room creature ceiling (MAX_CREATURES).
+    const BUSY_PLAYERS: usize = 10;
+    const BUSY_CREATURES: usize = 48;
+    // The huge map: a worst-case crowd spread across the whole world, with the same creature ceiling.
+    const HUGE_PLAYERS: usize = 1_000;
+    const HUGE_CREATURES: usize = 48;
+    // A realistic per-tick churn: this fraction of entities moved one step since the baseline.
+    const MOVED_FRACTION: usize = 3; // ~1 in 3 (≈30%).
+    const STEP: f32 = 0.25;
+
+    struct Snapshot {
+        players: Vec<PlayerState>,
+        creatures: Vec<CreatureState>,
+        hearts: Vec<HeartDropState>,
+    }
+
+    /// Lay `players` out evenly across a `span`×`span` square at ground height, plus `creatures` clustered
+    /// near the origin (where the chosen receiver stands) and a couple of hearts, so the AOI scenario has
+    /// real near/far structure. Deterministic: positions are a function of the index only.
+    fn world(players: usize, creatures: usize, span: f32) -> Snapshot {
+        let side = (players as f32).sqrt().ceil().max(1.0);
+        let players = (0..players)
+            .map(|i| {
+                let col = i as f32 % side;
+                let row = (i as f32 / side).floor();
+                let x = (col + 0.5) / side * span;
+                let z = (row + 0.5) / side * span;
+                PlayerState(i as u32 + 1, x, 64.25, z, 0.31, 0.05, 20, (i * 3) as u32, 3)
+            })
+            .collect();
+        let creatures = (0..creatures)
+            .map(|i| {
+                let angle = i as f32 * 0.7;
+                CreatureState(
+                    10_000 + i as u32,
+                    (i % 5) as u8,
+                    angle.cos() * 20.0,
+                    63.5,
+                    angle.sin() * 20.0,
+                    angle,
+                    2,
+                    3,
+                )
+            })
+            .collect();
+        let hearts = (0..3)
+            .map(|i| {
+                HeartDropState(
+                    20_000 + i as u32,
+                    i as f32 * 2.0 - 5.0,
+                    63.5,
+                    i as f32 * 1.1,
+                )
+            })
+            .collect();
+        Snapshot {
+            players,
+            creatures,
+            hearts,
+        }
+    }
+
+    /// The same world one tick later: ~`1/MOVED_FRACTION` of the players and creatures stepped by `STEP`,
+    /// the rest byte-for-byte identical (so the delta carries only the movers).
+    fn advance(base: &Snapshot) -> Snapshot {
+        let players = base
+            .players
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let mut p = p.clone();
+                if i % MOVED_FRACTION == 0 {
+                    p.1 += STEP;
+                    p.3 += STEP;
+                }
+                p
+            })
+            .collect();
+        let creatures = base
+            .creatures
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let mut c = c.clone();
+                if i % MOVED_FRACTION == 0 {
+                    c.2 += STEP;
+                    c.4 += STEP;
+                }
+                c
+            })
+            .collect();
+        Snapshot {
+            players,
+            creatures,
+            hearts: base.hearts.clone(),
+        }
+    }
+
+    fn horizontal_sq(a: (f32, f32), b: (f32, f32)) -> f32 {
+        let dx = a.0 - b.0;
+        let dz = a.1 - b.1;
+        dx * dx + dz * dz
+    }
+
+    /// What the player at `center` actually receives: their own record always, plus every other entity
+    /// within `AOI_RADIUS`. Mirrors `aoi_view` in room.rs (without hysteresis — a steady-state tick).
+    fn aoi_of(snapshot: &Snapshot, receiver_id: u32, center: (f32, f32)) -> Snapshot {
+        let within = |x: f32, z: f32| horizontal_sq(center, (x, z)) <= AOI_RADIUS * AOI_RADIUS;
+        Snapshot {
+            players: snapshot
+                .players
+                .iter()
+                .filter(|p| p.0 == receiver_id || within(p.1, p.3))
+                .cloned()
+                .collect(),
+            creatures: snapshot
+                .creatures
+                .iter()
+                .filter(|c| within(c.2, c.4))
+                .cloned()
+                .collect(),
+            hearts: snapshot
+                .hearts
+                .iter()
+                .filter(|h| within(h.1, h.3))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    fn json_full_bytes(s: &Snapshot, tick: u64) -> usize {
+        let msg = ServerMsg::Snapshot {
+            tick,
+            players: s.players.clone(),
+            creatures: s.creatures.clone(),
+            hearts: s.hearts.clone(),
+        };
+        serde_json::to_vec(&msg).expect("snapshot serializes").len()
+    }
+
+    fn keyframe_bytes(s: &Snapshot, tick: u64) -> usize {
+        encode_keyframe(tick, &s.players, &s.creatures, &s.hearts).len()
+    }
+
+    fn delta_bytes(baseline: &Snapshot, next: &Snapshot, base_tick: u64, tick: u64) -> usize {
+        encode_delta(
+            SnapshotView {
+                tick: base_tick,
+                players: &baseline.players,
+                creatures: &baseline.creatures,
+                hearts: &baseline.hearts,
+            },
+            SnapshotView {
+                tick,
+                players: &next.players,
+                creatures: &next.creatures,
+                hearts: &next.hearts,
+            },
+        )
+        .len()
+    }
+
+    fn reduction_pct(bytes: usize, json_full: usize) -> f32 {
+        100.0 * (1.0 - bytes as f32 / json_full as f32)
+    }
+
+    /// Print one scenario's table: bytes/tick for each scheme and the % reduction vs JSON-full. `whole`
+    /// is the full room (what JSON-full/keyframe/delta carry); `received` is one player's AOI slice.
+    fn report(label: &str, whole_base: &Snapshot, received_base: &Snapshot) {
+        let whole_next = advance(whole_base);
+        let received_next = aoi_of(&whole_next, received_base.players[0].0, {
+            let me = &received_base.players[0];
+            (me.1, me.3)
+        });
+
+        let json_full = json_full_bytes(whole_base, 1);
+        let keyframe = keyframe_bytes(whole_base, 1);
+        let delta = delta_bytes(whole_base, &whole_next, 1, 2);
+        let delta_aoi = delta_bytes(received_base, &received_next, 1, 2);
+
+        println!("\n=== {label} ===");
+        println!(
+            "  whole room: {} players + {} creatures + {} hearts; one player receives {} players + {} creatures + {} hearts (AOI)",
+            whole_base.players.len(),
+            whole_base.creatures.len(),
+            whole_base.hearts.len(),
+            received_base.players.len(),
+            received_base.creatures.len(),
+            received_base.hearts.len(),
+        );
+        println!(
+            "  {:<28} {:>12} {:>14}",
+            "scheme", "bytes/tick", "reduction"
+        );
+        println!(
+            "  {:<28} {:>12} {:>14}",
+            "JSON full (baseline)", json_full, "0.0%"
+        );
+        println!(
+            "  {:<28} {:>12} {:>13.1}%",
+            "binary keyframe",
+            keyframe,
+            reduction_pct(keyframe, json_full)
+        );
+        println!(
+            "  {:<28} {:>12} {:>13.1}%",
+            "binary delta (~30% moved)",
+            delta,
+            reduction_pct(delta, json_full)
+        );
+        println!(
+            "  {:<28} {:>12} {:>13.1}%",
+            "binary delta + AOI (1 player)",
+            delta_aoi,
+            reduction_pct(delta_aoi, json_full)
+        );
+    }
+
+    #[test]
+    fn bandwidth_gain_table() {
+        // (A) one busy room: every player + creature is in view of everyone (the room is tiny), so the AOI
+        // slice is the whole room — AOI gives nothing here, the delta is the win.
+        let busy = world(BUSY_PLAYERS, BUSY_CREATURES, 16.0);
+        let busy_received = aoi_of(&busy, busy.players[0].0, {
+            let me = &busy.players[0];
+            (me.1, me.3)
+        });
+        report(
+            "Scenario A — one busy room (10 players + 48 creatures, all in view)",
+            &busy,
+            &busy_received,
+        );
+
+        // (B) a huge map: 1000 players spread uniformly across WORLD_SIZE, so a single player's AOI holds
+        // only the handful near them — AOI is the dominant win on top of the delta.
+        let huge = world(HUGE_PLAYERS, HUGE_CREATURES, WORLD_SIZE);
+        let huge_received = aoi_of(&huge, huge.players[0].0, {
+            let me = &huge.players[0];
+            (me.1, me.3)
+        });
+        report(
+            "Scenario B — huge map (1000 players across WORLD_SIZE + 48 creatures), one player's view",
+            &huge,
+            &huge_received,
+        );
+
+        // Guard the headline gains so a regression in any phase fails the build (not just the eyeballed table).
+        let huge_next = advance(&huge);
+        let huge_recv_next = aoi_of(&huge_next, huge.players[0].0, {
+            let me = &huge.players[0];
+            (me.1, me.3)
+        });
+        let json_full = json_full_bytes(&huge, 1);
+        let delta_aoi = delta_bytes(&huge_received, &huge_recv_next, 1, 2);
+        assert!(
+            reduction_pct(delta_aoi, json_full) > 99.0,
+            "huge-map delta+AOI should cut >99% vs JSON-full; got {:.1}%",
+            reduction_pct(delta_aoi, json_full)
+        );
+    }
+}
