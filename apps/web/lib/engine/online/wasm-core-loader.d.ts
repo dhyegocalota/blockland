@@ -5,6 +5,7 @@ declare module '*/wasm/game_core_wasm.js' {
   const init: () => Promise<unknown>;
   export default init;
   export const WasmCore: unknown;
+  export const SnapshotDecoder: unknown;
   export const OutboundMessage: unknown;
   export const OutboundKind: unknown;
   export function worldgen_chunk(cx: number, cz: number): Uint8Array;

@@ -1,9 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createWasmCoreNet, wasmOfflineConfig } from './wasm-core-source';
 import { OutboundKind, type OutboundMessage, type WasmCore } from './wasm-core-loader';
-import { encodeKeyframe } from '../../snapshot-codec';
+import { encodeKeyframe } from './snapshot-test-codec';
+import { createTestSnapshotDecoder } from './wasm-test-loader';
 import type { SnapshotMsg } from '../../net';
 import type { NetHandlers } from '../../net';
+
+// Preload the wasm module once so the injected decoder factory resolves promptly (the first call reads +
+// inits the module), mirroring production where the wasm is inited at boot before connect.
+beforeAll(async () => {
+  (await createTestSnapshotDecoder()).free();
+});
+
+// Let the connect's `Promise.all([core, decoder])` (and its chained `.then`) settle — a macrotask tick
+// flushes all pending microtasks — so the core + the real wasm decoder are wired before staging frames.
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 // A fake WasmCore: records every input + tick, and hands back queued outbound messages on drain so a test
 // can stage what the "server" produces. No real wasm — the driver logic is what's under test.
@@ -39,6 +52,7 @@ function makeDriver(handlers: NetHandlers) {
     look: { skin: 'a', shirt: 'b', hair: 'c' },
     init: { seed: 1, config: '{}', debug: false },
     createCore: () => Promise.resolve(fake.core),
+    createDecoder: createTestSnapshotDecoder,
     schedule: (step) => { pendingStep = step; return () => { pendingStep = null; }; },
     now: () => 1000,
     wall: () => 2000,
@@ -51,7 +65,7 @@ describe('createWasmCoreNet driver', () => {
   it('admits the local player as the only join on connect (no Join ClientMsg — the core adds the admin)', async () => {
     const { net, fake } = makeDriver({});
     net.connect();
-    await Promise.resolve();
+    await settle();
     expect(fake.core.add_local_player).toHaveBeenCalledWith('Ana', JSON.stringify({ skin: 'a', shirt: 'b', hair: 'c' }));
     expect(fake.inputs).toEqual([]);
   });
@@ -59,7 +73,7 @@ describe('createWasmCoreNet driver', () => {
   it('feeds each send* as the matching ClientMsg into core.input for the local player', async () => {
     const { net, fake } = makeDriver({});
     net.connect();
-    await Promise.resolve();
+    await settle();
     net.sendMove(1, 2, 3, 0.5, -0.2);
     net.sendDig(4, 5, 6);
     net.sendEdit('place', 7, 8, 9, 3);
@@ -82,7 +96,7 @@ describe('createWasmCoreNet driver', () => {
   it('ticks the core and drains its outbound each scheduled step', async () => {
     const { net, fake, step } = makeDriver({});
     net.connect();
-    await Promise.resolve();
+    await settle();
     expect(fake.ticks()).toBe(0);
     step();
     step();
@@ -101,7 +115,7 @@ describe('createWasmCoreNet driver', () => {
     const onError = vi.fn();
     const { net, fake, step } = makeDriver({ onState, onWelcome, onRoster, onEdit, onRoomState, onChat, onInventory, onError });
     net.connect();
-    await Promise.resolve();
+    await settle();
     expect(onState).toHaveBeenCalledWith('connecting');
 
     fake.json({ t: 'welcome', you: 7, world: 'main', admin: true, moderator: false });
@@ -128,7 +142,7 @@ describe('createWasmCoreNet driver', () => {
     const onWelcome = vi.fn();
     const { net, fake, step } = makeDriver({ onSnapshot, onWelcome });
     net.connect();
-    await Promise.resolve();
+    await settle();
     const snapshot: SnapshotMsg = { t: 'snapshot', tick: 5, players: [{ id: 7, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, ping_ms: 0, score: 0, hp: 10 }], creatures: [], hearts: [] };
     fake.binary(encodeKeyframe(snapshot));
     step();
@@ -141,7 +155,7 @@ describe('createWasmCoreNet driver', () => {
     const onState = vi.fn();
     const { net, fake, step, hasPending } = makeDriver({ onState });
     net.connect();
-    await Promise.resolve();
+    await settle();
     expect(hasPending()).toBe(true);
     net.close();
     expect(fake.core.free).toHaveBeenCalledTimes(1);
@@ -163,7 +177,7 @@ describe('createWasmCoreNet driver', () => {
       schedule: (step) => { void step; return () => {}; },
     });
     net.connect();
-    await Promise.resolve();
+    await settle();
     await Promise.resolve();
     expect(onError).toHaveBeenCalledWith('wasm_init', expect.stringContaining('boom'));
     expect(onState).toHaveBeenLastCalledWith('offline');

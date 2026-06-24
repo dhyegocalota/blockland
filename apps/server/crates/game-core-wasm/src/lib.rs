@@ -13,7 +13,11 @@ pub mod memory;
 #[cfg(target_arch = "wasm32")]
 mod log_bridge;
 #[cfg(target_arch = "wasm32")]
+mod snapshot_decoder;
+#[cfg(target_arch = "wasm32")]
 mod wasm_api;
 
+#[cfg(target_arch = "wasm32")]
+pub use snapshot_decoder::SnapshotDecoder;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_api::WasmCore;

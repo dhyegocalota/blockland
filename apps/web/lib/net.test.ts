@@ -1,7 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNet, type NetState, type WebSocketLike } from './net';
-import { encodeKeyframe, encodeDelta } from './snapshot-codec';
+import { encodeKeyframe, encodeDelta } from './engine/online/snapshot-test-codec';
+import { createTestSnapshotDecoder } from './engine/online/wasm-test-loader';
 import type { SnapshotMsg } from './net-snapshot';
+
+// Pre-init the real wasm decoder once so the injected factory below resolves on a microtask (the module is
+// already loaded), mirroring production where the wasm is inited at boot before connect.
+beforeAll(async () => {
+  (await createTestSnapshotDecoder()).free();
+});
+
+// Let net's `decoderFactory().then(...)` (and any pending microtask) run, so the decoder is set before the
+// test delivers a binary frame — the production path has the same ordering (decoder ready before snapshots).
+async function flushDecoder(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0);
+}
 
 class MockWebSocket implements WebSocketLike {
   static instances: MockWebSocket[] = [];
@@ -91,6 +104,7 @@ function makeClient(overrides: Partial<Parameters<typeof createNet>[0]> = {}) {
       onSnapshot: (m) => snapshots.push(m),
     },
     socketFactory: (url) => new MockWebSocket(url),
+    decoderFactory: createTestSnapshotDecoder,
     now: () => clock,
     connectivity: {
       subscribe: (onOffline, onOnline) => {
@@ -136,11 +150,12 @@ describe('net client', () => {
     expect(states).toEqual(['connecting', 'online']);
   });
 
-  it('decodes a binary snapshot frame into the named shape', () => {
+  it('decodes a binary snapshot frame into the named shape', async () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushDecoder();
     socket.receive(welcome);
 
     socket.receiveSnapshot({
@@ -161,11 +176,12 @@ describe('net client', () => {
     ]);
   });
 
-  it('reconstructs the full snapshot from a keyframe then a delta', () => {
+  it('reconstructs the full snapshot from a keyframe then a delta', async () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushDecoder();
     socket.receive(welcome);
 
     const keyframe: SnapshotMsg = {
@@ -192,11 +208,12 @@ describe('net client', () => {
     expect(snapshots).toEqual([keyframe, next]);
   });
 
-  it('drops a delta whose baseline does not match the current tick, until the next keyframe', () => {
+  it('drops a delta whose baseline does not match the current tick, until the next keyframe', async () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushDecoder();
     socket.receive(welcome);
 
     const keyframe: SnapshotMsg = {
@@ -232,11 +249,12 @@ describe('net client', () => {
     expect(MockWebSocket.instances[0].binaryType).toBe('arraybuffer');
   });
 
-  it('decodes an empty binary snapshot', () => {
+  it('decodes an empty binary snapshot', async () => {
     const { client, snapshots } = makeClient();
     client.connect();
     const socket = MockWebSocket.instances[0];
     socket.open();
+    await flushDecoder();
     socket.receive(welcome);
 
     socket.receiveSnapshot({ t: 'snapshot', tick: 6, players: [], creatures: [], hearts: [] });

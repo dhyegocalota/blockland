@@ -335,7 +335,7 @@ pub struct PlayerMeta {
 /// One player's per-tick dynamics as a fixed-order number array (no field names, to keep the hot
 /// Snapshot tiny): `[id, x, y, z, yaw, pitch, ping_ms, score, hp]`. Identity (name/skin/shirt/hair)
 /// is sent separately via `Roster`. The client decodes the index order back into named fields.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct PlayerState(
     pub u32,
     pub f32,
@@ -352,7 +352,7 @@ pub struct PlayerState(
 /// `[id, kind_index, x, y, z, yaw, hp, max_hp]`. `kind_index` is the position in the shared kind
 /// table (pig=0, chicken=1, cow=2, slime=3, spider=4); the client maps it back to a model. `hp` of 0
 /// never appears (it is removed on death).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct CreatureState(
     pub u32,
     pub u8,
@@ -367,7 +367,7 @@ pub struct CreatureState(
 /// One heart pickup dropped by a defeated creature, as a fixed-order number array (no field names, to
 /// keep the hot Snapshot tiny): `[id, x, y, z]`. A player who walks over it while below MAX_HP collects
 /// it for +1 heart; the server removes it on pickup or once its TTL expires, so it stops appearing here.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct HeartDropState(pub u32, pub f32, pub f32, pub f32);
 
 /// One account awaiting an admin's approval before it can join (name + email for the admin to recognize).

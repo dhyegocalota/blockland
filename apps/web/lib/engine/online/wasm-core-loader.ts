@@ -26,6 +26,15 @@ export interface WasmCore {
   free(): void;
 }
 
+// The stateful binary snapshot decoder (the single Rust decode the server encodes against). `decode`
+// reconstructs each per-tick frame — keyframe or baseline-relative delta — into the packed `Float64Array`
+// the TS unpacker reads (see `wasm-snapshot-decoder.ts`); an empty array means "emit nothing this frame"
+// (a delta with no usable baseline). Throws on a corrupt/stale-version frame.
+export interface WasmSnapshotDecoder {
+  decode(bytes: Uint8Array): Float64Array;
+  free(): void;
+}
+
 // A synchronous worldgen: the full procedural base of one chunk as a flat CHUNK*CHUNK*SIZE_Y byte array
 // (the `lx + lz*CHUNK + y*CHUNK*CHUNK` layout the voxel store caches). The client store calls this ONCE
 // per chunk to fill its base from the single Rust source, then overlays edits — all hot per-voxel reads
@@ -35,6 +44,7 @@ export type WorldgenChunk = (cx: number, cz: number) => Uint8Array;
 interface WasmModule {
   default(): Promise<unknown>;
   WasmCore: new (seed: number, config: string, nowMs: number, wallMs: number, debug: boolean) => WasmCore;
+  SnapshotDecoder: new () => WasmSnapshotDecoder;
   worldgen_chunk: WorldgenChunk;
 }
 
@@ -63,6 +73,13 @@ export interface WasmCoreInit {
 export async function createWasmCore(init: WasmCoreInit): Promise<WasmCore> {
   const mod = await loadModule();
   return new mod.WasmCore(init.seed, init.config, init.nowMs, init.wallMs, init.debug);
+}
+
+// Build a fresh stateful snapshot decoder on the already-inited module. The wasm is loaded for online AND
+// offline (Stage 6b), so both the socket path and the offline core-drain can construct one.
+export async function createSnapshotDecoder(): Promise<WasmSnapshotDecoder> {
+  const mod = await loadModule();
+  return new mod.SnapshotDecoder();
 }
 
 // Init the wasm (gating first paint) and return the synchronous chunk worldgen the voxel store fills its

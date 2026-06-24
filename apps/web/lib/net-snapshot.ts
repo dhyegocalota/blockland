@@ -1,7 +1,8 @@
-// Shared snapshot shapes + the creature kind table, used by both the net client (`net.ts`) and the
-// binary decoder (`snapshot-codec.ts`). The decoded shape is the named form the rest of the client
-// consumes; only these two modules know the wire index order and the kind table. The kind table mirrors
-// the Rust `CreatureKind::ALL` (the `index()` the server emits as `kind_index`).
+// Shared snapshot shapes + the creature kind table. The binary decode now lives in Rust (the wasm
+// `SnapshotDecoder` over `protocol::snapshot_codec`); the `wasm-snapshot-decoder.ts` adapter unpacks its
+// packed frame into these named shapes, which the rest of the client (`net.ts`, coop, renderer) consumes.
+// The kind table mirrors the Rust `CreatureKind::ALL` (the `index()` the server emits as `kind_index`),
+// so the adapter maps `kind_index` back to a slug.
 
 export const CREATURE_KINDS = ['pig', 'chicken', 'cow', 'slime', 'spider'] as const;
 
