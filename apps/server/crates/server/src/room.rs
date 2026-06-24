@@ -13,7 +13,8 @@ use protocol::{
     BanEntry, Brand, ClientMsg, CreatureState, EditCell, EditOp, HeartDropState, InventoryItem,
     PlayerId, PlayerMeta, PlayerState, ServerMsg,
 };
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use sim::World;
 use tokio::sync::{mpsc, oneshot};
@@ -298,6 +299,11 @@ pub struct Room {
     approval_required: bool,
     online_allowed: bool,
     offline_allowed: bool,
+    // Injected randomness for the simulation's draws (only the spawn-base scatter today). The native
+    // server seeds it from entropy at construction (still effectively random); a future WASM core seeds
+    // it deterministically so the same seed + inputs reproduce the same spawns. Routing every draw
+    // through this owned source — never `rand::thread_rng()` — is what makes the game logic portable.
+    rng: StdRng,
 }
 
 /// One connection's last-sent snapshot view (its AOI-filtered entities), the baseline its per-tick delta
@@ -404,6 +410,8 @@ impl Room {
             approval_required: false,
             online_allowed: true,
             offline_allowed: true,
+            // Native server: seed from OS entropy, so spawns stay effectively random as before.
+            rng: StdRng::from_entropy(),
             hub,
         }
     }
@@ -439,13 +447,16 @@ impl Room {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    if !self.tick(dt) {
+                    // The I/O shell reads the clock ONCE per tick and feeds it to the game logic, which
+                    // never calls `Instant::now()` itself — the seam a WASM core needs.
+                    if !self.tick(Instant::now(), dt) {
                         break;
                     }
                 }
                 cmd = self.rx.recv() => {
                     match cmd {
-                        Some(c) => self.handle(c).await,
+                        // Likewise one clock read per event, passed into the handler.
+                        Some(c) => self.handle(Instant::now(), c).await,
                         None => break,
                     }
                 }
@@ -462,7 +473,7 @@ impl Room {
         tracing::info!(tenant = %self.key.0, world = %self.key.1, "room closed");
     }
 
-    async fn handle(&mut self, cmd: RoomCmd) {
+    async fn handle(&mut self, now: Instant, cmd: RoomCmd) {
         match cmd {
             RoomCmd::Join {
                 name,
@@ -472,9 +483,12 @@ impl Room {
                 conn,
                 ping,
                 reply,
-            } => self.on_join(name, claim, look, ip, conn, ping, reply).await,
-            RoomCmd::Input { id, msg } => self.on_input(id, msg),
-            RoomCmd::Leave { id, conn, clean } => self.on_leave(id, &conn, clean),
+            } => {
+                self.on_join(now, name, claim, look, ip, conn, ping, reply)
+                    .await
+            }
+            RoomCmd::Input { id, msg } => self.on_input(now, id, msg),
+            RoomCmd::Leave { id, conn, clean } => self.on_leave(now, id, &conn, clean),
             RoomCmd::Rename {
                 account_id,
                 new_name,
@@ -487,6 +501,7 @@ impl Room {
     #[allow(clippy::too_many_arguments)]
     async fn on_join(
         &mut self,
+        now: Instant,
         name: String,
         claim: String,
         look: Appearance,
@@ -509,6 +524,7 @@ impl Room {
         if guest {
             return self
                 .admit(
+                    now,
                     String::new(),
                     String::new(),
                     Role::Player,
@@ -545,6 +561,7 @@ impl Room {
             Role::Player
         });
         self.admit(
+            now,
             account_id,
             authoritative_name,
             role,
@@ -563,6 +580,7 @@ impl Room {
     #[allow(clippy::too_many_arguments)]
     async fn admit(
         &mut self,
+        now: Instant,
         account_id: String,
         authoritative_name: String,
         role: Role,
@@ -577,7 +595,7 @@ impl Room {
         // into their held slot (same id, position, score, inventory, hp) — no Left/Join churn, others
         // saw at most a brief freeze. They already cleared every gate at the original join, so resume
         // skips them. Matched by identity: account for a logged-in player, IP for a guest.
-        if let Some(id) = self.try_resume(&account_id, ip, &look, &conn, &ping) {
+        if let Some(id) = self.try_resume(now, &account_id, ip, &look, &conn, &ping) {
             let _ = reply.send(Ok(id));
             return;
         }
@@ -708,7 +726,6 @@ impl Room {
         };
         let spawn = self.spawn_slot(None);
         let limits = &self.hub.limits;
-        let now = Instant::now();
         let player = Player {
             id,
             name,
@@ -820,7 +837,7 @@ impl Room {
     /// slot (avatar held in place) and start the reconnect grace, so a quick rejoin RESUMES them. The
     /// tick prunes the slot (with a single `Left`) only if the grace expires. Ignores a stale Leave from
     /// a socket the player has already reconnected over (`same_channel` no longer matches the live conn).
-    fn on_leave(&mut self, id: PlayerId, conn: &mpsc::Sender<Outbound>, clean: bool) {
+    fn on_leave(&mut self, now: Instant, id: PlayerId, conn: &mpsc::Sender<Outbound>, clean: bool) {
         let Some(player) = self.players.get(&id) else {
             return;
         };
@@ -843,7 +860,7 @@ impl Room {
         self.players
             .get_mut(&id)
             .expect("player present")
-            .disconnected_at = Some(Instant::now());
+            .disconnected_at = Some(now);
         self.announce_roster();
         tracing::debug!(tenant = %self.key.0, %id, "player dropped, holding slot for reconnect");
     }
@@ -856,13 +873,13 @@ impl Room {
     /// by IP for a guest — mirroring `playtime_key`'s identity rule.
     fn try_resume(
         &mut self,
+        now: Instant,
         account_id: &str,
         ip: IpAddr,
         look: &Appearance,
         conn: &mpsc::Sender<Outbound>,
         ping: &Arc<AtomicU32>,
     ) -> Option<PlayerId> {
-        let now = Instant::now();
         let id = self.players.values().find_map(|p| {
             let held = p.disconnected_at?;
             if now.duration_since(held) > RECONNECT_GRACE {
@@ -932,10 +949,9 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %new_name, %old_name, "player renamed");
     }
 
-    fn on_input(&mut self, id: PlayerId, msg: ClientMsg) {
+    fn on_input(&mut self, now: Instant, id: PlayerId, msg: ClientMsg) {
         let reach = self.hub.limits.edit_reach;
         let max_speed = self.hub.limits.max_speed;
-        let now = Instant::now();
 
         // Admin-only room settings mutate `self` directly, so they're handled before the per-player
         // borrow below. Never trust the client: ignore unless the sender is a known room admin.
@@ -944,27 +960,27 @@ impl Room {
         | ClientMsg::AdminSetPvp { .. }
         | ClientMsg::AdminSetChat { .. } = msg
         {
-            self.on_admin_setting(id, msg);
+            self.on_admin_setting(now, id, msg);
             return;
         }
 
         // Toggling infinite resources is admin-only and sends the player their refreshed inventory.
         if let ClientMsg::AdminSetInfinite { on } = msg {
-            self.on_admin_set_infinite(id, on);
+            self.on_admin_set_infinite(now, id, on);
             return;
         }
 
         // Admin kick/ban remove another player, so they touch the whole player map and are handled
         // before the single-player borrow below.
         if let ClientMsg::AdminKick { id: target } | ClientMsg::AdminBan { id: target } = msg {
-            self.on_admin_remove(id, target, matches!(msg, ClientMsg::AdminBan { .. }));
+            self.on_admin_remove(now, id, target, matches!(msg, ClientMsg::AdminBan { .. }));
             return;
         }
 
         // Resetting the world wipes shared state (edits + creatures), so it is handled before the
         // single-player borrow below.
         if let ClientMsg::AdminResetScores = msg {
-            self.on_admin_reset_scores(id);
+            self.on_admin_reset_scores(now, id);
             return;
         }
         if let ClientMsg::AdminSuspend { on } = msg {
@@ -972,35 +988,35 @@ impl Room {
             return;
         }
         if let ClientMsg::AdminResetWorld = msg {
-            self.on_admin_reset_world(id);
+            self.on_admin_reset_world(now, id);
             return;
         }
 
         // Role changes touch another account + the whole player map, so handle before the borrow.
         if let ClientMsg::AdminSetRole { id: target, role } = msg {
-            self.on_admin_set_role(id, target, role);
+            self.on_admin_set_role(now, id, target, role);
             return;
         }
 
         // Approval toggle + approve touch shared/per-account state and async db, so they own the handler.
         if let ClientMsg::AdminSetApproval { on } = msg {
-            self.on_admin_set_approval(id, on);
+            self.on_admin_set_approval(now, id, on);
             return;
         }
         if let ClientMsg::AdminApprove { account_id } = msg {
-            self.on_admin_approve(id, account_id);
+            self.on_admin_approve(now, id, account_id);
             return;
         }
         if let ClientMsg::AdminReject { account_id } = msg {
-            self.on_admin_reject(id, account_id);
+            self.on_admin_reject(now, id, account_id);
             return;
         }
         if let ClientMsg::AdminBanPending { account_id } = msg {
-            self.on_admin_ban_pending(id, account_id);
+            self.on_admin_ban_pending(now, id, account_id);
             return;
         }
         if let ClientMsg::AdminUnban { ip } = msg {
-            self.on_admin_unban(id, ip);
+            self.on_admin_unban(now, id, ip);
             return;
         }
 
@@ -1010,7 +1026,7 @@ impl Room {
             playtime_window_h,
         } = msg
         {
-            self.on_admin_set_limits(id, playtime_limit_min, playtime_window_h);
+            self.on_admin_set_limits(now, id, playtime_limit_min, playtime_window_h);
             return;
         }
         if let ClientMsg::AdminSetModes {
@@ -1018,7 +1034,7 @@ impl Room {
             offline_allowed,
         } = msg
         {
-            self.on_admin_set_modes(id, online_allowed, offline_allowed);
+            self.on_admin_set_modes(now, id, online_allowed, offline_allowed);
             return;
         }
 
@@ -1031,7 +1047,7 @@ impl Room {
             if !self.accept_primary_action(id, now) {
                 return;
             }
-            self.on_attack_player(id, target);
+            self.on_attack_player(now, id, target);
             return;
         }
 
@@ -1044,14 +1060,14 @@ impl Room {
             if !self.accept_primary_action(id, now) {
                 return;
             }
-            self.on_hit(id, creature_id);
+            self.on_hit(now, id, creature_id);
             return;
         }
         if let ClientMsg::Respawn = msg {
             if let Some(p) = self.players.get_mut(&id) {
                 p.last_seen = now;
             }
-            self.respawn(id);
+            self.respawn(now, id);
             return;
         }
         // A dig tap touches the player's dig counter and (on the final tap) the shared world, so it is
@@ -1317,11 +1333,11 @@ impl Room {
 
     /// Admin-gated toggle of a player's infinite-resources mode (build without spending). Never trust
     /// the client: ignore unless the sender is a known room admin. Sends the refreshed inventory.
-    fn on_admin_set_infinite(&mut self, id: PlayerId, on: bool) {
+    fn on_admin_set_infinite(&mut self, now: Instant, id: PlayerId, on: bool) {
         let Some(p) = self.players.get_mut(&id) else {
             return;
         };
-        p.last_seen = Instant::now();
+        p.last_seen = now;
         if !p.is_admin {
             tracing::debug!(%id, "infinite toggle ignored: not an admin");
             return;
@@ -1333,11 +1349,11 @@ impl Room {
 
     /// Apply an admin-gated room setting. The sender must be a known room admin (never trust the
     /// client); on an actual change, broadcast the new RoomState to everyone.
-    fn on_admin_setting(&mut self, id: PlayerId, msg: ClientMsg) {
+    fn on_admin_setting(&mut self, now: Instant, id: PlayerId, msg: ClientMsg) {
         let Some(p) = self.players.get_mut(&id) else {
             return;
         };
-        p.last_seen = Instant::now();
+        p.last_seen = now;
         let is_admin = p.is_admin;
         let is_moderator = p.is_moderator;
         let actor = p.name.clone();
@@ -1411,11 +1427,17 @@ impl Room {
     /// Admin-gated removal of another player: kick disconnects them (they may rejoin); ban also blocks
     /// their address so they cannot return. Never trust the client: ignore unless the sender is an
     /// admin. Sends the leaving player an Error so their client knows why, then broadcasts Left.
-    fn on_admin_remove(&mut self, admin_id: PlayerId, target_id: PlayerId, ban: bool) {
+    fn on_admin_remove(
+        &mut self,
+        now: Instant,
+        admin_id: PlayerId,
+        target_id: PlayerId,
+        ban: bool,
+    ) {
         let Some(admin) = self.players.get_mut(&admin_id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         // A moderator (kid) may kick, but only an admin (parent) may ban.
         let may_act = if ban {
             admin.is_admin
@@ -1471,11 +1493,11 @@ impl Room {
     /// Admin-gated world wipe: replace the world with a fresh one (clearing every edit), drop all
     /// creatures and reset the id counter, persist the cleared world, and broadcast a "reset" event so
     /// every client rebuilds the procedural map. Never trust the client: ignore unless an admin sent it.
-    fn on_admin_reset_world(&mut self, id: PlayerId) {
+    fn on_admin_reset_world(&mut self, now: Instant, id: PlayerId) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         // World reset is a harmless toggle (kids can do it), so moderators are allowed too.
         if !admin.is_admin && !admin.is_moderator {
             tracing::debug!(%id, "world reset ignored: not a moderator/admin");
@@ -1513,11 +1535,11 @@ impl Room {
 
     /// Wipe everyone's score: reset live players to zero and clear the persisted leaderboard. Admin-only
     /// (it destroys other players' progress), broadcast to the feed.
-    fn on_admin_reset_scores(&mut self, id: PlayerId) {
+    fn on_admin_reset_scores(&mut self, now: Instant, id: PlayerId) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "score reset ignored: not an admin");
             return;
@@ -1598,6 +1620,7 @@ impl Room {
     /// message) and is persisted to the account.
     fn on_admin_set_role(
         &mut self,
+        now: Instant,
         actor_id: PlayerId,
         target_id: PlayerId,
         wire_role: protocol::Role,
@@ -1606,7 +1629,7 @@ impl Room {
         let Some(actor) = self.players.get_mut(&actor_id) else {
             return;
         };
-        actor.last_seen = Instant::now();
+        actor.last_seen = now;
         let actor_is_admin = actor.is_admin;
         let actor_name = actor.name.clone();
         // Only admins (parents) change roles. Moderators (kids) may at most kick — never grant a role.
@@ -1683,11 +1706,11 @@ impl Room {
 
     /// Turn the per-tenant approval gate on or off. Admin-only; persists the flag, broadcasts the new
     /// RoomState, and (when turning it on) hands online admins the current pending list.
-    fn on_admin_set_approval(&mut self, id: PlayerId, on: bool) {
+    fn on_admin_set_approval(&mut self, now: Instant, id: PlayerId, on: bool) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "approval toggle ignored: not an admin");
             return;
@@ -1726,11 +1749,11 @@ impl Room {
     /// Set the per-tenant play-time budget. Admin-only; re-caches the live limit so the running tick
     /// loop enforces it at once (and re-baselines current players so a freshly set limit counts their
     /// stored usage), persists the tenant row, and broadcasts the new RoomState.
-    fn on_admin_set_limits(&mut self, id: PlayerId, limit_min: u32, window_h: u32) {
+    fn on_admin_set_limits(&mut self, now: Instant, id: PlayerId, limit_min: u32, window_h: u32) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "limits ignored: not an admin");
             return;
@@ -1762,11 +1785,17 @@ impl Room {
 
     /// Set the per-tenant allowed game modes. Admin-only; a toggle that would disable BOTH modes is
     /// ignored (a tenant always keeps at least one). Persists the tenant row + broadcasts RoomState.
-    fn on_admin_set_modes(&mut self, id: PlayerId, online_allowed: bool, offline_allowed: bool) {
+    fn on_admin_set_modes(
+        &mut self,
+        now: Instant,
+        id: PlayerId,
+        online_allowed: bool,
+        offline_allowed: bool,
+    ) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "modes ignored: not an admin");
             return;
@@ -1817,11 +1846,11 @@ impl Room {
 
     /// Approve a pending account. Admin-only; records the approval, tells the waiting player they can
     /// join (so their client retries), and refreshes the pending list for online admins.
-    fn on_admin_approve(&mut self, id: PlayerId, account_id: String) {
+    fn on_admin_approve(&mut self, now: Instant, id: PlayerId, account_id: String) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "approve ignored: not an admin");
             return;
@@ -1852,11 +1881,11 @@ impl Room {
 
     /// Reject a pending account. Admin-only; the request is marked rejected (the held player's next join
     /// is turned away with "rejected") and the pending list is refreshed for online admins.
-    fn on_admin_reject(&mut self, id: PlayerId, account_id: String) {
+    fn on_admin_reject(&mut self, now: Instant, id: PlayerId, account_id: String) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "reject ignored: not an admin");
             return;
@@ -1888,11 +1917,11 @@ impl Room {
     /// Permanently ban a player still waiting for approval. Admin-only; the approval key carries the
     /// guest's address (`ip:<addr>`), so the ban is applied to that IP (reusing the existing ban path),
     /// the pending request is dropped, and the pending + ban lists are refreshed for online admins.
-    fn on_admin_ban_pending(&mut self, id: PlayerId, account_id: String) {
+    fn on_admin_ban_pending(&mut self, now: Instant, id: PlayerId, account_id: String) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "ban pending ignored: not an admin");
             return;
@@ -1936,11 +1965,11 @@ impl Room {
 
     /// Lift a global IP ban. Admin-only; updates the live + persisted ban list and refreshes the ban
     /// list shown to online admins.
-    fn on_admin_unban(&mut self, id: PlayerId, ip: String) {
+    fn on_admin_unban(&mut self, now: Instant, id: PlayerId, ip: String) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
         };
-        admin.last_seen = Instant::now();
+        admin.last_seen = now;
         if !admin.is_admin {
             tracing::debug!(%id, "unban ignored: not an admin");
             return;
@@ -2011,7 +2040,7 @@ impl Room {
         true
     }
 
-    fn on_attack_player(&mut self, attacker_id: PlayerId, target_id: PlayerId) {
+    fn on_attack_player(&mut self, now: Instant, attacker_id: PlayerId, target_id: PlayerId) {
         if !self.pvp {
             return;
         }
@@ -2040,7 +2069,7 @@ impl Room {
             return;
         };
         target.hp = target.hp.saturating_sub(1);
-        target.hurt_at = Instant::now();
+        target.hurt_at = now;
         let died = target.hp == 0;
         target.conn.send_one(ServerMsg::Hurt { by: attacker_name });
         // The nearby players who could see the target take the hit get the same flash on it (the attacker
@@ -2060,7 +2089,7 @@ impl Room {
                 attacker.pvp_kills = attacker.pvp_kills.saturating_add(1);
                 scored = true;
             }
-            self.respawn(target_id);
+            self.respawn(now, target_id);
             // The bumped pvp-kill count rides the roster, so refresh it for everyone.
             if scored {
                 self.announce_roster();
@@ -2130,7 +2159,7 @@ impl Room {
         }
     }
 
-    fn tick(&mut self, dt: f32) -> bool {
+    fn tick(&mut self, now: Instant, dt: f32) -> bool {
         self.tick += 1;
 
         // Rate buckets must refill every tick so limits stay smooth.
@@ -2141,7 +2170,6 @@ impl Room {
         }
 
         // The ban/reclaim/idle sweep (DashMap lookups per player) runs at ~2Hz, not every tick.
-        let now = Instant::now();
         if self.tick.is_multiple_of(STATUS_EVERY_TICKS) {
             // Any removal below (prune/kick/time-up) is a roster change; announce once after the sweep so
             // a single tick that drops several players still emits exactly one refreshed roster.
@@ -2267,8 +2295,8 @@ impl Room {
         }
 
         // Maintain and advance the creature population, then resolve heart pickups, before snapshotting.
-        self.simulate_creatures(dt);
-        self.collect_hearts();
+        self.simulate_creatures(now, dt);
+        self.collect_hearts(now);
 
         // Broadcast the world snapshot. Each state is a fixed-order number array (see protocol) so the
         // hot per-tick payload carries no field names; coordinates are rounded to keep the digits small.
@@ -2538,7 +2566,7 @@ impl Room {
 
     /// Keep a capped creature population near active players and advance each one. Despawn creatures
     /// no player is close to; spawn up to the cap around a random player on a slow cadence.
-    fn simulate_creatures(&mut self, dt: f32) {
+    fn simulate_creatures(&mut self, now: Instant, dt: f32) {
         // A slot held for reconnect (avatar frozen) is invisible to the creatures: it neither anchors the
         // population nor draws bites, so a player mid-blip isn't swarmed or hurt while away.
         let player_xz: Vec<[f32; 2]> = self
@@ -2595,7 +2623,6 @@ impl Room {
             })
             .map(|c| c.pos)
             .collect();
-        let now = Instant::now();
         let mut dead: Vec<PlayerId> = Vec::new();
         for p in self.players.values_mut() {
             if p.disconnected_at.is_some() {
@@ -2620,7 +2647,7 @@ impl Room {
             }
         }
         for id in dead {
-            self.respawn(id);
+            self.respawn(now, id);
         }
     }
 
@@ -2631,7 +2658,7 @@ impl Room {
     /// materialises inside terrain/the monument/built blocks or on top of a monster or another player.
     /// `exclude` drops one player (the respawning one) from the occupancy check so they don't block
     /// their own slot. The returned y is the eye position (feet + PLAYER_EYE_HEIGHT).
-    fn spawn_slot(&self, exclude: Option<PlayerId>) -> [f32; 3] {
+    fn spawn_slot(&mut self, exclude: Option<PlayerId>) -> [f32; 3] {
         let mut actors: Vec<[f32; 2]> = self
             .creatures
             .iter()
@@ -2643,7 +2670,6 @@ impl Room {
                 .filter(|p| Some(p.id) != exclude)
                 .map(|p| [p.x, p.z]),
         );
-        let mut rng = rand::thread_rng();
         // Stress affordance: STRESS_SPAWN_RADIUS scatters spawns across a wide area so a load test can
         // place players far enough apart for AOI to engage. Unset/too-small → the normal spawn ring.
         let spawn_radius = std::env::var("STRESS_SPAWN_RADIUS")
@@ -2651,8 +2677,10 @@ impl Room {
             .and_then(|v| v.parse::<i32>().ok())
             .filter(|r| *r > sim::SPAWN_AREA_RADIUS)
             .unwrap_or(sim::SPAWN_AREA_RADIUS);
-        let (base_x, base_z) =
-            sim::random_spawn_base_with_radius(rng.gen(), rng.gen(), spawn_radius);
+        // The two `[0, 1)` draws (one per axis) come from the room's injected RNG, in this order, so the
+        // scatter is identical to the old `thread_rng().gen(), thread_rng().gen()` but now reproducible.
+        let (random_x, random_z): (f32, f32) = (self.rng.gen(), self.rng.gen());
+        let (base_x, base_z) = sim::random_spawn_base_with_radius(random_x, random_z, spawn_radius);
         let (x, z) = sim::find_spawn_slot(base_x, base_z, sim::SPAWN_SEARCH_RADIUS, |x, z| {
             sim::spawn_column_clear(x, z, sim::SPAWN_CLEARANCE_GAP, &self.world, &actors)
         });
@@ -2669,7 +2697,7 @@ impl Room {
         ]
     }
 
-    fn respawn(&mut self, id: PlayerId) {
+    fn respawn(&mut self, now: Instant, id: PlayerId) {
         let spawn = self.spawn_slot(Some(id));
         let Some(p) = self.players.get_mut(&id) else {
             return;
@@ -2678,7 +2706,7 @@ impl Room {
         p.y = spawn[1];
         p.z = spawn[2];
         p.hp = MAX_HP;
-        p.hurt_at = Instant::now();
+        p.hurt_at = now;
         p.move_synced = false;
         p.conn.send_one(ServerMsg::Respawn {
             x: spawn[0],
@@ -2811,7 +2839,7 @@ impl Room {
 
     /// Validate and apply a melee Hit: the attacker must be within range of a live creature. On a kill,
     /// award the kind reward, broadcast a live "kill" event, and persist the new total for an account.
-    fn on_hit(&mut self, attacker_id: PlayerId, creature_id: u32) {
+    fn on_hit(&mut self, now: Instant, attacker_id: PlayerId, creature_id: u32) {
         let Some(attacker) = self.players.get(&attacker_id) else {
             return;
         };
@@ -2845,7 +2873,7 @@ impl Room {
         }
         let death_pos = self.creatures[index].pos;
         self.creatures.remove(index);
-        self.drop_heart(death_pos);
+        self.drop_heart(now, death_pos);
         let reward = kind.config().reward;
         let Some(attacker) = self.players.get_mut(&attacker_id) else {
             return;
@@ -2872,13 +2900,13 @@ impl Room {
     }
 
     /// Drop a heart pickup at a defeated creature's position, for a damaged player to collect.
-    fn drop_heart(&mut self, pos: [f32; 3]) {
+    fn drop_heart(&mut self, now: Instant, pos: [f32; 3]) {
         let id = self.next_heart_drop_id;
         self.next_heart_drop_id = self.next_heart_drop_id.wrapping_add(1);
         self.heart_drops.push(HeartDrop {
             id,
             pos,
-            spawned_at: Instant::now(),
+            spawned_at: now,
         });
         tracing::debug!(tenant = %self.key.0, id, "heart dropped");
     }
@@ -2886,8 +2914,7 @@ impl Room {
     /// Each tick: a damaged player (hp < MAX_HP) within PICKUP_RADIUS of a drop collects it for +1 hp;
     /// the next Snapshot carries the new hp like every other health change. The drop is then consumed.
     /// Any drop older than HEART_TTL is removed so they never accumulate.
-    fn collect_hearts(&mut self) {
-        let now = Instant::now();
+    fn collect_hearts(&mut self, now: Instant) {
         let mut kept: Vec<HeartDrop> = Vec::with_capacity(self.heart_drops.len());
         for drop in std::mem::take(&mut self.heart_drops) {
             if now.duration_since(drop.spawned_at) > HEART_TTL {
@@ -3389,7 +3416,7 @@ mod tests {
         let mut admin_rx = add_player(&mut room, 1, true);
         let mut other_rx = add_player(&mut room, 2, false);
 
-        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: false });
+        room.on_admin_setting(Instant::now(), 1, ClientMsg::AdminSetPeace { on: false });
         assert!(!room.peace);
         assert_eq!(drain_room_state(&mut admin_rx), Some((false, vec![])));
         assert_eq!(drain_room_state(&mut other_rx), Some((false, vec![])));
@@ -3400,7 +3427,7 @@ mod tests {
         let mut room = test_room().await;
         let mut other_rx = add_player(&mut room, 2, false);
 
-        room.on_admin_setting(2, ClientMsg::AdminSetPeace { on: false });
+        room.on_admin_setting(Instant::now(), 2, ClientMsg::AdminSetPeace { on: false });
         assert!(room.peace);
         assert_eq!(drain_room_state(&mut other_rx), None);
     }
@@ -3437,6 +3464,7 @@ mod tests {
         // The client may spawn or restore far from the server spawn; the first move is taken verbatim so
         // the player isn't frozen by the anti-cheat (which would otherwise reject every later move too).
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Move {
                 x: 50.0,
@@ -3452,6 +3480,7 @@ mod tests {
         // at a stale spot forever (which froze them / made them invisible to others). The position moves
         // partway and never teleports the full distance.
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Move {
                 x: 120.0,
@@ -3509,11 +3538,49 @@ mod tests {
             30.0,
             sim::height_at,
         ));
-        room.simulate_creatures(0.05);
+        room.simulate_creatures(Instant::now(), 0.05);
         let a = room.creatures[0].pos;
         let b = room.creatures[1].pos;
         let gap = ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
         assert!(gap > 0.5, "stacked creatures must push apart, gap={gap}");
+    }
+
+    // The point of injecting time + RNG: with the SAME seed, the SAME fed `now` sequence, and the SAME
+    // inputs, two independent rooms simulate identically. This proves no draw still escapes through
+    // `rand::thread_rng()` and no game-logic clock read escapes through `Instant::now()` — the property
+    // the future WASM core relies on for determinism.
+    #[tokio::test]
+    async fn same_seed_and_inputs_reproduce_identical_spawns() {
+        const SEED: u64 = 0x_B10C_C0DE;
+        async fn run() -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
+            let mut room = test_room().await;
+            // Replace the entropy seed with a fixed one so the spawn-base scatter is reproducible.
+            room.rng = StdRng::seed_from_u64(SEED);
+            add_player(&mut room, 1, false);
+            // A fixed clock the whole run shares, advanced by a constant step each tick.
+            let mut now = Instant::now();
+            let step = Duration::from_millis(50);
+            let mut respawns: Vec<[f32; 3]> = Vec::new();
+            for _ in 0..8 {
+                now += step;
+                room.simulate_creatures(now, 0.05);
+                room.respawn(now, 1);
+                let p = room.players.get(&1).unwrap();
+                respawns.push([p.x, p.y, p.z]);
+            }
+            let creatures = room.creatures.iter().map(|c| c.pos).collect();
+            (respawns, creatures)
+        }
+        let (respawns_a, creatures_a) = run().await;
+        let (respawns_b, creatures_b) = run().await;
+        assert_eq!(
+            respawns_a, respawns_b,
+            "same seed + inputs must yield identical rng-driven respawns"
+        );
+        assert_eq!(
+            creatures_a, creatures_b,
+            "same seed + inputs must yield identical creature spawns/positions"
+        );
     }
 
     #[tokio::test]
@@ -3521,7 +3588,7 @@ mod tests {
         let mut room = test_room().await;
         add_player(&mut room, 1, false);
         bite_setup(&mut room);
-        room.simulate_creatures(0.1);
+        room.simulate_creatures(Instant::now(), 0.1);
         assert_eq!(room.players.get(&1).unwrap().hp, MAX_HP - 1);
     }
 
@@ -3544,7 +3611,7 @@ mod tests {
         p.hurt_at = Instant::now() - Duration::from_secs(5);
         room.creatures.clear();
         room.creatures.push(spider);
-        room.simulate_creatures(0.05);
+        room.simulate_creatures(Instant::now(), 0.05);
         assert_eq!(
             room.players.get(&1).unwrap().hp,
             MAX_HP - 1,
@@ -3564,6 +3631,7 @@ mod tests {
         room.peace = false;
         let feet = room.world.surface_y(60, 60) as f32;
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Move {
                 x: 60.0,
@@ -3584,7 +3652,7 @@ mod tests {
         room.creatures.push(spider);
         let start = room.players.get(&1).unwrap().hp;
         for _ in 0..400 {
-            room.simulate_creatures(0.1);
+            room.simulate_creatures(Instant::now(), 0.1);
         }
         let hp = room.players.get(&1).unwrap().hp;
         assert!(
@@ -3602,7 +3670,7 @@ mod tests {
         let mut rx = add_player(&mut room, 1, false);
         bite_setup(&mut room);
         room.players.get_mut(&1).unwrap().hp = 1;
-        room.simulate_creatures(0.1);
+        room.simulate_creatures(Instant::now(), 0.1);
         let (bx, bz) = World::spawn_base();
         let p = room.players.get(&1).unwrap();
         assert_eq!(p.hp, MAX_HP);
@@ -3628,7 +3696,7 @@ mod tests {
             p.hp = 1;
             p.move_synced = true;
         }
-        room.on_input(1, ClientMsg::Respawn);
+        room.on_input(Instant::now(), 1, ClientMsg::Respawn);
         let (bx, bz) = World::spawn_base();
         let p = room.players.get(&1).unwrap();
         assert!(
@@ -3657,7 +3725,7 @@ mod tests {
         for y in (surface + 1)..(surface + 6) {
             room.world.set(bx, y, bz, sim::STONE);
         }
-        room.on_input(1, ClientMsg::Respawn);
+        room.on_input(Instant::now(), 1, ClientMsg::Respawn);
         let p = room.players.get(&1).unwrap();
         let feet = (p.y - PLAYER_EYE_HEIGHT).round() as i32;
         let fx = p.x.floor() as i32;
@@ -3694,7 +3762,7 @@ mod tests {
             room.world.set(bx, y, bz, sim::STONE);
         }
         for _ in 0..40 {
-            room.on_input(1, ClientMsg::Respawn);
+            room.on_input(Instant::now(), 1, ClientMsg::Respawn);
             let p = room.players.get(&1).unwrap();
             let feet = (p.y - PLAYER_EYE_HEIGHT).round() as i32;
             let fx = p.x.floor() as i32;
@@ -3726,6 +3794,7 @@ mod tests {
             p.move_synced = true;
         }
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::EditBatch {
                 edits: vec![
@@ -3776,7 +3845,7 @@ mod tests {
             p.y = 0.0;
             p.z = 0.0;
         }
-        room.on_attack_player(1, 2);
+        room.on_attack_player(Instant::now(), 1, 2);
         assert_eq!(room.players.get(&2).unwrap().hp, MAX_HP - 1);
         assert_eq!(
             room.players.get(&1).unwrap().hp,
@@ -3793,7 +3862,7 @@ mod tests {
         room.pvp = true;
         // Both at the origin (within MELEE_RANGE); the victim is one hit from death.
         room.players.get_mut(&2).unwrap().hp = 1;
-        room.on_attack_player(1, 2);
+        room.on_attack_player(Instant::now(), 1, 2);
         assert_eq!(
             room.players.get(&1).unwrap().pvp_kills,
             1,
@@ -3819,7 +3888,7 @@ mod tests {
         add_player(&mut room, 2, false);
         room.pvp = true;
         // The victim has hearts to spare, so the hit hurts but does not kill.
-        room.on_attack_player(1, 2);
+        room.on_attack_player(Instant::now(), 1, 2);
         assert_eq!(
             room.players.get(&1).unwrap().pvp_kills,
             0,
@@ -4035,6 +4104,7 @@ mod tests {
         let _ = received_edits(&mut placer_rx);
         room.players.get_mut(&3).unwrap().y = 12.0;
         room.on_input(
+            Instant::now(),
             3,
             ClientMsg::Edit {
                 op: EditOp::Place,
@@ -4076,6 +4146,7 @@ mod tests {
         let _ = received_edits(&mut editor_rx);
         room.players.get_mut(&2).unwrap().y = 12.0;
         room.on_input(
+            Instant::now(),
             2,
             ClientMsg::Edit {
                 op: EditOp::Place,
@@ -4118,7 +4189,7 @@ mod tests {
             |_, _| 0,
         ));
 
-        room.on_hit(1, 10);
+        room.on_hit(Instant::now(), 1, 10);
 
         let near_flash = std::iter::from_fn(|| a_rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Attack { id: 10, .. }));
@@ -4137,7 +4208,7 @@ mod tests {
         add_player_at(&mut room, 1, 0.0, 0.0); // the attacker
         add_player_at(&mut room, 2, 1.0, 1.0); // the target (within melee range of the attacker)
 
-        room.on_attack_player(1, 2);
+        room.on_attack_player(Instant::now(), 1, 2);
 
         let near_flash = std::iter::from_fn(|| a_rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Attack { id: 2, .. }));
@@ -4176,7 +4247,7 @@ mod tests {
         let mut guest_rx = add_player(&mut room, 2, false);
         room.players.get_mut(&2).unwrap().account_id = String::new(); // an anonymous guest
 
-        room.on_admin_set_role(1, 2, protocol::Role::Moderator);
+        room.on_admin_set_role(Instant::now(), 1, 2, protocol::Role::Moderator);
 
         // Applied live (session-only, no account to persist) and pushed to the guest + the roster.
         assert!(room.players.get(&2).unwrap().is_moderator);
@@ -4227,7 +4298,7 @@ mod tests {
         room.players.get_mut(&2).unwrap().score = 9;
         room.players.get_mut(&2).unwrap().pvp_kills = 4;
         room.players.get_mut(&2).unwrap().inventory.insert(1, 3);
-        room.on_admin_reset_scores(1);
+        room.on_admin_reset_scores(Instant::now(), 1);
         assert_eq!(room.players.get(&1).unwrap().score, 0);
         assert_eq!(room.players.get(&2).unwrap().score, 0);
         assert_eq!(
@@ -4253,7 +4324,7 @@ mod tests {
         let mut room = test_room().await;
         add_player(&mut room, 2, false);
         room.players.get_mut(&2).unwrap().score = 7;
-        room.on_admin_reset_scores(2);
+        room.on_admin_reset_scores(Instant::now(), 2);
         assert_eq!(room.players.get(&2).unwrap().score, 7);
     }
 
@@ -4287,6 +4358,7 @@ mod tests {
         let mut admin_rx = add_player(&mut room, 1, true);
 
         room.on_admin_setting(
+            Instant::now(),
             1,
             ClientMsg::AdminSetStructure {
                 kind: "trophy".into(),
@@ -4300,6 +4372,7 @@ mod tests {
         );
 
         room.on_admin_setting(
+            Instant::now(),
             1,
             ClientMsg::AdminSetStructure {
                 kind: "trophy".into(),
@@ -4316,6 +4389,7 @@ mod tests {
         let mut other_rx = add_player(&mut room, 2, false);
 
         room.on_admin_setting(
+            Instant::now(),
             2,
             ClientMsg::AdminSetStructure {
                 kind: "ball".into(),
@@ -4332,6 +4406,7 @@ mod tests {
         let mut admin_rx = add_player(&mut room, 1, true);
 
         room.on_admin_setting(
+            Instant::now(),
             1,
             ClientMsg::AdminSetStructure {
                 kind: "BAD!".into(),
@@ -4347,7 +4422,7 @@ mod tests {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
 
-        room.on_admin_setting(1, ClientMsg::AdminSetPeace { on: true });
+        room.on_admin_setting(Instant::now(), 1, ClientMsg::AdminSetPeace { on: true });
         assert_eq!(drain_room_state(&mut admin_rx), None);
     }
 
@@ -4359,12 +4434,12 @@ mod tests {
         assert!(!room.pvp);
         assert!(room.chat_enabled);
 
-        room.on_input(1, ClientMsg::AdminSetPvp { on: true });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminSetPvp { on: true });
         assert!(room.pvp);
         assert_eq!(drain_pvp_chat(&mut admin_rx), Some((true, true)));
         assert_eq!(drain_pvp_chat(&mut other_rx), Some((true, true)));
 
-        room.on_input(1, ClientMsg::AdminSetChat { on: false });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminSetChat { on: false });
         assert!(!room.chat_enabled);
         assert_eq!(drain_pvp_chat(&mut admin_rx), Some((true, false)));
     }
@@ -4374,8 +4449,8 @@ mod tests {
         let mut room = test_room().await;
         let mut other_rx = add_player(&mut room, 2, false);
 
-        room.on_input(2, ClientMsg::AdminSetPvp { on: true });
-        room.on_input(2, ClientMsg::AdminSetChat { on: false });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminSetPvp { on: true });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminSetChat { on: false });
         assert!(!room.pvp);
         assert!(room.chat_enabled);
         assert_eq!(drain_pvp_chat(&mut other_rx), None);
@@ -4388,7 +4463,7 @@ mod tests {
         let _sender_rx = add_player(&mut room, 1, false);
         room.chat_enabled = false;
 
-        room.on_input(1, ClientMsg::Chat { text: "hi".into() });
+        room.on_input(Instant::now(), 1, ClientMsg::Chat { text: "hi".into() });
         let chats: Vec<ServerMsg> = std::iter::from_fn(|| listener_rx.try_recv_msg().ok())
             .filter(|m| matches!(m, ServerMsg::Chat { .. }))
             .collect();
@@ -4402,6 +4477,7 @@ mod tests {
         let _sender_rx = add_player(&mut room, 1, false);
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Chat {
                 text: "you are a bitch".into(),
@@ -4423,6 +4499,7 @@ mod tests {
         let _sender_rx = add_player(&mut room, 1, false);
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Chat {
                 text: "lets build together".into(),
@@ -4440,7 +4517,7 @@ mod tests {
         let mut admin_rx = add_player(&mut room, 1, true);
         let mut target_rx = add_player(&mut room, 2, false);
 
-        room.on_input(1, ClientMsg::AdminKick { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminKick { id: 2 });
         assert!(
             !room.players.contains_key(&2),
             "the kicked player is removed"
@@ -4460,7 +4537,7 @@ mod tests {
         let _other_rx = add_player(&mut room, 2, false);
         let _target_rx = add_player(&mut room, 3, false);
 
-        room.on_input(2, ClientMsg::AdminKick { id: 3 });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminKick { id: 3 });
         assert!(room.players.contains_key(&3), "a non-admin cannot kick");
     }
 
@@ -4474,19 +4551,19 @@ mod tests {
         let _admin_rx = add_player(&mut room, 2, true);
         let _player_rx = add_player(&mut room, 3, false);
 
-        room.on_input(1, ClientMsg::AdminKick { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminKick { id: 2 });
         assert!(
             room.players.contains_key(&2),
             "a moderator cannot kick an admin"
         );
 
-        room.on_input(1, ClientMsg::AdminKick { id: 3 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminKick { id: 3 });
         assert!(
             !room.players.contains_key(&3),
             "a moderator can still kick a normal player"
         );
 
-        room.on_input(2, ClientMsg::AdminKick { id: 1 });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminKick { id: 1 });
         assert!(
             !room.players.contains_key(&1),
             "an admin can kick a moderator"
@@ -4503,7 +4580,7 @@ mod tests {
         let target_ip: IpAddr = "203.0.113.9".parse().unwrap();
         room.players.get_mut(&2).unwrap().ip = target_ip;
 
-        room.on_input(1, ClientMsg::AdminBan { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 2 });
         assert!(
             !room.players.contains_key(&2),
             "the banned player is removed"
@@ -4546,7 +4623,7 @@ mod tests {
         let admin_target_ip: IpAddr = "203.0.113.71".parse().unwrap();
         let _admin_target_rx = add_player(&mut room, 2, true);
         room.players.get_mut(&2).unwrap().ip = admin_target_ip;
-        room.on_input(1, ClientMsg::AdminBan { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 2 });
         assert!(
             room.players.contains_key(&2),
             "an admin target is not removed"
@@ -4560,7 +4637,7 @@ mod tests {
         let _mod_target_rx = add_player(&mut room, 3, false);
         room.players.get_mut(&3).unwrap().is_moderator = true;
         room.players.get_mut(&3).unwrap().ip = mod_target_ip;
-        room.on_input(1, ClientMsg::AdminBan { id: 3 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 3 });
         assert!(
             room.players.contains_key(&3),
             "a moderator target is not removed"
@@ -4573,7 +4650,7 @@ mod tests {
         let player_target_ip: IpAddr = "203.0.113.73".parse().unwrap();
         let _player_target_rx = add_player(&mut room, 4, false);
         room.players.get_mut(&4).unwrap().ip = player_target_ip;
-        room.on_input(1, ClientMsg::AdminBan { id: 4 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 4 });
         assert!(
             !room.players.contains_key(&4),
             "a normal player is still banned"
@@ -4590,7 +4667,7 @@ mod tests {
         let _attacker_rx = add_player(&mut room, 1, false);
         let mut target_rx = add_player(&mut room, 2, false);
 
-        room.on_input(1, ClientMsg::AttackPlayer { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AttackPlayer { id: 2 });
         assert_eq!(drain_hurt(&mut target_rx), None, "no pvp means no damage");
     }
 
@@ -4601,14 +4678,14 @@ mod tests {
         let mut target_rx = add_player(&mut room, 2, false);
         room.pvp = true;
         // Target on top of the attacker (both at origin), well within MELEE_RANGE.
-        room.on_input(1, ClientMsg::AttackPlayer { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AttackPlayer { id: 2 });
         assert_eq!(drain_hurt(&mut target_rx), Some("p1".into()));
         // The attacker never receives a Hurt of its own.
         assert_eq!(drain_hurt(&mut attacker_rx), None);
 
         // A far target is out of range and takes no damage.
         room.players.get_mut(&2).unwrap().x = 100.0;
-        room.on_input(1, ClientMsg::AttackPlayer { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AttackPlayer { id: 2 });
         assert_eq!(drain_hurt(&mut target_rx), None);
     }
 
@@ -4638,7 +4715,7 @@ mod tests {
         ));
         room.players.get_mut(&1).unwrap().y = sim::height_at(0, 0) as f32 + 0.5;
 
-        room.on_input(1, ClientMsg::Hit { id: 50 });
+        room.on_input(Instant::now(), 1, ClientMsg::Hit { id: 50 });
         assert!(room.creatures.is_empty(), "the creature should be dead");
         assert_eq!(room.players.get(&1).unwrap().score, 1);
         assert_eq!(
@@ -4656,7 +4733,7 @@ mod tests {
         room.creatures.push(chicken);
         room.players.get_mut(&1).unwrap().y = sim::height_at(0, 0) as f32 + 0.5;
 
-        room.on_input(1, ClientMsg::Hit { id: 60 });
+        room.on_input(Instant::now(), 1, ClientMsg::Hit { id: 60 });
         assert_eq!(
             room.heart_drops.len(),
             1,
@@ -4670,14 +4747,14 @@ mod tests {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 1, false);
         let surface = sim::height_at(0, 0) as f32;
-        room.drop_heart([0.0, surface, 0.0]);
+        room.drop_heart(Instant::now(), [0.0, surface, 0.0]);
         let p = room.players.get_mut(&1).unwrap();
         p.hp = 1;
         p.x = 0.0;
         p.z = 0.0;
         p.y = surface + PLAYER_EYE_HEIGHT;
 
-        room.collect_hearts();
+        room.collect_hearts(Instant::now());
         assert_eq!(
             room.players.get(&1).unwrap().hp,
             2,
@@ -4695,7 +4772,7 @@ mod tests {
         let _rx = add_player(&mut room, 1, false);
         let chicken = Creature::spawn(70, CreatureKind::Chicken, 0.0, 0.0, sim::height_at);
         let drop_pos = chicken.pos;
-        room.drop_heart(drop_pos);
+        room.drop_heart(Instant::now(), drop_pos);
         let surface = sim::height_at(0, 0) as f32;
         let p = room.players.get_mut(&1).unwrap();
         p.hp = 1;
@@ -4703,7 +4780,7 @@ mod tests {
         p.z = 0.0;
         p.y = surface + PLAYER_EYE_HEIGHT;
 
-        room.collect_hearts();
+        room.collect_hearts(Instant::now());
         assert_eq!(
             room.players.get(&1).unwrap().hp,
             2,
@@ -4717,14 +4794,14 @@ mod tests {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 1, false);
         let surface = sim::height_at(0, 0) as f32;
-        room.drop_heart([0.0, surface, 0.0]);
+        room.drop_heart(Instant::now(), [0.0, surface, 0.0]);
         let p = room.players.get_mut(&1).unwrap();
         p.hp = MAX_HP;
         p.x = 0.0;
         p.z = 0.0;
         p.y = surface + PLAYER_EYE_HEIGHT;
 
-        room.collect_hearts();
+        room.collect_hearts(Instant::now());
         assert_eq!(
             room.players.get(&1).unwrap().hp,
             MAX_HP,
@@ -4742,10 +4819,10 @@ mod tests {
         let _rx = add_player(&mut room, 1, false);
         room.players.get_mut(&1).unwrap().hp = 1;
         // Far from the player so it can only leave via the TTL, and aged past HEART_TTL.
-        room.drop_heart([500.0, 0.0, 500.0]);
+        room.drop_heart(Instant::now(), [500.0, 0.0, 500.0]);
         room.heart_drops[0].spawned_at = Instant::now() - HEART_TTL - Duration::from_secs(1);
 
-        room.collect_hearts();
+        room.collect_hearts(Instant::now());
         assert!(
             room.heart_drops.is_empty(),
             "an old uncollected drop is removed"
@@ -4769,7 +4846,7 @@ mod tests {
             sim::height_at,
         ));
 
-        room.on_input(1, ClientMsg::Hit { id: 51 });
+        room.on_input(Instant::now(), 1, ClientMsg::Hit { id: 51 });
         assert_eq!(room.creatures.len(), 1, "a far creature must not be hit");
         assert_eq!(room.players.get(&1).unwrap().score, 0);
     }
@@ -4787,7 +4864,7 @@ mod tests {
             sim::height_at,
         ));
 
-        room.on_input(1, ClientMsg::Hit { id: 52 });
+        room.on_input(Instant::now(), 1, ClientMsg::Hit { id: 52 });
         assert_eq!(room.creatures.len(), 1, "a 2-hp cow survives the first hit");
         assert_eq!(room.creatures[0].hp, 1);
         assert_eq!(
@@ -4807,7 +4884,7 @@ mod tests {
             0.0,
             sim::height_at,
         ));
-        room.simulate_creatures(0.05);
+        room.simulate_creatures(Instant::now(), 0.05);
         assert!(room.creatures.is_empty(), "no players means no creatures");
     }
 
@@ -5056,7 +5133,7 @@ mod tests {
         let ping = room.players.get(&1).unwrap().ping.clone();
         ping.store(42, Ordering::Relaxed);
         for _ in 0..200 {
-            room.tick(0.05);
+            room.tick(Instant::now(), 0.05);
         }
         assert_eq!(
             ping.load(Ordering::Relaxed),
@@ -5327,7 +5404,7 @@ mod tests {
             ));
         }
         for _ in 0..400 {
-            room.simulate_creatures(0.05);
+            room.simulate_creatures(Instant::now(), 0.05);
             assert!(
                 room.creatures.len() <= MAX_CREATURES,
                 "population exceeded the cap: {} > {MAX_CREATURES}",
@@ -5379,7 +5456,7 @@ mod tests {
         ));
         room.next_creature_id = 42;
 
-        room.on_input(1, ClientMsg::AdminResetWorld);
+        room.on_input(Instant::now(), 1, ClientMsg::AdminResetWorld);
         assert_eq!(room.world.edit_count(), 0, "all edits are wiped");
         assert!(room.creatures.is_empty(), "all creatures are cleared");
         assert_eq!(room.next_creature_id, 1, "the id counter is reset");
@@ -5398,7 +5475,7 @@ mod tests {
         other.hp = 1;
         other.inventory.insert(sim::STONE, 7);
 
-        room.on_input(1, ClientMsg::AdminResetWorld);
+        room.on_input(Instant::now(), 1, ClientMsg::AdminResetWorld);
 
         assert_eq!(
             room.players.get(&1).unwrap().score,
@@ -5425,7 +5502,7 @@ mod tests {
         let mut other_rx = add_player(&mut room, 2, false);
         room.world.set(5, 6, 7, sim::STONE);
 
-        room.on_input(2, ClientMsg::AdminResetWorld);
+        room.on_input(Instant::now(), 2, ClientMsg::AdminResetWorld);
         assert_eq!(room.world.edit_count(), 1, "a non-admin cannot reset");
         assert_eq!(drain_reset_event(&mut other_rx), None);
     }
@@ -5438,11 +5515,12 @@ mod tests {
 
         // A plain player can neither reset nor be hit by the chat toggle.
         room.world.set(5, 6, 7, sim::STONE);
-        room.on_input(2, ClientMsg::AdminResetWorld);
+        room.on_input(Instant::now(), 2, ClientMsg::AdminResetWorld);
         assert_eq!(room.world.edit_count(), 1, "a plain player cannot reset");
 
         // The admin promotes the kid to moderator.
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminSetRole {
                 id: 2,
@@ -5452,11 +5530,11 @@ mod tests {
         assert!(room.players.get(&2).unwrap().is_moderator);
 
         // Now the moderator may reset the world (a harmless toggle)...
-        room.on_input(2, ClientMsg::AdminResetWorld);
+        room.on_input(Instant::now(), 2, ClientMsg::AdminResetWorld);
         assert_eq!(room.world.edit_count(), 0, "a moderator may reset");
 
         // ...but may NOT toggle chat (parents-only).
-        room.on_input(2, ClientMsg::AdminSetChat { on: false });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminSetChat { on: false });
         assert!(room.chat_enabled, "a moderator cannot toggle chat");
     }
 
@@ -5465,6 +5543,7 @@ mod tests {
         let mut room = test_room().await;
         add_player(&mut room, 1, true);
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminSetRole {
                 id: 2,
@@ -5476,6 +5555,7 @@ mod tests {
         add_player(&mut room, 3, false);
 
         room.on_input(
+            Instant::now(),
             2,
             ClientMsg::AdminSetRole {
                 id: 3,
@@ -5488,6 +5568,7 @@ mod tests {
         );
 
         room.on_input(
+            Instant::now(),
             2,
             ClientMsg::AdminSetRole {
                 id: 3,
@@ -5508,10 +5589,10 @@ mod tests {
         add_player(&mut room, 2, false);
         add_player(&mut room, 3, false);
 
-        room.on_input(1, ClientMsg::AdminBan { id: 2 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 2 });
         assert!(room.players.contains_key(&2), "a moderator cannot ban");
 
-        room.on_input(1, ClientMsg::AdminKick { id: 3 });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminKick { id: 3 });
         assert!(!room.players.contains_key(&3), "a moderator can kick");
     }
 
@@ -5526,6 +5607,7 @@ mod tests {
             hair: "#fff".into(),
         };
         room.on_join(
+            Instant::now(),
             String::new(),
             String::new(),
             look,
@@ -5560,6 +5642,7 @@ mod tests {
             hair: "#fff".into(),
         };
         room.admit(
+            Instant::now(),
             account_id.to_string(),
             name.to_string(),
             role,
@@ -5767,6 +5850,7 @@ mod tests {
         );
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminBanPending {
                 account_id: "ip:203.0.113.77".into(),
@@ -5810,6 +5894,7 @@ mod tests {
             hair: "#fff".into(),
         };
         room.on_join(
+            Instant::now(),
             String::new(),
             String::new(),
             look,
@@ -5847,6 +5932,7 @@ mod tests {
             .unwrap();
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminBanPending {
                 account_id: acc.clone(),
@@ -5868,7 +5954,7 @@ mod tests {
             .unwrap()
             .account_id;
 
-        room.on_input(1, ClientMsg::AdminSetApproval { on: true });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminSetApproval { on: true });
         assert!(room.approval_required);
         let required = std::iter::from_fn(|| admin_rx.try_recv_msg().ok()).find_map(|m| match m {
             ServerMsg::RoomState {
@@ -5884,6 +5970,7 @@ mod tests {
             .await
             .unwrap();
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminApprove {
                 account_id: acc.clone(),
@@ -5911,7 +5998,7 @@ mod tests {
     async fn non_admin_approval_toggle_is_ignored() {
         let mut room = test_room().await;
         add_player(&mut room, 2, false);
-        room.on_input(2, ClientMsg::AdminSetApproval { on: true });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminSetApproval { on: true });
         assert!(
             !room.approval_required,
             "a non-admin cannot turn approval on"
@@ -5934,6 +6021,7 @@ mod tests {
             hair: "#fff".into(),
         };
         room.admit(
+            Instant::now(),
             account_id.to_string(),
             name.to_string(),
             role,
@@ -6001,7 +6089,7 @@ mod tests {
         let mut peer_rx = add_player(&mut room, 1, false);
         let _leaver_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(2, &conn2, true);
+        room.on_leave(Instant::now(), 2, &conn2, true);
         let roster = last_roster(&mut peer_rx).expect("a leave refreshes the roster");
         assert_eq!(roster.len(), 1, "the roster drops the player who left");
         assert!(roster.iter().all(|p| p.id != 2), "the leaver is gone");
@@ -6014,7 +6102,7 @@ mod tests {
         let _dropped_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
         // An abrupt drop marks the slot away=true and refreshes the roster (no Left during grace).
-        room.on_leave(2, &conn2, false);
+        room.on_leave(Instant::now(), 2, &conn2, false);
         let away = last_roster(&mut peer_rx).expect("a drop refreshes the roster");
         assert!(
             away.iter().find(|p| p.id == 2).unwrap().away,
@@ -6050,7 +6138,7 @@ mod tests {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
         add_player(&mut room, 2, false);
-        room.on_admin_set_role(1, 2, protocol::Role::Moderator);
+        room.on_admin_set_role(Instant::now(), 1, 2, protocol::Role::Moderator);
         let roster = last_roster(&mut admin_rx).expect("a role change refreshes the roster");
         assert!(
             roster.iter().find(|p| p.id == 2).unwrap().moderator,
@@ -6073,7 +6161,7 @@ mod tests {
             p.z = 0.0;
         }
         let _ = last_roster(&mut peer_rx); // clear the join rosters
-        room.on_attack_player(1, 2);
+        room.on_attack_player(Instant::now(), 1, 2);
         assert_eq!(
             room.players.get(&1).unwrap().pvp_kills,
             1,
@@ -6100,7 +6188,7 @@ mod tests {
         // boundaries. The roster used to be re-sent every boundary; now a quiet tick emits none.
         let _ = last_roster(&mut peer_rx); // ignore anything queued before the quiet stretch
         for _ in 0..(STATUS_EVERY_TICKS * 4 + 3) {
-            room.tick(0.05);
+            room.tick(Instant::now(), 0.05);
         }
         assert!(
             room.players.contains_key(&1) && room.players.contains_key(&2),
@@ -6119,7 +6207,7 @@ mod tests {
         let mut peer_rx = add_player(&mut room, 1, false);
         let _dropped_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(2, &conn2, false);
+        room.on_leave(Instant::now(), 2, &conn2, false);
         room.players.get_mut(&2).unwrap().disconnected_at =
             Some(Instant::now() - RECONNECT_GRACE - Duration::from_secs(1));
         // Keep the observing peer alive through the sweep: register its claim so the reclaim-kick (which
@@ -6127,7 +6215,7 @@ mod tests {
         room.hub.claims.set("acc1", "tok1");
         let _ = last_roster(&mut peer_rx); // clear the drop's roster
         room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(0.05);
+        room.tick(Instant::now(), 0.05);
         let roster = last_roster(&mut peer_rx).expect("the prune refreshes the roster");
         assert_eq!(roster.len(), 1, "the pruned player leaves the roster");
         assert!(roster.iter().all(|p| p.id != 2), "the pruned slot is gone");
@@ -6140,7 +6228,7 @@ mod tests {
         let mut peer_rx = add_player(&mut room, 1, false);
         let _dropped_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(2, &conn2, false);
+        room.on_leave(Instant::now(), 2, &conn2, false);
         // The slot is held (avatar frozen), not removed, and no Left went out within the grace.
         assert!(
             room.players.contains_key(&2),
@@ -6161,7 +6249,7 @@ mod tests {
         let conn2 = room.players.get(&2).unwrap().conn.clone();
         // A page reload / tab close sends a clean Close frame: the player is removed at once (no grace),
         // so their avatar vanishes for everyone immediately.
-        room.on_leave(2, &conn2, true);
+        room.on_leave(Instant::now(), 2, &conn2, true);
         assert!(
             !room.players.contains_key(&2),
             "a clean leave removes the slot at once"
@@ -6180,7 +6268,7 @@ mod tests {
         let (stale_conn, _stale_rx) = mpsc::channel::<Outbound>(64);
         let (live_conn, _live_rx) = mpsc::channel::<Outbound>(64);
         room.players.get_mut(&2).unwrap().conn = live_conn;
-        room.on_leave(2, &stale_conn, false);
+        room.on_leave(Instant::now(), 2, &stale_conn, false);
         assert!(
             room.players.get(&2).unwrap().disconnected_at.is_none(),
             "a Leave from a replaced socket never freezes the live slot"
@@ -6204,7 +6292,7 @@ mod tests {
             p.inventory.insert(3, 9);
         }
         let dropped_conn = room.players.get(&id).unwrap().conn.clone();
-        room.on_leave(id, &dropped_conn, false);
+        room.on_leave(Instant::now(), id, &dropped_conn, false);
         assert!(room.players.get(&id).unwrap().disconnected_at.is_some());
 
         // The same guest rejoins (same IP) within the grace.
@@ -6232,12 +6320,12 @@ mod tests {
         let mut peer_rx = add_player(&mut room, 1, false);
         let _dropped_rx = add_player(&mut room, 2, false);
         let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(2, &conn2, false);
+        room.on_leave(Instant::now(), 2, &conn2, false);
         // Backdate the disconnect beyond the grace so the next status sweep prunes it.
         room.players.get_mut(&2).unwrap().disconnected_at =
             Some(Instant::now() - RECONNECT_GRACE - Duration::from_secs(1));
         room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(0.05);
+        room.tick(Instant::now(), 0.05);
         assert!(!room.players.contains_key(&2), "the expired slot is pruned");
         assert!(
             saw_left(&mut peer_rx, 2),
@@ -6253,7 +6341,7 @@ mod tests {
             admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "198.51.100.1").await;
         let id = admitted.expect("authed player admitted");
         let dropped_conn = room.players.get(&id).unwrap().conn.clone();
-        room.on_leave(id, &dropped_conn, false);
+        room.on_leave(Instant::now(), id, &dropped_conn, false);
         let (resumed, _second_rx) =
             admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "203.0.113.9").await;
         assert_eq!(
@@ -6291,7 +6379,7 @@ mod tests {
         room.players.get_mut(&id).unwrap().joined_at_ms = epoch_ms() - two_min_ms;
         // The status sweep flushes the time and sends the over-budget guest to the lobby.
         room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(0.05);
+        room.tick(Instant::now(), 0.05);
         assert_eq!(first_error_code(&mut rx).as_deref(), Some("time_up"));
         assert!(!room.players.contains_key(&id), "the guest is removed");
         // The accrual write is fire-and-forget (spawned off the tick), so let it land before reading.
@@ -6332,7 +6420,7 @@ mod tests {
         let id = admitted.expect("first guest admitted");
         room.players.get_mut(&id).unwrap().joined_at_ms = epoch_ms() - 2 * 60_000;
         room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(0.05);
+        room.tick(Instant::now(), 0.05);
         for _ in 0..50 {
             tokio::task::yield_now().await;
             let used = room
@@ -6363,7 +6451,7 @@ mod tests {
         // And an admin already past their session time is never kicked by the play-time sweep.
         room.players.get_mut(&admin_id).unwrap().joined_at_ms = epoch_ms() - 5 * 60_000;
         room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(0.05);
+        room.tick(Instant::now(), 0.05);
         assert!(
             room.players.contains_key(&admin_id),
             "an admin is never kicked by the playtime sweep"
@@ -6399,6 +6487,7 @@ mod tests {
         let _rx = add_player(&mut room, 1, true);
         // Start online-only, then try to also disable online: the toggle must be ignored.
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminSetModes {
                 online_allowed: true,
@@ -6407,6 +6496,7 @@ mod tests {
         );
         assert!(room.online_allowed && !room.offline_allowed);
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminSetModes {
                 online_allowed: false,
@@ -6424,6 +6514,7 @@ mod tests {
         let mut room = test_room().await;
         let mut admin_rx = add_player(&mut room, 1, true);
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::AdminSetLimits {
                 playtime_limit_min: 5,
@@ -6449,7 +6540,7 @@ mod tests {
         let _rx = add_player(&mut room, 1, false);
         for _ in 0..200 {
             room.tick += 1;
-            room.simulate_creatures(0.05);
+            room.simulate_creatures(Instant::now(), 0.05);
         }
         let ramped = room.creatures.len();
         assert!(
@@ -6464,7 +6555,7 @@ mod tests {
         room.creatures.clear();
         for _ in 0..(SPAWN_EVERY_TICKS * 5) {
             room.tick += 1;
-            room.simulate_creatures(0.05);
+            room.simulate_creatures(Instant::now(), 0.05);
         }
         assert!(
             !room.creatures.is_empty(),
@@ -6531,6 +6622,7 @@ mod tests {
         place_player_at(&mut room, 1, 10, 20, 10);
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Edit {
                 op: EditOp::Break,
@@ -6558,6 +6650,7 @@ mod tests {
         room.players.get_mut(&1).unwrap().infinite = false;
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Edit {
                 op: EditOp::Place,
@@ -6587,6 +6680,7 @@ mod tests {
         place_player_at(&mut room, 1, 10, 20, 10);
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Edit {
                 op: EditOp::Place,
@@ -6617,6 +6711,7 @@ mod tests {
         }
 
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Edit {
                 op: EditOp::Place,
@@ -6646,6 +6741,7 @@ mod tests {
         place_player_at(&mut room, 1, 10, 20, 10);
         // infinite is true by default; placing must not require nor decrement the inventory.
         room.on_input(
+            Instant::now(),
             1,
             ClientMsg::Edit {
                 op: EditOp::Place,
@@ -6669,7 +6765,7 @@ mod tests {
         let mut rx = add_player(&mut room, 1, true);
         assert!(room.players.get(&1).unwrap().infinite);
 
-        room.on_input(1, ClientMsg::AdminSetInfinite { on: false });
+        room.on_input(Instant::now(), 1, ClientMsg::AdminSetInfinite { on: false });
         assert!(!room.players.get(&1).unwrap().infinite);
         assert_eq!(drain_inventory(&mut rx, sim::STONE), Some((0, false)));
     }
@@ -6678,7 +6774,7 @@ mod tests {
     async fn non_admin_infinite_toggle_is_ignored() {
         let mut room = test_room().await;
         let _rx = add_player(&mut room, 2, false);
-        room.on_input(2, ClientMsg::AdminSetInfinite { on: false });
+        room.on_input(Instant::now(), 2, ClientMsg::AdminSetInfinite { on: false });
         assert!(
             room.players.get(&2).unwrap().infinite,
             "a non-admin cannot toggle"
