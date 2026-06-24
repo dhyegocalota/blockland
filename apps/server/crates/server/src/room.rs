@@ -20,6 +20,7 @@ use tokio::time::MissedTickBehavior;
 use crate::creatures::{separate_creatures, Creature, CreatureKind};
 use crate::db::Role;
 use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
+use crate::spatial_grid::SpatialGrid;
 
 // Bulk edits (magic structures, and the world handed to a joining player) are capped so one player
 // cannot flood the room or build across the whole map.
@@ -1243,9 +1244,11 @@ impl Room {
         }
         if let Some(m) = edit_out {
             self.broadcast(&m);
-            // Placing is an arm action too: swing the placer's avatar for everyone else (a break in co-op
-            // comes through Dig, which already swings via accept_primary_action).
-            self.broadcast_except(id, &ServerMsg::Swing { id });
+            // Placing is an arm action too: swing the placer's avatar for the nearby players who could see
+            // it (a break in co-op comes through Dig, which already swings via accept_primary_action).
+            if let Some(p) = self.players.get(&id) {
+                self.broadcast_near(p.x, p.z, id, &ServerMsg::Swing { id });
+            }
             self.lift_stuck_players();
         }
         if let Some(ServerMsg::EditBatch { edits, .. }) = batch_out.as_ref() {
@@ -1980,10 +1983,11 @@ impl Room {
             return false;
         }
         p.last_action = now;
+        let (actor_x, actor_z) = (p.x, p.z);
         // Every accepted primary action (dig tap / creature hit / pvp attack) swings the actor's avatar
-        // arm for everyone else; the actor already swung their own first-person view locally. Purely
-        // cosmetic — no gameplay change.
-        self.broadcast_except(id, &ServerMsg::Swing { id });
+        // arm for the nearby players who could see it; the actor already swung their own first-person view
+        // locally. Purely cosmetic — no gameplay change.
+        self.broadcast_near(actor_x, actor_z, id, &ServerMsg::Swing { id });
         true
     }
 
@@ -2019,8 +2023,11 @@ impl Room {
         target.hurt_at = Instant::now();
         let died = target.hp == 0;
         target.conn.send_one(ServerMsg::Hurt { by: attacker_name });
-        // Everyone but the attacker sees the same hit effect on the target.
-        self.broadcast_except(
+        // The nearby players who could see the target take the hit get the same flash on it (the attacker
+        // played it locally; the target is told directly via Hurt above).
+        self.broadcast_near(
+            target_x,
+            target_z,
             attacker_id,
             &ServerMsg::Attack {
                 kind: "player".into(),
@@ -2324,6 +2331,9 @@ impl Room {
         hearts: &[HeartDropState],
     ) {
         let periodic_keyframe = tick.is_multiple_of(KEYFRAME_INTERVAL_TICKS);
+        // Build the spatial grid ONCE per tick from this tick's positions, so each receiver's AOI runs the
+        // exact `in_view` test over only its 3×3-cell neighborhood (O(neighbors)) instead of every entity.
+        let grids = AoiGrids::build(players, creatures, hearts);
         // Iterate over a snapshot of the ids so the per-connection body can borrow `self.players` mutably
         // (to read + update each player's own baseline) without holding an iterator over the same map.
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
@@ -2336,6 +2346,7 @@ impl Room {
                 id,
                 center,
                 &receiver.snapshot_baseline,
+                &grids,
                 players,
                 creatures,
                 hearts,
@@ -2377,14 +2388,20 @@ impl Room {
         }
     }
 
-    /// Broadcast to everyone except one player (e.g. the attacker, who already played the hit effect
-    /// locally for instant feedback — the others see it via this). Single-serialized like `broadcast`.
-    fn broadcast_except(&self, except: PlayerId, msg: &ServerMsg) {
+    /// Fan a TRANSIENT spatial event (a swing / hit flash) out only to players whose AOI includes the event
+    /// point — i.e. within `aoi::AOI_RADIUS` of `(center_x, center_z)` — skipping `except` (the actor, who
+    /// already played it locally). A player who isn't near the point couldn't have seen the animation, so
+    /// not receiving it has no world-state consequence; this keeps the high-volume Swing/Attack stream from
+    /// fanning out to the whole room. Single-serialized like `broadcast`.
+    fn broadcast_near(&self, center_x: f32, center_z: f32, except: PlayerId, msg: &ServerMsg) {
         let Some(frame) = serialize_frame(msg) else {
             return;
         };
         for p in self.players.values() {
             if p.id == except {
+                continue;
+            }
+            if !crate::aoi::in_view((center_x, center_z), (p.x, p.z), false) {
                 continue;
             }
             let _ = p.conn.try_send(Outbound::Frame(frame.clone()));
@@ -2671,9 +2688,12 @@ impl Room {
             return;
         }
         let kind = self.creatures[index].kind;
+        let (creature_x, creature_z) = (self.creatures[index].pos[0], self.creatures[index].pos[2]);
         self.creatures[index].hp = self.creatures[index].hp.saturating_sub(1);
-        // Everyone but the attacker sees the same flash on the creature (the attacker plays it locally).
-        self.broadcast_except(
+        // The nearby players who could see the creature get the same flash on it (the attacker plays it locally).
+        self.broadcast_near(
+            creature_x,
+            creature_z,
             attacker_id,
             &ServerMsg::Attack {
                 kind: "creature".into(),
@@ -2902,49 +2922,110 @@ fn receiver_center(receiver_id: PlayerId, players: &[PlayerState]) -> (f32, f32)
     }
 }
 
+/// The per-tick spatial grids (one per entity kind, since their ids share the `u32` namespace), built
+/// once from this tick's positions so each receiver's AOI candidate set is its 3×3-cell neighborhood.
+struct AoiGrids {
+    players: SpatialGrid,
+    creatures: SpatialGrid,
+    hearts: SpatialGrid,
+}
+
+impl AoiGrids {
+    fn build(
+        players: &[PlayerState],
+        creatures: &[CreatureState],
+        hearts: &[HeartDropState],
+    ) -> Self {
+        let mut grids = Self {
+            players: SpatialGrid::new(),
+            creatures: SpatialGrid::new(),
+            hearts: SpatialGrid::new(),
+        };
+        players
+            .iter()
+            .for_each(|p| grids.players.insert(p.0, p.1, p.3));
+        creatures
+            .iter()
+            .for_each(|c| grids.creatures.insert(c.0, c.2, c.4));
+        hearts
+            .iter()
+            .for_each(|h| grids.hearts.insert(h.0, h.1, h.3));
+        grids
+    }
+}
+
+/// The candidate ids the AOI test must evaluate for one receiver and one entity kind: the grid's 3×3
+/// neighborhood around the receiver UNION the ids in its previous baseline. A sticky entity that drifted
+/// out of the neighborhood since last tick must still be re-evaluated for the hysteresis upper bound, so a
+/// baseline id is always a candidate even when the grid no longer lists it near the receiver.
+fn aoi_candidates(
+    near: Vec<u32>,
+    baseline_ids: impl Iterator<Item = u32>,
+) -> std::collections::HashSet<u32> {
+    let mut candidates: std::collections::HashSet<u32> = near.into_iter().collect();
+    candidates.extend(baseline_ids);
+    candidates
+}
+
 /// Build `receiver_id`'s AOI view: their OWN player record ALWAYS (self-reconciliation is never culled),
-/// plus every other player/creature/heart within the receiver's interest radius. Hysteresis is applied
-/// per entity from whether it was in the receiver's previous baseline, so an entity already in view leaves
-/// only once it passes `AOI_RADIUS + AOI_HYSTERESIS`.
+/// plus every other player/creature/heart within the receiver's interest radius. The candidate set is the
+/// receiver's grid neighborhood plus its previous baseline; hysteresis is applied per entity from whether
+/// it was in that baseline, so an entity already in view leaves only once it passes `AOI_RADIUS + AOI_HYSTERESIS`.
 fn aoi_view(
     receiver_id: PlayerId,
     center: (f32, f32),
     baseline: &SnapshotBaseline,
+    grids: &AoiGrids,
     players: &[PlayerState],
     creatures: &[CreatureState],
     hearts: &[HeartDropState],
 ) -> AoiView {
+    let player_candidates = aoi_candidates(
+        grids.players.near(center.0, center.1),
+        baseline.players.iter().map(|b| b.0),
+    );
     let kept_players = players
         .iter()
         .filter(|p| {
             p.0 == receiver_id
-                || crate::aoi::in_view(
+                || (player_candidates.contains(&p.0)
+                    && crate::aoi::in_view(
+                        center,
+                        (p.1, p.3),
+                        baseline.players.iter().any(|b| b.0 == p.0),
+                    ))
+        })
+        .cloned()
+        .collect();
+    let creature_candidates = aoi_candidates(
+        grids.creatures.near(center.0, center.1),
+        baseline.creatures.iter().map(|b| b.0),
+    );
+    let kept_creatures = creatures
+        .iter()
+        .filter(|c| {
+            creature_candidates.contains(&c.0)
+                && crate::aoi::in_view(
                     center,
-                    (p.1, p.3),
-                    baseline.players.iter().any(|b| b.0 == p.0),
+                    (c.2, c.4),
+                    baseline.creatures.iter().any(|b| b.0 == c.0),
                 )
         })
         .cloned()
         .collect();
-    let kept_creatures = creatures
-        .iter()
-        .filter(|c| {
-            crate::aoi::in_view(
-                center,
-                (c.2, c.4),
-                baseline.creatures.iter().any(|b| b.0 == c.0),
-            )
-        })
-        .cloned()
-        .collect();
+    let heart_candidates = aoi_candidates(
+        grids.hearts.near(center.0, center.1),
+        baseline.hearts.iter().map(|b| b.0),
+    );
     let kept_hearts = hearts
         .iter()
         .filter(|h| {
-            crate::aoi::in_view(
-                center,
-                (h.1, h.3),
-                baseline.hearts.iter().any(|b| b.0 == h.0),
-            )
+            heart_candidates.contains(&h.0)
+                && crate::aoi::in_view(
+                    center,
+                    (h.1, h.3),
+                    baseline.hearts.iter().any(|b| b.0 == h.0),
+                )
         })
         .cloned()
         .collect();
@@ -3667,6 +3748,83 @@ mod tests {
         let echoed = std::iter::from_fn(|| actor_rx.try_recv_msg().ok())
             .any(|m| matches!(m, ServerMsg::Swing { .. }));
         assert!(!echoed, "the actor does not receive its own swing");
+    }
+
+    fn received_swing(rx: &mut mpsc::Receiver<Outbound>) -> bool {
+        std::iter::from_fn(|| rx.try_recv_msg().ok()).any(|m| matches!(m, ServerMsg::Swing { .. }))
+    }
+
+    #[tokio::test]
+    async fn broadcast_near_reaches_an_in_range_player_and_not_a_far_one_nor_the_except() {
+        let mut room = test_room().await;
+        let mut except_rx = add_player_at(&mut room, 1, 0.0, 0.0); // the actor (excepted)
+        let mut near_rx = add_player_at(&mut room, 2, 10.0, 10.0); // within AOI of the event point
+        let mut far_rx = add_player_at(&mut room, 3, 50_000.0, 0.0); // way outside AOI
+
+        room.broadcast_near(0.0, 0.0, 1, &ServerMsg::Swing { id: 1 });
+
+        assert!(received_swing(&mut near_rx), "the in-range player gets it");
+        assert!(!received_swing(&mut far_rx), "the far player does not");
+        assert!(
+            !received_swing(&mut except_rx),
+            "the excepted actor does not"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_swing_near_player_a_reaches_a_but_not_far_player_b() {
+        let mut room = test_room().await;
+        let mut a_rx = add_player_at(&mut room, 2, 5.0, 5.0); // near the actor
+        let mut b_rx = add_player_at(&mut room, 3, 50_000.0, 0.0); // far away
+        add_player_at(&mut room, 1, 0.0, 0.0); // the acting player
+
+        assert!(room.accept_primary_action(1, Instant::now()));
+
+        assert!(received_swing(&mut a_rx), "A near the actor sees the swing");
+        assert!(!received_swing(&mut b_rx), "B 50000 away does not");
+    }
+
+    #[tokio::test]
+    async fn a_creature_hit_flash_reaches_a_near_player_but_not_a_far_one() {
+        let mut room = test_room().await;
+        let mut a_rx = add_player_at(&mut room, 2, 5.0, 5.0); // near the attacker + creature
+        let mut b_rx = add_player_at(&mut room, 3, 50_000.0, 0.0); // far away
+        add_player_at(&mut room, 1, 0.0, 0.0); // the attacker
+        room.creatures.push(Creature::spawn(
+            10,
+            CreatureKind::ALL[0],
+            1.0,
+            1.0,
+            |_, _| 0,
+        ));
+
+        room.on_hit(1, 10);
+
+        let near_flash = std::iter::from_fn(|| a_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Attack { id: 10, .. }));
+        let far_flash = std::iter::from_fn(|| b_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Attack { .. }));
+        assert!(near_flash, "the near player sees the creature flash");
+        assert!(!far_flash, "the far player does not");
+    }
+
+    #[tokio::test]
+    async fn a_pvp_hit_flash_reaches_a_near_player_but_not_a_far_one() {
+        let mut room = test_room().await;
+        room.pvp = true;
+        let mut a_rx = add_player_at(&mut room, 3, 5.0, 5.0); // near the target
+        let mut b_rx = add_player_at(&mut room, 4, 50_000.0, 0.0); // far away
+        add_player_at(&mut room, 1, 0.0, 0.0); // the attacker
+        add_player_at(&mut room, 2, 1.0, 1.0); // the target (within melee range of the attacker)
+
+        room.on_attack_player(1, 2);
+
+        let near_flash = std::iter::from_fn(|| a_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Attack { id: 2, .. }));
+        let far_flash = std::iter::from_fn(|| b_rx.try_recv_msg().ok())
+            .any(|m| matches!(m, ServerMsg::Attack { .. }));
+        assert!(near_flash, "the near player sees the pvp flash");
+        assert!(!far_flash, "the far player does not");
     }
 
     #[tokio::test]
@@ -4565,6 +4723,37 @@ mod tests {
         assert_eq!(creatures_a, vec![10], "A sees only its local creature");
         assert_eq!(players_b, vec![2], "B sees only itself, not the distant A");
         assert_eq!(creatures_b, vec![11], "B sees only its local creature");
+    }
+
+    #[tokio::test]
+    async fn a_baseline_creature_well_outside_the_grid_neighborhood_is_re_evaluated_and_dropped() {
+        // The grid-accelerated AOI must still include a receiver's previous-baseline ids as candidates so a
+        // sticky entity is re-evaluated for the hysteresis upper bound even after it drifts out of the 3×3
+        // cell block. Here a creature is in view, then teleports far past the band: it must LEAVE as a delta
+        // removal (the grid no longer lists it near the receiver, but the baseline-union still re-evaluates it).
+        let mut room = test_room().await;
+        let mut rx = add_player_at(&mut room, 1, 0.0, 0.0);
+        let mut creature = vec![CreatureState(10, 0, 5.0, 64.0, 0.0, 0.0, 2, 2)]; // next to A -> in view
+
+        let players = states_of(&room);
+        room.broadcast_snapshot(1, &players, &creature, &[]);
+        let Outbound::Binary(k) = rx.try_recv().unwrap() else {
+            panic!("keyframe");
+        };
+        assert_eq!(keyframe_ids(&k).1, vec![10], "creature starts in view");
+
+        // It jumps far outside both the AOI band and the receiver's 3×3 grid neighborhood.
+        creature[0].2 = 50_000.0;
+        let players = states_of(&room);
+        room.broadcast_snapshot(2, &players, &creature, &[]);
+        let Outbound::Binary(d) = rx.try_recv().unwrap() else {
+            panic!("delta");
+        };
+        assert_eq!(
+            delta_removed_creature_ids(&d),
+            vec![10],
+            "a baseline entity that left the neighborhood is re-evaluated and removed",
+        );
     }
 
     #[tokio::test]

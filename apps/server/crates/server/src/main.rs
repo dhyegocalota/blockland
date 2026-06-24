@@ -37,6 +37,7 @@ mod hub;
 mod internal_auth;
 mod notify;
 mod room;
+mod spatial_grid;
 mod storage;
 mod uploads;
 
