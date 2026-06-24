@@ -102,7 +102,9 @@ export default function Game() {
   // The big start-screen block banner: server `time_up`/`room_closed` (suspend) on a rejected join,
   // plus the live lobby-admin `room.suspended` so an admin/moderator sees a paused world proactively.
   const lobbyBlock = lobbyBlockBanner({ netState, suspended: (lobbyAdmin || lobbyModerator) && lobby.room.suspended });
-  const showPing = netState === 'online';
+  // Offline-via-core also reports netState 'online' (the local core's Welcome), so gate ping on !solo —
+  // there is no network round-trip to ping in single-player.
+  const showPing = netState === 'online' && !solo;
   const self = roster.find((player) => player.self);
   const myKills = self ? self.pvpKills : 0;
   // The friendly connecting/reconnecting overlay owns that status; suppress the small banner while it is

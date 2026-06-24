@@ -58,6 +58,16 @@ describe('Game', () => {
     expect(screen.getByText('🔌 Conectando…')).toBeInTheDocument();
   });
 
+  it('shows the ping online but hides it in offline solo (no network round-trip to ping)', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', solo: false }));
+    render(<Game />);
+    expect(document.getElementById('ping')).toBeInTheDocument();
+    cleanup();
+    useGame.mockReturnValue(gameState({ netState: 'online', solo: true }));
+    render(<Game />);
+    expect(document.getElementById('ping')).toBeNull();
+  });
+
   it('hides the connecting overlay once the world is interactive', () => {
     useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
     render(<Game />);
