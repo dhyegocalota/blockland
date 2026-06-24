@@ -69,6 +69,8 @@ mod tests {
     fn loads_the_blocklist_from_the_txt_skipping_comments_and_blanks() {
         let words = blocked_words();
         assert!(words.contains(&"fuck") && words.contains(&"merda"));
-        assert!(words.iter().all(|word| !word.is_empty() && !word.starts_with('#')));
+        assert!(words
+            .iter()
+            .all(|word| !word.is_empty() && !word.starts_with('#')));
     }
 }
