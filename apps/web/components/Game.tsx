@@ -91,7 +91,7 @@ export default function Game() {
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
-    onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
+    onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, playOffline, discardName,
   } = useGame();
 
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
@@ -364,8 +364,8 @@ export default function Game() {
           <div className="panel">
             {loginStep === 'email' && (
               <>
-                <h2>{t('login.email_title')}</h2>
-                <p>{t('login.email_hint', { name: name.trim() })}</p>
+                <h2>{t('login.email_title', { name: name.trim() })}</h2>
+                <p>{t('login.email_hint')}</p>
                 <input
                   id="loginEmail"
                   type="email"
@@ -379,6 +379,7 @@ export default function Game() {
                   {loginBusy ? t('login.sending') : t('login.send_code')}
                 </button>
                 <button id="loginCancel" className="ghost" onClick={playAsGuest}>{t('login.random_name')}</button>
+                <button id="loginOffline" className="ghost" onClick={playOffline}>{t('login.play_offline')}</button>
               </>
             )}
             {loginStep === 'code' && (
@@ -401,6 +402,7 @@ export default function Game() {
                   {loginBusy ? t('login.verifying') : t('login.verify')}
                 </button>
                 <button id="loginCancel" className="ghost" onClick={playAsGuest}>{t('login.random_name')}</button>
+                <button id="loginOffline" className="ghost" onClick={playOffline}>{t('login.play_offline')}</button>
               </>
             )}
           </div>

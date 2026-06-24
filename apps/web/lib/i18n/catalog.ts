@@ -176,9 +176,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.name_label': 'Seu nome',
     'start.name_placeholder': 'Digite seu nome',
 
-    // Login / username claim
-    'login.email_title': 'Entre com seu nome',
-    'login.email_hint': 'O nome "{name}" é seu? Confirme seu e-mail para entrar.',
+    // Login / username claim (claiming a name is an ONLINE-only concern)
+    'login.email_title': 'Jogar online com "{name}"',
+    'login.email_hint': 'Pra usar esse nome online, confirme seu e-mail — assim mais ninguém pode usá-lo. Ou jogue offline com ele agora mesmo.',
     'login.email_placeholder': 'seu@email.com',
     'login.send_code': 'Enviar código',
     'login.sending': 'Enviando...',
@@ -188,7 +188,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'login.code_placeholder': '000000',
     'login.verify': 'Entrar',
     'login.verifying': 'Entrando...',
-    'login.random_name': 'Prefiro jogar com nome aleatório',
+    'login.random_name': '🎲 Jogar online com um nome aleatório',
+    'login.play_offline': '🔵 Jogar offline com esse nome',
     'login.logout': 'Sair',
     'login.error_not_owner': 'Esse nome já é de outra pessoa. Escolha outro.',
     'login.error_invalid': 'Nome ou e-mail inválido.',
@@ -616,9 +617,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.name_label': 'Your name',
     'start.name_placeholder': 'Type your name',
 
-    // Login / username claim
-    'login.email_title': 'Log in with your name',
-    'login.email_hint': 'Is "{name}" your name? Confirm your email to log in.',
+    // Login / username claim (claiming a name is an ONLINE-only concern)
+    'login.email_title': 'Play online as "{name}"',
+    'login.email_hint': 'To use this name online, confirm your email — then no one else can take it. Or play offline with it right now.',
     'login.email_placeholder': 'you@email.com',
     'login.send_code': 'Send code',
     'login.sending': 'Sending...',
@@ -628,7 +629,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'login.code_placeholder': '000000',
     'login.verify': 'Log in',
     'login.verifying': 'Logging in...',
-    'login.random_name': "I'd rather play with a random name",
+    'login.random_name': '🎲 Play online with a random name',
+    'login.play_offline': '🔵 Play offline with this name',
     'login.logout': 'Log out',
     'login.error_not_owner': 'That name belongs to someone else. Pick another.',
     'login.error_invalid': 'Invalid name or email.',

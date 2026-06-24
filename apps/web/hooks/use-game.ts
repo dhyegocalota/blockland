@@ -355,14 +355,17 @@ export function useGame() {
     if (typeof window !== 'undefined') window.localStorage.setItem(LOOK_KEYS[part], value);
   }, []);
 
-  // Using a NAME means owning it: a named player must log in to claim it, online OR offline (only an
-  // anonymous guest — empty name — plays without logging in). Offline is no exception.
+  // Owning a NAME is an ONLINE concern: claiming it on the server (anti-impersonation + ranking) is the
+  // only reason auth is needed, so only a named ONLINE player with no valid claim must log in. Offline
+  // (solo or server-unreachable) the name is a local label only — a named player boots straight in, and
+  // an anonymous guest (empty name) never logs in either way.
   const needsLogin = useCallback((): boolean => {
     const trimmed = name.trim();
     if (!trimmed) return false;
     if (!brand) return false;
+    if (solo || offline) return false;
     return resolveClaim(brand.id, trimmed) === '';
-  }, [brand, name]);
+  }, [brand, name, solo, offline]);
 
   // Gate the engine's Play button: a named player with no valid session must log in first. We block
   // the engine's own click listener in the capture phase and open the login step instead. Once the
@@ -441,6 +444,19 @@ export function useGame() {
     loginClearedRef.current = true;
     document.getElementById('playBtn')?.click();
   }, [discardName]);
+
+  // Keep the entered name (a local label) and boot OFFLINE immediately — owning the name on the server
+  // is the online-only concern, so this skips auth entirely. Forces the solo/offline path and clears
+  // the login modal before re-firing Play so the engine boots single-player with that name.
+  const playOffline = useCallback(() => {
+    soloRef.current = true;
+    setSolo(true);
+    loginClearedRef.current = true;
+    setLoginError(null);
+    setLoginStep(null);
+    debug('coop', 'play offline from login', { name: name.trim() });
+    document.getElementById('playBtn')?.click();
+  }, [name]);
 
   // ESC out of the name-confirm modal also discards the unconfirmed name (back to playing as a guest).
   useEffect(() => {
@@ -549,6 +565,6 @@ export function useGame() {
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
-    onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, discardName,
+    onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, playOffline, discardName,
   };
 }
