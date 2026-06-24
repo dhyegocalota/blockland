@@ -305,6 +305,27 @@ struct Player {
     chat_b: Bucket,
 }
 
+/// The cleared-to-join result the async policy phase (`resolve_admission`) hands to the sync
+/// `add_player`: the resolved identity + everything the game-state add needs that was read from the
+/// db, so `add_player` itself never reads the db or awaits. Carries the connection's ping atomic, the
+/// playtime accounting key + baseline, the pre-fetched timeline backlog to replay, and (for an admin
+/// join) the pre-fetched pending-approval list — all gathered while the gates ran.
+struct Admission {
+    account_id: String,
+    name: String,
+    role: Role,
+    claim: String,
+    look: Appearance,
+    ip: IpAddr,
+    ping: Arc<AtomicU32>,
+    playtime_key: String,
+    playtime_baseline_ms: i64,
+    backlog: Vec<crate::db::TimelineEvent>,
+    // The admin's pre-fetched pending-approval list: `Some` only on an admin join (a non-admin never
+    // gets it); `Some(None)` if the db read failed (the bans list is still sent, matching the old path).
+    admin_pending: Option<Option<Vec<protocol::PendingApproval>>>,
+}
+
 pub struct Room {
     hub: Arc<Hub>,
     key: RoomKey,
@@ -627,8 +648,10 @@ impl Room {
         .await;
     }
 
-    /// Build the player, send Welcome + the world EditBatch + the recent timeline backlog (to this
-    /// connection only), and register them in the room.
+    /// Admit a join: resume a held slot, run the async db-backed policy, then (on a pass) add the
+    /// player. The split keeps every db read + gate in `resolve_admission` (the server I/O shell) and
+    /// the game-state mutation in the sync, db-free `add_player`; the reply is sent here so neither half
+    /// owns the channel. Order/outcomes are identical to the old single `admit`.
     #[allow(clippy::too_many_arguments)]
     async fn admit(
         &mut self,
@@ -646,17 +669,46 @@ impl Room {
         // Reconnect resume: a player whose socket dropped within RECONNECT_GRACE rejoins straight back
         // into their held slot (same id, position, score, inventory, hp) — no Left/Join churn, others
         // saw at most a brief freeze. They already cleared every gate at the original join, so resume
-        // skips them. Matched by identity: account for a logged-in player, IP for a guest.
+        // skips the policy entirely. Matched by identity: account for a logged-in player, IP for a guest.
         if let Some(id) = self.try_resume(now, &account_id, ip, &look, &conn, &ping) {
             let _ = reply.send(Ok(id));
             return;
         }
+        let admission = match self
+            .resolve_admission(account_id, authoritative_name, role, claim, look, ip, ping)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(code) => {
+                let _ = reply.send(Err(code));
+                return;
+            }
+        };
+        let id = self.add_player(now, admission, conn);
+        let _ = reply.send(Ok(id));
+    }
+
+    /// The async policy phase: all the db reads + gates, in the same order with the same outcomes as the
+    /// old `admit`, refreshing the cached per-tenant config on `self` as it goes. Returns the rejection
+    /// code to reply, or a cleared-to-join `Admission` carrying everything the sync `add_player` needs
+    /// (including the pre-fetched timeline backlog and, for an admin, the pending-approval list). Does
+    /// NOT mutate game state.
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_admission(
+        &mut self,
+        account_id: String,
+        authoritative_name: String,
+        role: Role,
+        claim: String,
+        look: Appearance,
+        ip: IpAddr,
+        ping: Arc<AtomicU32>,
+    ) -> Result<Admission, String> {
         // Role-aware ban gate: a banned IP is turned away here (the claim has resolved to a role) UNLESS
         // the account is an admin or moderator — they must still get in to moderate, even from a shared
         // home IP that someone got banned on. A banned guest/ordinary player stays refused.
         if self.hub.bans.is_banned(ip) && !role.is_admin() && !role.is_moderator() {
-            let _ = reply.send(Err("banned".into()));
-            return;
+            return Err("banned".into());
         }
         // Refresh the per-tenant moderation flags + allowed modes from the db (this room is the single
         // writer, so the cache stays authoritative between joins).
@@ -683,13 +735,11 @@ impl Room {
         // there). Admins still get in so they can re-enable it from the in-game panel. The reject reason
         // travels as the reply code; conn.rs turns it into the user-facing message (reject_message).
         if !self.online_allowed && !role.is_admin() {
-            let _ = reply.send(Err("online_blocked".into()));
-            return;
+            return Err("online_blocked".into());
         }
         // A suspended world turns everyone away except admins, who still need to get in to resume it.
         if self.suspended && !role.is_admin() {
-            let _ = reply.send(Err("suspended".into()));
-            return;
+            return Err("suspended".into());
         }
         // Approval gate (per-tenant, off by default): while on, admins always get in (to manage), and
         // everyone else — including anonymous guests, who do NOT have to log in — is held for approval.
@@ -714,8 +764,7 @@ impl Room {
                 {
                     tracing::error!(error = %e, "clearing one-shot reject failed");
                 }
-                let _ = reply.send(Err("rejected".into()));
-                return;
+                return Err("rejected".into());
             }
             if !self
                 .hub
@@ -730,8 +779,7 @@ impl Room {
                     &authoritative_name
                 };
                 self.hold_for_approval(&approval_key, display_name).await;
-                let _ = reply.send(Err("needs_approval".into()));
-                return;
+                return Err("needs_approval".into());
             }
         }
         // Play-time budget (per-tenant): cache the tenant's config and turn an over-budget player away
@@ -764,10 +812,64 @@ impl Room {
                 .await
                 .unwrap_or(0);
             if playtime_baseline >= self.playtime_limit_ms {
-                let _ = reply.send(Err("time_up".into()));
-                return;
+                return Err("time_up".into());
             }
         }
+        // Pre-fetch the recent-timeline backlog (replayed to this connection) here, so `add_player`
+        // stays db-free. The legacy-report filter is applied at send time (it is pure).
+        let backlog = match self
+            .hub
+            .db
+            .recent_events(&self.key.0, crate::db::default_event_backlog())
+            .await
+        {
+            Ok(events) => events,
+            Err(e) => {
+                tracing::error!(tenant = %self.key.0, error = %e, "event backlog load failed");
+                Vec::new()
+            }
+        };
+        // An admin also gets the current pending-approval list (db-read) up front so `add_player` can
+        // push it without awaiting; the ban list is built from the in-memory cache there. A failed read
+        // yields `Some(None)` so the bans list is still sent, exactly as the old path did.
+        let admin_pending = match role.is_admin() {
+            true => Some(self.fetch_pending_for_admin().await),
+            false => None,
+        };
+        Ok(Admission {
+            account_id,
+            name: authoritative_name,
+            role,
+            claim,
+            look,
+            ip,
+            ping,
+            playtime_key,
+            playtime_baseline_ms: playtime_baseline,
+            backlog,
+            admin_pending,
+        })
+    }
+
+    /// Sync game-state add (pure: no `.await`, no db) for a cleared-to-join player. Allocs an id, builds
+    /// the `Player` (spawn via the injected RNG, time via `now`) and inserts it, sends Welcome, streams
+    /// the spawn-area chunks, replays the pre-fetched backlog then settings (plus pending/bans for an
+    /// admin), sends the inventory, and announces the refreshed roster. Returns the new id; the caller
+    /// sends the reply.
+    fn add_player(&mut self, now: Instant, admission: Admission, conn: Conn) -> PlayerId {
+        let Admission {
+            account_id,
+            name: authoritative_name,
+            role,
+            claim,
+            look,
+            ip,
+            ping,
+            playtime_key,
+            playtime_baseline_ms,
+            backlog,
+            admin_pending,
+        } = admission;
         let id = self.hub.alloc_id();
         // A guest arrives without a name; give them a unique, recognizable one so two guests never
         // collide on a generic label. A logged-in player keeps their authoritative account name.
@@ -811,7 +913,7 @@ impl Room {
             dig_hits: 0,
             last_action: now - ATTACK_MIN_INTERVAL,
             playtime_key,
-            playtime_baseline_ms: playtime_baseline,
+            playtime_baseline_ms,
             playtime_persisted_ms: 0,
             inventory: HashMap::new(),
             // Infinite by default to match the old client (admins build freely; an admin turns it off
@@ -842,38 +944,25 @@ impl Room {
         self.stream_chunks(id);
         // Replay the recent timeline so the history echoes even for events that happened while
         // nobody was online. Sent to this connection only, after Welcome + the world.
-        match self
-            .hub
-            .db
-            .recent_events(&self.key.0, crate::db::default_event_backlog())
-            .await
-        {
-            Ok(events) => {
-                for event in events {
-                    // The player-report feature was removed; skip any legacy `report|` rows still on the
-                    // timeline so they never replay (their feed string no longer exists).
-                    let is_legacy_report =
-                        event.kind == "admin" && event.detail.starts_with("report|");
-                    if is_legacy_report {
-                        continue;
-                    }
-                    conn.send_one(ServerMsg::Event {
-                        kind: event.kind,
-                        name: event.name,
-                        detail: event.detail,
-                    });
-                }
+        for event in backlog {
+            // The player-report feature was removed; skip any legacy `report|` rows still on the
+            // timeline so they never replay (their feed string no longer exists).
+            let is_legacy_report = event.kind == "admin" && event.detail.starts_with("report|");
+            if is_legacy_report {
+                continue;
             }
-            Err(e) => {
-                tracing::error!(tenant = %self.key.0, error = %e, "event backlog load failed")
-            }
+            conn.send_one(ServerMsg::Event {
+                kind: event.kind,
+                name: event.name,
+                detail: event.detail,
+            });
         }
         // Hand the joining connection the current room-wide settings, after Welcome + world + backlog.
         conn.send_one(self.room_state());
         // An admin also gets the current pending-approval list + ban list so they can manage right away.
-        if role.is_admin() {
-            send_pending(&self.hub.db, &self.key.0, std::slice::from_ref(&conn)).await;
-            conn.send_one(self.bans_msg());
+        // A failed pending read (`Some(None)`) sends no PendingApprovals but still the bans, as before.
+        if let Some(pending) = admin_pending {
+            self.send_admin_extras(&conn, pending);
         }
         // The fresh player's inventory (empty + infinite by default), sent after it is registered.
         self.send_inventory(id);
@@ -881,8 +970,8 @@ impl Room {
         // (the per-tick Snapshot is slim and carries no names/colors).
         self.announce_roster();
         self.empty_since = None;
-        let _ = reply.send(Ok(id));
         tracing::info!(tenant = %self.key.0, world = %self.key.1, %id, "player joined");
+        id
     }
 
     /// A socket dropped: instead of removing the player and blinking them out for everyone, freeze their
@@ -2055,6 +2144,37 @@ impl Room {
             .map(|p| p.conn.clone())
             .collect();
         send_pending(&self.hub.db, &self.key.0, &admin_conns).await;
+    }
+
+    /// Load the tenant's pending-approval list (wire-shaped) for an admin join, so the sync add can push
+    /// it without a db read. `None` mirrors the old send path's behavior on a failed read: skip the
+    /// PendingApprovals frame (the bans list is still sent by the caller).
+    async fn fetch_pending_for_admin(&self) -> Option<Vec<protocol::PendingApproval>> {
+        match self.hub.db.pending_approvals(&self.key.0).await {
+            Ok(pending) => Some(
+                pending
+                    .into_iter()
+                    .map(|p| protocol::PendingApproval {
+                        account_id: p.account_id,
+                        name: p.name,
+                        email: p.email,
+                    })
+                    .collect(),
+            ),
+            Err(e) => {
+                tracing::error!(error = %e, "pending approvals load failed");
+                None
+            }
+        }
+    }
+
+    /// Send the joining admin their pre-fetched pending-approval list (skipped when the read failed) then
+    /// the current ban list, matching the old admit's admin-extras order.
+    fn send_admin_extras(&self, conn: &Conn, pending: Option<Vec<protocol::PendingApproval>>) {
+        if let Some(pending) = pending {
+            conn.send_one(ServerMsg::PendingApprovals { pending });
+        }
+        conn.send_one(self.bans_msg());
     }
 
     /// A PvP melee attack on another player. Ignored unless pvp is on and the attacker is within melee
@@ -5745,6 +5865,48 @@ mod tests {
             .account_id;
         let (result, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
         assert!(result.is_ok(), "approval off admits a normal player");
+    }
+
+    /// The split's proof: the sync `add_player`, handed a pre-built `Admission` (the policy already
+    /// ran), adds the player + emits Welcome and the roster WITHOUT any db read — it is not `.await`ed
+    /// and never touches `hub.db`. The room's db is left empty (no claim/flags/playtime rows): a stray
+    /// policy read here would observe an unconfigured tenant, but the add only consumes the Admission.
+    #[tokio::test]
+    async fn add_player_emits_welcome_and_roster_without_touching_the_db() {
+        let mut room = test_room().await;
+        let (conn, mut conn_rx) = test_conn();
+        let admission = Admission {
+            account_id: "acc-x".into(),
+            name: "Kid".into(),
+            role: Role::Player,
+            claim: "tok-x".into(),
+            look: Appearance {
+                skin: "#fff".into(),
+                shirt: "#fff".into(),
+                hair: "#fff".into(),
+            },
+            ip: "127.0.0.1".parse().unwrap(),
+            ping: Arc::new(AtomicU32::new(0)),
+            playtime_key: "acc-x".into(),
+            playtime_baseline_ms: 0,
+            backlog: Vec::new(),
+            admin_pending: None,
+        };
+
+        let id = room.add_player(Instant::now(), admission, conn);
+
+        let player = room.players.get(&id).expect("the player is registered");
+        assert_eq!(player.name, "Kid", "the authoritative name is kept");
+        assert_eq!(
+            first_welcome_id(&mut conn_rx),
+            Some(id),
+            "the joiner gets its Welcome",
+        );
+        let roster = last_roster(&mut conn_rx).expect("the add announces the roster");
+        assert!(
+            roster.iter().any(|p| p.id == id),
+            "the new player rides the roster",
+        );
     }
 
     #[tokio::test]
