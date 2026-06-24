@@ -14,7 +14,7 @@ import { renderBlockCanvas } from './textures';
 import { hotbarCountLabel } from '../inventory';
 import { readJoystick } from '../joystick';
 import { clampPitch } from '../binds';
-import { getSettings, lookDelta, scaledGain, shouldOpenOnLockLost, shouldToggleOnEscape } from '../../settings';
+import { escapeKeyAction, getSettings, lookDelta, scaledGain, shouldOpenOnLockLost } from '../../settings';
 import type { StructureKind } from '../structures';
 import type { GameRuntime } from '../runtime';
 
@@ -215,6 +215,8 @@ export function createHud(runtime: GameRuntime): void {
   const controlsEl = el('controls');
   runtime.showControls = function showControls(): void {
     runtime.state.paused = true;
+    buildMenuEl.hidden = true;
+    settingsEl.hidden = true;
     controlsEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   };
@@ -232,6 +234,8 @@ export function createHud(runtime: GameRuntime): void {
   const buildMenuEl = el('buildMenu');
   runtime.showBuildMenu = function showBuildMenu(): void {
     runtime.state.paused = true;
+    controlsEl.hidden = true;
+    settingsEl.hidden = true;
     buildMenuEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
   };
@@ -246,25 +250,20 @@ export function createHud(runtime: GameRuntime): void {
   buildMenuEl.addEventListener('click', (e) => { if (e.target === buildMenuEl) runtime.hideBuildMenu(); }, { signal });
 
   // ---------- Settings menu (audio + look sensitivity) ----------
-  // PLAYING (pointer locked) ↔ PAUSED (pointer unlocked, the full HUD clickable). Pressing Esc from
-  // PLAYING unlocks the pointer (browser) → PAUSED + the settings panel opens; pressing Esc again CLOSES
-  // the panel and re-locks → PLAYING (refocus the game), the round-trip the player expects. Clicking the
-  // world (lock regained) or the explicit Resume button also returns to PLAYING. While PAUSED with the
-  // panel closed, HUD buttons without hotkeys (admin ⚙, build, chat) stay reachable. React renders the
-  // panel contents (the sliders read/write the live settings store).
+  // PLAYING (pointer locked) ↔ a single open modal (pointer unlocked, cursor free). Pressing Esc from
+  // PLAYING natively drops the lock (browser) → the settings panel opens; closing ANY modal (Esc again,
+  // clicking outside, the Resume/close button, or clicking the world) re-locks → PLAYING, refocusing input
+  // on the canvas. React renders the panel contents (the sliders read/write the live settings store).
   const settingsEl = el('settings');
   runtime.showSettings = function showSettings(): void {
     runtime.state.paused = true;
+    controlsEl.hidden = true;
+    buildMenuEl.hidden = true;
     settingsEl.hidden = false;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
     debug('engine', 'settings opened');
   };
-  // Close the panel but STAY in PAUSED (unlocked, HUD clickable) — never re-lock here.
-  runtime.hideSettings = function hideSettings(): void {
-    settingsEl.hidden = true;
-    debug('engine', 'settings closed', { paused: runtime.state.paused });
-  };
-  runtime.toggleSettings = function toggleSettings(): void { settingsEl.hidden ? runtime.showSettings() : runtime.hideSettings(); };
+  runtime.toggleSettings = function toggleSettings(): void { settingsEl.hidden ? runtime.showSettings() : runtime.resumeGame(); };
   // Leave PAUSED entirely: close the panel, unpause, and re-lock back to PLAYING (Resume button + world click).
   runtime.resumeGame = function resumeGame(): void {
     settingsEl.hidden = true;
@@ -274,7 +273,7 @@ export function createHud(runtime: GameRuntime): void {
   };
   el('settingsBtn').addEventListener('click', (e) => { e.stopPropagation(); runtime.toggleSettings(); }, { signal });
   el('closeSettings').addEventListener('click', (e) => { e.stopPropagation(); runtime.resumeGame(); }, { signal });
-  settingsEl.addEventListener('click', (e) => { if (e.target === settingsEl) runtime.hideSettings(); }, { signal });
+  settingsEl.addEventListener('click', (e) => { if (e.target === settingsEl) runtime.resumeGame(); }, { signal });
 
   // The cursor-mode state machine driven by pointer lock. Esc natively drops the lock (can't be
   // preventDefault'd in an FPS), so a lock LOST while playing is the pause signal → PAUSED + open settings;
@@ -295,14 +294,19 @@ export function createHud(runtime: GameRuntime): void {
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape') return;
     if (runtime.typingInField()) return;
-    const toggle = shouldToggleOnEscape({
+    // Close whichever modal is open and re-lock the canvas (back to PLAYING) — controls/build/settings all
+    // refocus the game on close; Esc never opens a second modal on top of an open one.
+    const action = escapeKeyAction({
+      controlsOpen: !controlsEl.hidden,
+      buildOpen: !buildMenuEl.hidden,
+      settingsOpen: !settingsEl.hidden,
       started: runtime.state.started,
       isTouch,
       pointerLocked: document.pointerLockElement === canvas,
-      blockingModalOpen: !controlsEl.hidden || !buildMenuEl.hidden,
     });
-    if (!toggle) return;
-    runtime.toggleSettings();
+    if (action === 'close-controls') runtime.hideControls();
+    else if (action === 'close-build') runtime.hideBuildMenu();
+    else if (action === 'close-settings') runtime.resumeGame();
   }, { signal });
   buildMenuEl.querySelectorAll<HTMLButtonElement>('.buildCard').forEach((btn) => {
     btn.addEventListener('click', (e) => {

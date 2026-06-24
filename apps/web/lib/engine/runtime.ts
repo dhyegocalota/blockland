@@ -119,7 +119,6 @@ export interface GameRuntime {
   hideBuildMenu(): void;
   toggleBuildMenu(): void;
   showSettings(): void;
-  hideSettings(): void;
   toggleSettings(): void;
   resumeGame(): void;
   toggleFly(): void;

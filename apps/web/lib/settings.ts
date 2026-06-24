@@ -112,14 +112,17 @@ export function shouldOpenOnLockLost(args: { started: boolean; isTouch: boolean;
   return true;
 }
 
-// Esc while the pointer is UNLOCKED (paused) means "go back to the game": close the settings panel and
-// re-lock → PLAYING (refocus). So a 1st Esc from playing unlocks + opens settings, and a 2nd Esc closes
-// it + refocuses — the round-trip the player expects. Gated to a started mouse game with the pointer
-// unlocked and no blocking controls/build modal owning Escape (those re-lock on their own close).
-export function shouldToggleOnEscape(args: { started: boolean; isTouch: boolean; pointerLocked: boolean; blockingModalOpen: boolean }): boolean {
-  if (!args.started) return false;
-  if (args.isTouch) return false;
-  if (args.pointerLocked) return false;
-  if (args.blockingModalOpen) return false;
-  return true;
+// What an Escape keypress (or a click-outside) targets while the pointer is UNLOCKED — i.e. a modal is
+// open: the open modal, by priority. Closing ANY modal re-locks the canvas (back to PLAYING, input focused
+// on the game), so the close paths all route through it. While the pointer is still LOCKED the browser owns
+// the first Esc (it natively drops the lock → pointerlockchange opens the settings panel).
+export type EscapeTarget = 'close-controls' | 'close-build' | 'close-settings' | 'none';
+export function escapeKeyAction(args: {
+  controlsOpen: boolean; buildOpen: boolean; settingsOpen: boolean; started: boolean; isTouch: boolean; pointerLocked: boolean;
+}): EscapeTarget {
+  if (!args.started || args.isTouch || args.pointerLocked) return 'none';
+  if (args.controlsOpen) return 'close-controls';
+  if (args.buildOpen) return 'close-build';
+  if (args.settingsOpen) return 'close-settings';
+  return 'none';
 }

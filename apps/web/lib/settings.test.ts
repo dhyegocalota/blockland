@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SETTINGS, SENSITIVITY_MAX, SENSITIVITY_MIN, SETTINGS_KEY, VOLUME_MAX, VOLUME_MIN,
-  getSettings, loadSettings, lookDelta, saveSettings, scaledGain, shouldOpenOnLockLost, shouldToggleOnEscape, subscribeSettings, updateSettings,
+  escapeKeyAction, getSettings, loadSettings, lookDelta, saveSettings, scaledGain, shouldOpenOnLockLost, subscribeSettings, updateSettings,
 } from './settings';
 
 const store = new Map<string, string>();
@@ -112,19 +112,24 @@ describe('shouldOpenOnLockLost (Esc-to-pause decision)', () => {
   });
 });
 
-describe('shouldToggleOnEscape (Esc toggles the panel while paused, never re-locking)', () => {
-  it('toggles when a started mouse game is unlocked with no blocking modal', () => {
-    expect(shouldToggleOnEscape({ started: true, isTouch: false, pointerLocked: false, blockingModalOpen: false })).toBe(true);
+describe('escapeKeyAction (Esc closes the open modal and re-locks; controls/build take priority)', () => {
+  const playing = { started: true, isTouch: false, pointerLocked: false };
+
+  it('closes the controls modal (never opening settings), then build, by priority', () => {
+    expect(escapeKeyAction({ ...playing, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('close-controls');
+    expect(escapeKeyAction({ ...playing, controlsOpen: false, buildOpen: true, settingsOpen: false })).toBe('close-build');
+    expect(escapeKeyAction({ ...playing, controlsOpen: true, buildOpen: true, settingsOpen: true })).toBe('close-controls');
   });
 
-  it('does not toggle while the pointer is still locked (PLAYING) — that path is owned by pointerlockchange', () => {
-    expect(shouldToggleOnEscape({ started: true, isTouch: false, pointerLocked: true, blockingModalOpen: false })).toBe(false);
+  it('closes the settings panel when it is the only thing open', () => {
+    expect(escapeKeyAction({ ...playing, controlsOpen: false, buildOpen: false, settingsOpen: true })).toBe('close-settings');
   });
 
-  it('does not toggle before start, on touch, or while a blocking controls/build modal owns Escape', () => {
-    expect(shouldToggleOnEscape({ started: false, isTouch: false, pointerLocked: false, blockingModalOpen: false })).toBe(false);
-    expect(shouldToggleOnEscape({ started: true, isTouch: true, pointerLocked: false, blockingModalOpen: false })).toBe(false);
-    expect(shouldToggleOnEscape({ started: true, isTouch: false, pointerLocked: false, blockingModalOpen: true })).toBe(false);
+  it('does nothing while still locked (PLAYING — pointerlockchange owns the first Esc), on touch, before start, or with nothing open', () => {
+    expect(escapeKeyAction({ ...playing, pointerLocked: true, controlsOpen: false, buildOpen: false, settingsOpen: true })).toBe('none');
+    expect(escapeKeyAction({ ...playing, isTouch: true, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('none');
+    expect(escapeKeyAction({ ...playing, started: false, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('none');
+    expect(escapeKeyAction({ ...playing, controlsOpen: false, buildOpen: false, settingsOpen: false })).toBe('none');
   });
 });
 
