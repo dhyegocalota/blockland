@@ -194,6 +194,11 @@ struct Player {
     // joins or resumes (a new socket has no baseline), so the next snapshot it gets is a KEYFRAME, not a
     // delta against state it never saw; cleared once that keyframe is sent.
     needs_keyframe: bool,
+    // This connection's own last-sent snapshot view (only the entities within its AOI), the baseline its
+    // next per-tick delta is encoded against. Per-connection because AOI culling makes every player's view
+    // differ; the ids present here also drive the AOI hysteresis (an entity already in this set leaves only
+    // once it passes the upper bound). Reset to an unmatched tick on join/resume so the first frame is a keyframe.
+    snapshot_baseline: SnapshotBaseline,
     // When the player's socket dropped, if it currently is. `Some` freezes the avatar in place and holds
     // the slot for RECONNECT_GRACE: a rejoin with the same identity resumes it; otherwise the tick prunes
     // it (a single `Left`). `None` is a live, connected player. A resume clears it back to `None`.
@@ -270,14 +275,11 @@ pub struct Room {
     approval_required: bool,
     online_allowed: bool,
     offline_allowed: bool,
-    // The last full snapshot sent to in-sync clients, kept as the baseline every per-tick delta is built
-    // against. After each broadcast it becomes this tick's full state. A connection flagged
-    // `needs_keyframe` (just joined/resumed) gets a keyframe instead and then follows the deltas.
-    snapshot_baseline: SnapshotBaseline,
 }
 
-/// The room's last-sent full snapshot, the baseline each per-tick delta is encoded against. Starts at a
-/// tick no client can match, so the first frame everyone gets is a keyframe.
+/// One connection's last-sent snapshot view (its AOI-filtered entities), the baseline its per-tick delta
+/// is encoded against. Starts at a tick no real tick can match, so the first frame each connection gets is
+/// a keyframe; after each broadcast it becomes that connection's just-sent view.
 #[derive(Default)]
 struct SnapshotBaseline {
     tick: u64,
@@ -380,7 +382,6 @@ impl Room {
             approval_required: false,
             online_allowed: true,
             offline_allowed: true,
-            snapshot_baseline: SnapshotBaseline::default(),
             hub,
         }
     }
@@ -699,6 +700,7 @@ impl Room {
             pvp_kills: 0,
             conn: conn.clone(),
             needs_keyframe: true,
+            snapshot_baseline: SnapshotBaseline::default(),
             disconnected_at: None,
             last_seen: now,
             last_move: now,
@@ -853,8 +855,10 @@ impl Room {
         let (spawn, role_admin, role_moderator) = {
             let p = self.players.get_mut(&id)?;
             p.conn = conn.clone();
-            // A fresh socket has no baseline — its next snapshot must be a keyframe, not a delta.
+            // A fresh socket has no baseline — its next snapshot must be a keyframe, not a delta. Clear the
+            // held connection's stored view too, so the keyframe (and later deltas) start from an empty set.
             p.needs_keyframe = true;
+            p.snapshot_baseline = SnapshotBaseline::default();
             p.disconnected_at = None;
             p.last_seen = now;
             p.skin = sanitize_color(&look.skin, "#f2c18b");
@@ -2302,11 +2306,14 @@ impl Room {
         }
     }
 
-    /// Fan the hot per-tick snapshot out to every player as a keyframe + delta stream. In-sync clients get
-    /// ONE delta (encoded once, shared as `Arc<[u8]>`) against the room's baseline; a just-joined/resumed
-    /// connection (or every connection on the periodic keyframe tick) gets a full keyframe (also encoded at
-    /// most once and shared) it can build later deltas on. After sending, the baseline becomes this tick's
-    /// full state. `try_send` stays non-blocking, so a slow client never stalls the tick.
+    /// Fan the hot per-tick snapshot out to every player as a keyframe + delta stream, AOI-filtered PER
+    /// CONNECTION: each receiving player's frame carries only the entities within its area of interest
+    /// (its OWN record always, plus every other player/creature/heart within `aoi::AOI_RADIUS`, sticky to
+    /// `+ AOI_HYSTERESIS` once in view). A just-joined/resumed connection (or every connection on the
+    /// periodic keyframe tick) gets a keyframe of ITS view; otherwise a delta against ITS OWN stored
+    /// baseline. Single-serialize across players is intentionally traded away — every player's content
+    /// differs under AOI — so this is one small encode per connection (≤ a handful of players →
+    /// microseconds). `try_send` stays non-blocking, so a slow client never stalls the tick.
     fn broadcast_snapshot(
         &mut self,
         tick: u64,
@@ -2315,47 +2322,57 @@ impl Room {
         hearts: &[HeartDropState],
     ) {
         let periodic_keyframe = tick.is_multiple_of(KEYFRAME_INTERVAL_TICKS);
-        let any_needs_keyframe = self.players.values().any(|p| p.needs_keyframe);
-
-        let keyframe: Option<Arc<[u8]>> = (periodic_keyframe || any_needs_keyframe)
-            .then(|| encode_keyframe(tick, players, creatures, hearts).into());
-        let delta: Option<Arc<[u8]>> = (!periodic_keyframe).then(|| {
-            encode_delta(
-                SnapshotView {
-                    tick: self.snapshot_baseline.tick,
-                    players: &self.snapshot_baseline.players,
-                    creatures: &self.snapshot_baseline.creatures,
-                    hearts: &self.snapshot_baseline.hearts,
-                },
-                SnapshotView {
-                    tick,
-                    players,
-                    creatures,
-                    hearts,
-                },
-            )
-            .into()
-        });
-
-        for p in self.players.values_mut() {
-            let send_keyframe = periodic_keyframe || p.needs_keyframe;
-            let frame = if send_keyframe {
-                keyframe.clone()
-            } else {
-                delta.clone()
+        // Iterate over a snapshot of the ids so the per-connection body can borrow `self.players` mutably
+        // (to read + update each player's own baseline) without holding an iterator over the same map.
+        let ids: Vec<PlayerId> = self.players.keys().copied().collect();
+        for id in ids {
+            let Some(receiver) = self.players.get(&id) else {
+                continue;
             };
-            if let Some(bytes) = frame {
-                let _ = p.conn.try_send(Outbound::Binary(bytes));
-            }
-            p.needs_keyframe = false;
-        }
+            let center = receiver_center(id, players);
+            let view = aoi_view(
+                id,
+                center,
+                &receiver.snapshot_baseline,
+                players,
+                creatures,
+                hearts,
+            );
 
-        self.snapshot_baseline = SnapshotBaseline {
-            tick,
-            players: players.to_vec(),
-            creatures: creatures.to_vec(),
-            hearts: hearts.to_vec(),
-        };
+            let send_keyframe = periodic_keyframe || receiver.needs_keyframe;
+            let bytes: Arc<[u8]> = if send_keyframe {
+                encode_keyframe(tick, &view.players, &view.creatures, &view.hearts).into()
+            } else {
+                let baseline = &receiver.snapshot_baseline;
+                encode_delta(
+                    SnapshotView {
+                        tick: baseline.tick,
+                        players: &baseline.players,
+                        creatures: &baseline.creatures,
+                        hearts: &baseline.hearts,
+                    },
+                    SnapshotView {
+                        tick,
+                        players: &view.players,
+                        creatures: &view.creatures,
+                        hearts: &view.hearts,
+                    },
+                )
+                .into()
+            };
+
+            let Some(receiver) = self.players.get_mut(&id) else {
+                continue;
+            };
+            let _ = receiver.conn.try_send(Outbound::Binary(bytes));
+            receiver.needs_keyframe = false;
+            receiver.snapshot_baseline = SnapshotBaseline {
+                tick,
+                players: view.players,
+                creatures: view.creatures,
+                hearts: view.hearts,
+            };
+        }
     }
 
     /// Broadcast to everyone except one player (e.g. the attacker, who already played the hit effect
@@ -2865,6 +2882,77 @@ fn nearest_horizontal(pos: [f32; 3], players: &[[f32; 2]]) -> f32 {
         .fold(f32::MAX, f32::min)
 }
 
+/// One connection's AOI-filtered view of the world this tick: its own entities to encode, owned so the
+/// borrow of the room's player map can end before they become that connection's next baseline.
+struct AoiView {
+    players: Vec<PlayerState>,
+    creatures: Vec<CreatureState>,
+    hearts: Vec<HeartDropState>,
+}
+
+/// The receiving player's own horizontal `(x, z)` center, read from this tick's player states (the AOI
+/// radii are measured from it). The receiver is always present in `players` (their snapshot is built from
+/// the same map), so a miss can only mean a logic error — fall back to the origin rather than panic.
+fn receiver_center(receiver_id: PlayerId, players: &[PlayerState]) -> (f32, f32) {
+    match players.iter().find(|p| p.0 == receiver_id) {
+        Some(p) => (p.1, p.3),
+        None => (0.0, 0.0),
+    }
+}
+
+/// Build `receiver_id`'s AOI view: their OWN player record ALWAYS (self-reconciliation is never culled),
+/// plus every other player/creature/heart within the receiver's interest radius. Hysteresis is applied
+/// per entity from whether it was in the receiver's previous baseline, so an entity already in view leaves
+/// only once it passes `AOI_RADIUS + AOI_HYSTERESIS`.
+fn aoi_view(
+    receiver_id: PlayerId,
+    center: (f32, f32),
+    baseline: &SnapshotBaseline,
+    players: &[PlayerState],
+    creatures: &[CreatureState],
+    hearts: &[HeartDropState],
+) -> AoiView {
+    let kept_players = players
+        .iter()
+        .filter(|p| {
+            p.0 == receiver_id
+                || crate::aoi::in_view(
+                    center,
+                    (p.1, p.3),
+                    baseline.players.iter().any(|b| b.0 == p.0),
+                )
+        })
+        .cloned()
+        .collect();
+    let kept_creatures = creatures
+        .iter()
+        .filter(|c| {
+            crate::aoi::in_view(
+                center,
+                (c.2, c.4),
+                baseline.creatures.iter().any(|b| b.0 == c.0),
+            )
+        })
+        .cloned()
+        .collect();
+    let kept_hearts = hearts
+        .iter()
+        .filter(|h| {
+            crate::aoi::in_view(
+                center,
+                (h.1, h.3),
+                baseline.hearts.iter().any(|b| b.0 == h.0),
+            )
+        })
+        .cloned()
+        .collect();
+    AoiView {
+        players: kept_players,
+        creatures: kept_creatures,
+        hearts: kept_hearts,
+    }
+}
+
 fn epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2911,6 +2999,7 @@ async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[mpsc::Sender<Ou
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aoi;
     use crate::db::Db;
     use crate::hub::Hub;
     use std::sync::Arc;
@@ -2995,6 +3084,7 @@ mod tests {
             pvp_kills: 0,
             conn,
             needs_keyframe: true,
+            snapshot_baseline: SnapshotBaseline::default(),
             disconnected_at: None,
             last_seen: now,
             last_move: now,
@@ -4272,14 +4362,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_players_get_a_shared_keyframe_then_a_shared_delta() {
-        // Two just-added connections each need a baseline, so the first snapshot is a KEYFRAME — encoded
-        // ONCE and shared (an `Arc<[u8]>`) across both. The next tick, both are in-sync, so they get the
-        // single shared DELTA instead. Both frames arrive as pre-encoded Binary blobs.
+    async fn fresh_players_get_a_per_connection_keyframe_then_delta() {
+        // Two just-added connections each need a baseline, so each gets a KEYFRAME of ITS OWN AOI view —
+        // encoded per connection now (AOI makes every player's content differ, so the single-serialize win
+        // is intentionally traded away). Both players sit at the origin and the only entities are within
+        // their interest radius, so the two views are byte-identical content even though each Arc is its
+        // own encode. The next tick, both are in-sync and get a per-connection DELTA against THEIR baseline.
         let mut room = test_room().await;
         let mut rx_a = add_player(&mut room, 1, false);
         let mut rx_b = add_player(&mut room, 2, false);
-        let players = vec![PlayerState(1, 1.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)];
+        // Both players are in the states this tick (the receiver's own record is always present).
+        let players = vec![
+            PlayerState(1, 1.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3),
+            PlayerState(2, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 3),
+        ];
         let creatures = vec![CreatureState(50, 4, -3.0, 63.5, 8.0, 0.2, 2, 2)];
         let hearts = vec![HeartDropState(200, -5.0, 63.5, 0.0)];
         let expected_keyframe = encode_keyframe(7, &players, &creatures, &hearts);
@@ -4294,15 +4390,22 @@ mod tests {
         assert_eq!(
             &*key_a,
             expected_keyframe.as_slice(),
-            "the first frame is a keyframe"
+            "the first frame is a keyframe of the full (in-range) view"
+        );
+        assert_eq!(
+            key_a, key_b,
+            "both views are byte-identical content (everyone in range)"
         );
         assert!(
-            Arc::ptr_eq(&key_a, &key_b),
-            "the keyframe is shared across both fresh connections, not re-encoded"
+            !Arc::ptr_eq(&key_a, &key_b),
+            "but each connection is encoded on its own — no shared Arc under AOI"
         );
 
-        // Next tick: both are in-sync, so they get one shared delta against the now-stored baseline.
-        let moved = vec![PlayerState(1, 2.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3)];
+        // Next tick: both are in-sync, so each gets a per-connection delta against ITS OWN baseline.
+        let moved = vec![
+            PlayerState(1, 2.0, 2.0, 3.0, 0.5, 0.1, 20, 4, 3),
+            PlayerState(2, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 3),
+        ];
         let expected_delta = encode_delta(
             SnapshotView {
                 tick: 7,
@@ -4328,11 +4431,12 @@ mod tests {
         assert_eq!(
             &*delta_a,
             expected_delta.as_slice(),
-            "the follow-up frame is a delta"
+            "the follow-up frame is a delta against the connection's own baseline"
         );
+        assert_eq!(delta_a, delta_b, "identical content, both in range");
         assert!(
-            Arc::ptr_eq(&delta_a, &delta_b),
-            "the single delta blob is shared across in-sync connections"
+            !Arc::ptr_eq(&delta_a, &delta_b),
+            "each delta is encoded per connection under AOI"
         );
     }
 
@@ -4380,6 +4484,254 @@ mod tests {
             panic!("expected a binary frame");
         };
         assert_eq!(k[1], protocol::snapshot_codec::FRAME_KEYFRAME);
+    }
+
+    /// The entity ids a KEYFRAME frame carries, in (players, creatures, hearts). Used by the AOI tests to
+    /// assert exactly which entities reached a given connection. Only the counts + ids are read; the record
+    /// bodies are skipped at their fixed widths (player 33, creature 23, heart 16 bytes — id is the first 4).
+    fn keyframe_ids(bytes: &[u8]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        assert_eq!(
+            bytes[1],
+            protocol::snapshot_codec::FRAME_KEYFRAME,
+            "keyframe"
+        );
+        let mut offset = 10usize; // version(1) + kind(1) + tick(8)
+        let read_u16 = |b: &[u8], o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as usize;
+        let read_u32 =
+            |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        let mut ids = |record_width: usize| {
+            let count = read_u16(bytes, offset);
+            offset += 2;
+            (0..count)
+                .map(|_| {
+                    let id = read_u32(bytes, offset);
+                    offset += record_width;
+                    id
+                })
+                .collect::<Vec<u32>>()
+        };
+        (ids(33), ids(23), ids(16))
+    }
+
+    /// Add a player and place them at a horizontal `(x, z)`, returning the channel that captures their
+    /// frames. Mirrors how the AOI tests spread players across the huge world.
+    fn add_player_at(room: &mut Room, id: PlayerId, x: f32, z: f32) -> mpsc::Receiver<Outbound> {
+        let rx = add_player(room, id, false);
+        let p = room.players.get_mut(&id).unwrap();
+        p.x = x;
+        p.z = z;
+        rx
+    }
+
+    /// The per-tick state arrays the tick loop builds, here assembled straight from the room's players plus
+    /// the given creatures/hearts, so an AOI test snapshots the same shapes `broadcast_snapshot` consumes.
+    fn states_of(room: &Room) -> Vec<PlayerState> {
+        room.players
+            .values()
+            .map(|p| {
+                PlayerState(
+                    p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.ping_ms, p.score, p.hp,
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn two_far_players_each_see_only_their_local_entities() {
+        // Players A and B are 50000 units apart in the huge world. A creature sits next to A. A's frame must
+        // carry A's own record + the near creature and NOT B (nor far entities); B's frame must carry B's own
+        // record and NOT A nor A's creature. This is the core AOI property: each client gets "what's around me".
+        let mut room = test_room().await;
+        let mut rx_a = add_player_at(&mut room, 1, 0.0, 0.0);
+        let mut rx_b = add_player_at(&mut room, 2, 50_000.0, 0.0);
+        let players = states_of(&room);
+        let creatures = vec![
+            CreatureState(10, 0, 5.0, 64.0, 5.0, 0.0, 2, 2), // next to A
+            CreatureState(11, 0, 50_005.0, 64.0, 0.0, 0.0, 2, 2), // next to B
+        ];
+        room.broadcast_snapshot(7, &players, &creatures, &[]);
+
+        let Outbound::Binary(frame_a) = rx_a.try_recv().unwrap() else {
+            panic!("A must get a Binary keyframe");
+        };
+        let Outbound::Binary(frame_b) = rx_b.try_recv().unwrap() else {
+            panic!("B must get a Binary keyframe");
+        };
+        let (players_a, creatures_a, _) = keyframe_ids(&frame_a);
+        let (players_b, creatures_b, _) = keyframe_ids(&frame_b);
+        assert_eq!(players_a, vec![1], "A sees only itself, not the distant B");
+        assert_eq!(creatures_a, vec![10], "A sees only its local creature");
+        assert_eq!(players_b, vec![2], "B sees only itself, not the distant A");
+        assert_eq!(creatures_b, vec![11], "B sees only its local creature");
+    }
+
+    #[tokio::test]
+    async fn a_creature_enters_then_leaves_a_players_delta_as_it_moves() {
+        // A starts far from a creature (out of AOI), then walks toward it (it ENTERS as an added record),
+        // then walks away past the hysteresis upper bound (it LEAVES as a removed id). Proves AOI changes
+        // surface to the client as ordinary delta adds/removes — exactly the despawn/spawn coop.rs handles.
+        let mut room = test_room().await;
+        let mut rx = add_player_at(&mut room, 1, 0.0, 0.0);
+        let creature_x = aoi::AOI_RADIUS + 100.0; // out of view from the origin
+        let creature = vec![CreatureState(10, 0, creature_x, 64.0, 0.0, 0.0, 2, 2)];
+
+        // Tick 1: keyframe (fresh). The creature is out of range, so it is absent.
+        let players = states_of(&room);
+        room.broadcast_snapshot(1, &players, &creature, &[]);
+        let Outbound::Binary(k) = rx.try_recv().unwrap() else {
+            panic!("keyframe");
+        };
+        assert!(keyframe_ids(&k).1.is_empty(), "creature starts out of AOI");
+
+        // Tick 2: A walks to within the radius -> the creature ENTERS as a delta add.
+        room.players.get_mut(&1).unwrap().x = creature_x - (aoi::AOI_RADIUS - 10.0);
+        let players = states_of(&room);
+        room.broadcast_snapshot(2, &players, &creature, &[]);
+        let Outbound::Binary(d) = rx.try_recv().unwrap() else {
+            panic!("delta");
+        };
+        assert_eq!(d[1], protocol::snapshot_codec::FRAME_DELTA);
+        assert_eq!(
+            delta_changed_creature_ids(&d),
+            vec![10],
+            "the creature enters as an added record"
+        );
+
+        // Tick 3: A walks back well past the hysteresis upper bound -> the creature LEAVES as a removed id.
+        room.players.get_mut(&1).unwrap().x = 0.0;
+        let players = states_of(&room);
+        room.broadcast_snapshot(3, &players, &creature, &[]);
+        let Outbound::Binary(d) = rx.try_recv().unwrap() else {
+            panic!("delta");
+        };
+        assert_eq!(
+            delta_removed_creature_ids(&d),
+            vec![10],
+            "past the hysteresis bound the creature leaves as a removed id"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_hysteresis_band_keeps_an_in_view_creature_sticky() {
+        // A creature sits inside the hysteresis band (between AOI_RADIUS and AOI_RADIUS + AOI_HYSTERESIS).
+        // Once A has it in view (it entered while closer), backing off into the band must NOT drop it: the
+        // delta has no change for it. Only crossing the upper bound removes it (covered by the test above).
+        let mut room = test_room().await;
+        let mut rx = add_player_at(&mut room, 1, 0.0, 0.0);
+        // Place the creature in the band, but start A close enough that it enters view on the keyframe.
+        let band_x = aoi::AOI_RADIUS + (aoi::AOI_HYSTERESIS / 2.0);
+        let creature = vec![CreatureState(10, 0, band_x, 64.0, 0.0, 0.0, 2, 2)];
+        room.players.get_mut(&1).unwrap().x = band_x - (aoi::AOI_RADIUS - 10.0);
+        let players = states_of(&room);
+        room.broadcast_snapshot(1, &players, &creature, &[]);
+        let Outbound::Binary(k) = rx.try_recv().unwrap() else {
+            panic!("keyframe");
+        };
+        assert_eq!(keyframe_ids(&k).1, vec![10], "creature is in view to start");
+
+        // A backs off to the origin: the creature is now in the band (sticky), so it must remain — no removal.
+        room.players.get_mut(&1).unwrap().x = 0.0;
+        let players = states_of(&room);
+        room.broadcast_snapshot(2, &players, &creature, &[]);
+        let Outbound::Binary(d) = rx.try_recv().unwrap() else {
+            panic!("delta");
+        };
+        assert!(
+            delta_removed_creature_ids(&d).is_empty(),
+            "a creature inside the hysteresis band stays in view (not removed)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_receivers_own_record_is_never_culled_even_at_the_map_edge() {
+        // The receiving player's own record must always be present so their client can self-reconcile, even
+        // when they stand alone at the far corner of the world with nothing else in range.
+        let mut room = test_room().await;
+        let edge = sim::WORLD_SIZE as f32;
+        let mut rx = add_player_at(&mut room, 1, edge, edge);
+        let players = states_of(&room);
+        room.broadcast_snapshot(1, &players, &[], &[]);
+        let Outbound::Binary(k) = rx.try_recv().unwrap() else {
+            panic!("keyframe");
+        };
+        assert_eq!(
+            keyframe_ids(&k).0,
+            vec![1],
+            "the receiver's own record is always present"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_periodic_keyframe_still_fires_per_connection_under_aoi() {
+        // The periodic keyframe (every KEYFRAME_INTERVAL_TICKS) still bounds each connection's baseline; it
+        // now carries that connection's AOI view rather than the whole room.
+        let mut room = test_room().await;
+        let mut rx = add_player_at(&mut room, 1, 0.0, 0.0);
+        let players = states_of(&room);
+        room.broadcast_snapshot(1, &players, &[], &[]); // join keyframe
+        let _ = rx.try_recv();
+        room.broadcast_snapshot(2, &players, &[], &[]); // delta
+        let _ = rx.try_recv();
+        room.broadcast_snapshot(KEYFRAME_INTERVAL_TICKS, &players, &[], &[]);
+        let Outbound::Binary(k) = rx.try_recv().unwrap() else {
+            panic!("keyframe");
+        };
+        assert_eq!(k[1], protocol::snapshot_codec::FRAME_KEYFRAME);
+        assert_eq!(
+            keyframe_ids(&k).0,
+            vec![1],
+            "the periodic keyframe is the connection's own view"
+        );
+    }
+
+    /// The changed-creature ids a DELTA frame carries. Walks the fixed layout: header, then the changed
+    /// players block + their removed ids, then the changed creatures (id is each record's first u32).
+    fn delta_changed_creature_ids(bytes: &[u8]) -> Vec<u32> {
+        let (mut offset, _) = skip_delta_players(bytes);
+        let read_u16 = |b: &[u8], o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as usize;
+        let read_u32 =
+            |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        let count = read_u16(bytes, offset);
+        offset += 2;
+        (0..count)
+            .map(|_| {
+                let id = read_u32(bytes, offset);
+                offset += 23;
+                id
+            })
+            .collect()
+    }
+
+    /// The removed-creature ids a DELTA frame carries (skips past the changed-creature block to reach them).
+    fn delta_removed_creature_ids(bytes: &[u8]) -> Vec<u32> {
+        let (mut offset, _) = skip_delta_players(bytes);
+        let read_u16 = |b: &[u8], o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as usize;
+        let read_u32 =
+            |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        let changed = read_u16(bytes, offset);
+        offset += 2 + changed * 23;
+        let removed = read_u16(bytes, offset);
+        offset += 2;
+        (0..removed)
+            .map(|_| {
+                let id = read_u32(bytes, offset);
+                offset += 4;
+                id
+            })
+            .collect()
+    }
+
+    /// Advance past a DELTA frame's header and its whole players block (changed records + removed ids),
+    /// returning the offset at the start of the creatures block. Player records are 33 bytes; ids are 4.
+    fn skip_delta_players(bytes: &[u8]) -> (usize, ()) {
+        assert_eq!(bytes[1], protocol::snapshot_codec::FRAME_DELTA, "delta");
+        let read_u16 = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]) as usize;
+        let mut offset = 18usize; // version(1) + kind(1) + tick(8) + baseline_tick(8)
+        let changed = read_u16(offset);
+        offset += 2 + changed * 33;
+        let removed = read_u16(offset);
+        offset += 2 + removed * 4;
+        (offset, ())
     }
 
     #[tokio::test]
