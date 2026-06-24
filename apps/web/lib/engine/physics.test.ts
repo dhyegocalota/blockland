@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { EYE_HEIGHT, GRASS_ID, PLAYER_HEIGHT, PLAYER_RADIUS, SIZE_Y, WATER_ID } from './constants';
 import { type PlayerBody, collide, moveAxis } from './physics';
-import { VoxelWorld } from './world';
-import { heightAt } from './worldgen';
+import { makeTestWorld } from './test-world';
 
-// heightAt is clamped to SIZE_Y - 5, so any column above that is guaranteed air.
-// We test physics against blocks we place by hand in that empty upper region.
+// Physics is tested on an all-air world (the empty test worldgen): we place every collider by hand, so the
+// procedural terrain is irrelevant here. This Y sits in the empty upper region the old terrain never reached.
 const AIR_FLOOR_Y = SIZE_Y - 4;
 
 function bodyAt({ x, y, z }: { x: number; y: number; z: number }): PlayerBody {
@@ -14,7 +13,7 @@ function bodyAt({ x, y, z }: { x: number; y: number; z: number }): PlayerBody {
 
 describe('collide', () => {
   it('returns true when the player AABB overlaps a solid block', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const blockX = 100, blockY = AIR_FLOOR_Y, blockZ = 100;
     world.set(blockX, blockY, blockZ, GRASS_ID);
     const pos = { x: blockX + 0.5, y: blockY + EYE_HEIGHT, z: blockZ + 0.5 };
@@ -22,13 +21,13 @@ describe('collide', () => {
   });
 
   it('returns false when the player AABB is in open air', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const pos = { x: 200.5, y: AIR_FLOOR_Y + 10 + EYE_HEIGHT, z: 200.5 };
     expect(collide({ world, pos })).toBe(false);
   });
 
   it('does not treat water as a solid collider', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const blockX = 300, blockY = AIR_FLOOR_Y, blockZ = 300;
     world.set(blockX, blockY, blockZ, WATER_ID);
     const pos = { x: blockX + 0.5, y: blockY + EYE_HEIGHT, z: blockZ + 0.5 };
@@ -36,7 +35,7 @@ describe('collide', () => {
   });
 
   it('detects collision spanning the full player height', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const baseX = 400, baseZ = 400, feetY = AIR_FLOOR_Y;
     const headBlockY = Math.floor(feetY + PLAYER_HEIGHT);
     world.set(baseX, headBlockY, baseZ, GRASS_ID);
@@ -45,7 +44,7 @@ describe('collide', () => {
   });
 
   it('respects the player radius on the horizontal extents', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const feetY = AIR_FLOOR_Y, blockZ = 501;
     world.set(500, feetY, blockZ, GRASS_ID);
     const justClear = { x: 500.5, y: feetY + EYE_HEIGHT, z: blockZ - PLAYER_RADIUS - 0.01 };
@@ -57,7 +56,7 @@ describe('collide', () => {
 
 describe('moveAxis', () => {
   it('moves freely through open air and keeps velocity', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const player = bodyAt({ x: 600.5, y: AIR_FLOOR_Y + 10 + EYE_HEIGHT, z: 600.5 });
     player.vel.x = 3;
     moveAxis({ world, player, axis: 'x', amount: 0.5 });
@@ -66,7 +65,7 @@ describe('moveAxis', () => {
   });
 
   it('ground-snaps the player onto the floor without falling through', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const floorY = AIR_FLOOR_Y, tileX = 700, tileZ = 700;
     world.set(tileX, floorY, tileZ, GRASS_ID);
     const player = bodyAt({ x: tileX + 0.5, y: floorY + 1 + EYE_HEIGHT + 0.4, z: tileZ + 0.5 });
@@ -80,7 +79,7 @@ describe('moveAxis', () => {
   });
 
   it('lands on the surface after a fast fall instead of tunneling deep into thick ground', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const surfaceY = AIR_FLOOR_Y, tileX = 720, tileZ = 720;
     // a thick solid column (like terrain), top block at surfaceY
     for (let y = surfaceY; y > surfaceY - 6; y--) world.set(tileX, y, tileZ, GRASS_ID);
@@ -95,7 +94,7 @@ describe('moveAxis', () => {
   });
 
   it('blocks horizontal movement into a wall and zeroes that axis velocity', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const wallY = AIR_FLOOR_Y, wallX = 800, startZ = 800;
     world.set(wallX, wallY, startZ + 1, GRASS_ID);
     const player = bodyAt({ x: wallX + 0.5, y: wallY + EYE_HEIGHT, z: startZ + 0.5 });
@@ -107,7 +106,7 @@ describe('moveAxis', () => {
   });
 
   it('blocks upward movement into a ceiling and zeroes vertical velocity', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const feetY = AIR_FLOOR_Y, colX = 900, colZ = 900;
     const headBlockY = Math.floor(feetY + PLAYER_HEIGHT) + 1;
     world.set(colX, headBlockY, colZ, GRASS_ID);
@@ -121,7 +120,7 @@ describe('moveAxis', () => {
   });
 
   it('does not flag onGround when an unobstructed downward move stays in air', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const player = bodyAt({ x: 1000.5, y: AIR_FLOOR_Y + 10 + EYE_HEIGHT, z: 1000.5 });
     player.vel.y = -3;
     moveAxis({ world, player, axis: 'y', amount: -0.5 });
@@ -131,7 +130,7 @@ describe('moveAxis', () => {
   });
 
   it('preserves the orthogonal position and velocity when one axis is blocked', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const wallY = AIR_FLOOR_Y, wallX = 1100, startZ = 1100;
     world.set(wallX + 1, wallY, startZ, GRASS_ID);
     const player = bodyAt({ x: wallX + 0.5, y: wallY + EYE_HEIGHT, z: startZ + 0.5 });
@@ -147,7 +146,7 @@ describe('moveAxis', () => {
 
 describe('water and submerged ground', () => {
   it('lets the player sink through water (water never blocks vertical movement)', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const x = 1150, z = 1150, top = AIR_FLOOR_Y;
     world.set(x, top, z, WATER_ID);
     world.set(x, top - 1, z, WATER_ID);
@@ -160,7 +159,7 @@ describe('water and submerged ground', () => {
   });
 
   it('falls through water and lands on the submerged lakebed', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const x = 1200, z = 1200, bedY = AIR_FLOOR_Y;
     world.set(x, bedY, z, GRASS_ID); // solid lakebed
     world.set(x, bedY + 1, z, WATER_ID); // water column above
@@ -177,7 +176,7 @@ describe('water and submerged ground', () => {
   });
 
   it('can move horizontally underwater along the lakebed (no stuck-on-floor bug)', () => {
-    const world = new VoxelWorld();
+    const world = makeTestWorld();
     const y = AIR_FLOOR_Y, x = 1250, z0 = 1250;
     for (let d = 0; d < 3; d++) {
       world.set(x, y, z0 + d, GRASS_ID); // lakebed strip
@@ -194,10 +193,9 @@ describe('water and submerged ground', () => {
 });
 
 describe('test region preconditions', () => {
-  it('confirms the chosen test region is genuinely air-only terrain', () => {
-    const world = new VoxelWorld();
+  it('confirms the chosen test region is genuinely air-only (the empty test worldgen)', () => {
+    const world = makeTestWorld();
     for (const [x, z] of [[100, 100], [700, 700], [1100, 1100]]) {
-      expect(heightAt(x, z)).toBeLessThan(AIR_FLOOR_Y);
       expect(world.isSolid(x, AIR_FLOOR_Y, z)).toBe(false);
     }
   });

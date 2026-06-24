@@ -238,3 +238,13 @@ impl WasmCore {
         Uint8Array::from(self.room.world_snapshot_blob().as_slice())
     }
 }
+
+/// The full procedural base of one chunk `(cx, cz)` as a flat `CHUNK*CHUNK*SIZE_Y` byte array (the TS
+/// `lx + lz*CHUNK + y*CHUNK*CHUNK` layout), straight from `sim::worldgen_chunk`. STANDALONE — no Room or
+/// `WasmCore` instance needed — so the client store fills a chunk's base from the single Rust source
+/// (deleting its TS worldgen duplicate) with one call per chunk; all hot per-voxel reads stay in the TS
+/// cache. Online AND offline call this, so the terrain base always matches the server's authoritative world.
+#[wasm_bindgen]
+pub fn worldgen_chunk(cx: i32, cz: i32) -> Uint8Array {
+    Uint8Array::from(sim::worldgen_chunk(cx, cz).as_slice())
+}

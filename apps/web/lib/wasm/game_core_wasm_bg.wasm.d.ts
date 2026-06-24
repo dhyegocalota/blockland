@@ -13,6 +13,7 @@ export const wasmcore_input: (a: number, b: number, c: number, d: number, e: num
 export const wasmcore_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
 export const wasmcore_tick: (a: number, b: number, c: number, d: number) => number;
 export const wasmcore_world_blob: (a: number) => any;
+export const worldgen_chunk: (a: number, b: number) => any;
 export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;

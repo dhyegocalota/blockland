@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CHUNK, SIZE_X, SIZE_Z } from '../constants';
+import { CHUNK, GRASS_ID, SIZE_X, SIZE_Z } from '../constants';
 import { BLOCKS } from '../blocks';
 import { VoxelWorld } from '../world';
+import { flatWorldgen } from '../test-world';
 import { createChunkMesher } from './chunk-mesher';
 import type { EngineContext } from '../context';
+
+// A flat grass slab gives the mesher deterministic geometry to build without depending on the real
+// procedural worldgen (now the shared Rust source, covered by worldgen-parity.test.ts + the sim golden).
+const GROUND_TOP = 12;
 
 function makeContext(isTouch: boolean): EngineContext {
   const materials: Record<number, THREE.MeshLambertMaterial> = {};
@@ -13,7 +18,7 @@ function makeContext(isTouch: boolean): EngineContext {
     isTouch,
     scene: new THREE.Scene(),
     worldGroup: new THREE.Group(),
-    world: new VoxelWorld(),
+    world: new VoxelWorld(flatWorldgen(GROUND_TOP, GRASS_ID)),
     materials,
     chunkMeshes: new Map<string, THREE.Mesh[]>(),
     chunksX: Math.ceil(SIZE_X / CHUNK),

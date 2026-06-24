@@ -334,6 +334,21 @@ export class WasmCore {
 }
 if (Symbol.dispose) WasmCore.prototype[Symbol.dispose] = WasmCore.prototype.free;
 
+/**
+ * The full procedural base of one chunk `(cx, cz)` as a flat `CHUNK*CHUNK*SIZE_Y` byte array (the TS
+ * `lx + lz*CHUNK + y*CHUNK*CHUNK` layout), straight from `sim::worldgen_chunk`. STANDALONE — no Room or
+ * `WasmCore` instance needed — so the client store fills a chunk's base from the single Rust source
+ * (deleting its TS worldgen duplicate) with one call per chunk; all hot per-voxel reads stay in the TS
+ * cache. Online AND offline call this, so the terrain base always matches the server's authoritative world.
+ * @param {number} cx
+ * @param {number} cz
+ * @returns {Uint8Array}
+ */
+export function worldgen_chunk(cx, cz) {
+    const ret = wasm.worldgen_chunk(cx, cz);
+    return ret;
+}
+
 const EXPECTED_RESPONSE_TYPES = new Set(['basic', 'cors', 'default']);
 
 async function __wbg_load(module, imports) {

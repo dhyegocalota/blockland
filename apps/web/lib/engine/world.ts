@@ -1,7 +1,10 @@
 // Sparse voxel store: only visited chunks allocate memory, so the world is effectively endless.
-// Pure data + procedural generation (via worldgen). No three.js, no DOM.
-import { AIR, CHUNK, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID, WATER_LEVEL, WOOD_ID } from './constants';
-import { type Biome, baseVoxel, biomeAt, heightAt, welcomeMonumentBlock } from './worldgen';
+// Pure data + a per-chunk procedural base sourced from the shared Rust worldgen (via wasm). No three.js,
+// no DOM. The base of a chunk is generated ONCE on first load by the injected `worldgen` (a wasm call into
+// `sim::worldgen_chunk`) and cached; every hot per-voxel read (physics, raycast, meshing) then reads this
+// in-memory cache — never wasm per voxel/frame.
+import { AIR, CHUNK, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID } from './constants';
+import type { WorldgenChunk } from './online/wasm-core-loader';
 
 export class VoxelWorld {
   private readonly chunksX = Math.ceil(SIZE_X / CHUNK);
@@ -9,6 +12,10 @@ export class VoxelWorld {
   private readonly chunkVolume = CHUNK * CHUNK * SIZE_Y;
   private readonly chunkData = new Map<number, Uint8Array>();
   private readonly genChunks = new Set<number>();
+
+  // `worldgen` fills a chunk's procedural base (terrain + water + monument + decoration) from the single
+  // Rust source. Required — a missing generator is a wiring bug, never silently a blank world.
+  constructor(private readonly worldgen: WorldgenChunk) {}
 
   chunkKey(cx: number, cz: number): number {
     return cx * this.chunksZ + cz;
@@ -74,73 +81,10 @@ export class VoxelWorld {
     this.genChunks.clear();
   }
 
-  private placeTree(x: number, top: number, z: number, x0: number, z0: number, biome: Biome, rng: () => number): void {
-    const trunk = 3 + Math.floor(rng() * 3);
-    for (let t = 1; t <= trunk; t++) this.rawSet(x, top + t, z, WOOD_ID);
-    const leaf = biome === 'snow' ? 12 : 5;
-    const cy = top + trunk;
-    for (let dx = -2; dx <= 2; dx++)
-      for (let dz = -2; dz <= 2; dz++)
-        for (let dy = 0; dy <= 2; dy++) {
-          const lx = x + dx, lz = z + dz;
-          if (lx < x0 || lx >= x0 + CHUNK || lz < z0 || lz >= z0 + CHUNK) continue;
-          if (Math.abs(dx) + Math.abs(dz) + dy > 3) continue;
-          if (this.rawGet(lx, cy + dy, lz) === AIR) this.rawSet(lx, cy + dy, lz, leaf);
-        }
-  }
-
+  // Fill a chunk's procedural base from the shared Rust worldgen (one wasm call), owning a fresh copy so
+  // later edits (`rawSet`) never write through to the wasm module's memory. Edits arrive separately (the
+  // coop edit overlay / built structures), exactly as before — only the base source changed.
   private generateChunk(cx: number, cz: number): void {
-    const x0 = cx * CHUNK, z0 = cz * CHUNK;
-    for (let x = x0; x < x0 + CHUNK && x < SIZE_X; x++)
-      for (let z = z0; z < z0 + CHUNK && z < SIZE_Z; z++) {
-        const top = heightAt(x, z);
-        for (let y = 0; y <= top; y++) this.rawSet(x, y, z, baseVoxel(x, y, z));
-        for (let y = top + 1; y <= WATER_LEVEL; y++) this.rawSet(x, y, z, WATER_ID);
-        for (let y = top + 1; y < SIZE_Y; y++) {
-          const monument = welcomeMonumentBlock(x, y, z);
-          if (monument !== AIR) this.rawSet(x, y, z, monument);
-        }
-      }
-    // Seed decoration RNG by chunk coords so trees + plants are deterministic: every player (and a
-    // re-gen after reset) sees the EXACT same world — the base terrain is already deterministic.
-    this.decorateChunk(cx, cz, mulberry32(chunkSeed(cx, cz)));
+    this.chunkData.set(this.chunkKey(cx, cz), new Uint8Array(this.worldgen(cx, cz)));
   }
-
-  private decorateChunk(cx: number, cz: number, rng: () => number): void {
-    const x0 = cx * CHUNK, z0 = cz * CHUNK;
-    for (let i = 0; i < 30; i++) {
-      const x = x0 + 2 + Math.floor(rng() * (CHUNK - 4));
-      const z = z0 + 2 + Math.floor(rng() * (CHUNK - 4));
-      const top = heightAt(x, z);
-      if (top <= WATER_LEVEL) continue;
-      const biome = biomeAt(x, z);
-      const density = biome === 'forest' ? 0.75 : biome === 'plains' ? 0.22 : biome === 'snow' ? 0.16 : 0.02;
-      if (rng() < density) { this.placeTree(x, top, z, x0, z0, biome, rng); continue; }
-      if (biome !== 'desert' && rng() < 0.1 && this.rawGet(x, top + 1, z) === AIR) this.rawSet(x, top + 1, z, 9);
-    }
-    for (const [chance, id] of [[0.5, 8], [0.28, 14], [0.08, 15]]) {
-      if (rng() >= chance) continue;
-      const x = x0 + Math.floor(rng() * CHUNK);
-      const z = z0 + Math.floor(rng() * CHUNK);
-      const top = heightAt(x, z);
-      if (top > WATER_LEVEL && this.rawGet(x, top + 1, z) === AIR) this.rawSet(x, top + 1, z, id);
-    }
-  }
-}
-
-// A spatial hash of chunk coords -> a 32-bit seed, and mulberry32, a tiny deterministic PRNG. Together
-// they make world decoration reproducible from position alone (no shared seed state needed).
-function chunkSeed(cx: number, cz: number): number {
-  return (Math.imul(cx, 374761393) ^ Math.imul(cz, 668265263) ^ 0x9e3779b9) >>> 0;
-}
-
-export function mulberry32(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }

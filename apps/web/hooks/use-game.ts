@@ -270,7 +270,7 @@ export function useGame() {
       const mod = await import('../lib/game-engine');
       debug('engine', 'engine module loaded', { id: brand.id, name: brand.name });
       dispatchLoader({ kind: 'stage', stage: LoaderStage.World });
-      engineCleanupRef.current = mod.initGame(brand, makeBridge(brand));
+      engineCleanupRef.current = await mod.initGame(brand, makeBridge(brand));
       dispatchLoader({ kind: 'ready' });
       document.getElementById('playBtn')?.click();
       debug('engine', 'world ready', { id: brand.id, mode: soloRef.current ? 'offline' : 'online' });

@@ -324,6 +324,57 @@ fn decorate_chunk(cx: i32, cz: i32, placed: &mut HashMap<(i32, i32, i32), u8>) {
     }
 }
 
+/// Volume of one horizontal chunk column (its full Y), in voxels. The standalone [`worldgen_chunk`]
+/// fills an array of this length; the client caches it as a chunk's procedural base.
+pub const CHUNK_VOLUME: usize = (CHUNK * CHUNK * SIZE_Y) as usize;
+
+/// Local index of `(lx, y, lz)` within a chunk's flat array. Mirrors the TS `VoxelWorld.localIdx`
+/// (`lx + lz*CHUNK + y*CHUNK*CHUNK`) exactly so a wasm-filled chunk drops straight into the client store.
+fn chunk_index(lx: i32, y: i32, lz: i32) -> usize {
+    (lx + lz * CHUNK + y * CHUNK * CHUNK) as usize
+}
+
+/// The full procedural base of one chunk `(cx, cz)`: terrain + water + the welcome monument +
+/// decoration (trees + plants), clamped to the chunk, with NO player edits. This is the single source
+/// the TS client used to recompute in `world.ts`/`worldgen.ts`; it now calls THIS (via wasm) once per
+/// chunk and caches the result, then overlays edits as before. Fill order + index layout mirror the
+/// TS `generateChunk` bit-for-bit (proven byte-identical by the web parity guard), so the client base
+/// matches the server's authoritative world (and thus its edits/collision).
+pub fn worldgen_chunk(cx: i32, cz: i32) -> Vec<u8> {
+    let mut voxels = vec![AIR; CHUNK_VOLUME];
+    let x0 = cx * CHUNK;
+    let z0 = cz * CHUNK;
+    let mut put = |x: i32, y: i32, z: i32, id: u8| {
+        if x < x0 || x >= x0 + CHUNK || z < z0 || z >= z0 + CHUNK || !(0..SIZE_Y).contains(&y) {
+            return;
+        }
+        voxels[chunk_index(x - x0, y, z - z0)] = id;
+    };
+    for x in x0..(x0 + CHUNK).min(WORLD_SIZE) {
+        for z in z0..(z0 + CHUNK).min(WORLD_SIZE) {
+            let top = height_at(x, z);
+            for y in 0..=top {
+                put(x, y, z, base_voxel(x, y, z));
+            }
+            for y in (top + 1)..=WATER_LEVEL {
+                put(x, y, z, WATER);
+            }
+            for y in (top + 1)..SIZE_Y {
+                let monument = welcome_monument_block(x, y, z);
+                if monument != AIR {
+                    put(x, y, z, monument);
+                }
+            }
+        }
+    }
+    let mut placed = HashMap::new();
+    decorate_chunk(cx, cz, &mut placed);
+    for ((x, y, z), id) in placed {
+        put(x, y, z, id);
+    }
+    voxels
+}
+
 /// Authoritative world: procedural base + a sparse map of player edits + lazily-materialized
 /// procedural decoration. The decoration cache is interior-mutable (built on demand under a mutex)
 /// so the read-only `get`/`surface_y` surface stays `&self` while remaining `Send + Sync`.
@@ -825,6 +876,36 @@ mod tests {
         let mut w = World::new();
         w.set(4, 21, 10, AIR);
         assert_eq!(w.get(4, 21, 10), AIR, "edit must mask the tree trunk");
+    }
+
+    #[test]
+    fn worldgen_chunk_matches_an_unedited_world_voxel_for_voxel() {
+        // The standalone chunk fill (what wasm hands the client) must equal the lazy `World::get` base —
+        // terrain + water + monument + decoration — for every cell of a chunk, in the TS index layout.
+        // The spawn chunk and a few far chunks cover plains, the monument and varied biomes.
+        for (cx, cz) in [
+            (0, 0),
+            (5, 7),
+            (-3, 11),
+            (WORLD_SIZE / 2 / CHUNK, WORLD_SIZE / 2 / CHUNK),
+        ] {
+            let voxels = worldgen_chunk(cx, cz);
+            assert_eq!(voxels.len(), CHUNK_VOLUME, "chunk array is one full column");
+            let world = World::new();
+            let x0 = cx * CHUNK;
+            let z0 = cz * CHUNK;
+            for lx in 0..CHUNK {
+                for lz in 0..CHUNK {
+                    for y in 0..SIZE_Y {
+                        assert_eq!(
+                            voxels[chunk_index(lx, y, lz)],
+                            world.get(x0 + lx, y, z0 + lz),
+                            "chunk ({cx},{cz}) cell ({lx},{y},{lz})"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

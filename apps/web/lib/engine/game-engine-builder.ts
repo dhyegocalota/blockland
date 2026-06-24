@@ -13,6 +13,7 @@ import { CHUNK, DEFAULT_APP_VERSION, EYE_HEIGHT, FACE_ID, SIZE_X, SIZE_Y, SIZE_Z
 import { type BlockDef } from './blocks';
 import { findSpawnSlot, randomSpawnBase, spawnColumnClear } from './spawn-slot';
 import { VoxelWorld } from './world';
+import type { WorldgenChunk } from './online/wasm-core-loader';
 import { BlockInventory } from './inventory';
 import { clearFeetAbove } from './actors';
 import { parseSavedPosition, serializeSavedPosition } from './saved-position';
@@ -50,9 +51,16 @@ export class GameEngineBuilder {
   private brand: Brand | null = null;
   private bridge: CoopBridge | undefined = undefined;
   private mode: EngineMode = 'online';
+  private worldgen: WorldgenChunk | null = null;
 
   forTenant(brand: Brand): this {
     this.brand = brand;
+    return this;
+  }
+
+  // The wasm-sourced chunk worldgen (already inited during the engine load, so chunk fills are synchronous).
+  withWorldgen(worldgen: WorldgenChunk): this {
+    this.worldgen = worldgen;
     return this;
   }
 
@@ -74,6 +82,8 @@ export class GameEngineBuilder {
   build(): (() => void) | undefined {
     const brand = this.brand;
     if (!brand) throw new Error('GameEngine.builder requires forTenant(brand)');
+    const worldgen = this.worldgen;
+    if (!worldgen) throw new Error('GameEngine.builder requires withWorldgen(worldgen)');
     if (typeof window === 'undefined') return undefined;
     const win = window as unknown as GameWindow;
     if (win.__blGameBooted) return win.__blGameCleanup;
@@ -95,7 +105,7 @@ export class GameEngineBuilder {
     const plan = resolveCoopPlan({ serverUrl, hasBridge: !!bridge, mode: this.mode });
 
     // ---------- Voxel storage (sparse: only visited chunks use memory -> endless world) ----------
-    const world = new VoxelWorld();
+    const world = new VoxelWorld(worldgen);
     const materials: Record<number, GfxMaterial> = {};
 
     // ---------- Scene + meshing (streamed chunk meshes around the player) ----------

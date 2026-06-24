@@ -26,9 +26,16 @@ export interface WasmCore {
   free(): void;
 }
 
+// A synchronous worldgen: the full procedural base of one chunk as a flat CHUNK*CHUNK*SIZE_Y byte array
+// (the `lx + lz*CHUNK + y*CHUNK*CHUNK` layout the voxel store caches). The client store calls this ONCE
+// per chunk to fill its base from the single Rust source, then overlays edits — all hot per-voxel reads
+// stay in the TS cache (no wasm call per voxel/frame).
+export type WorldgenChunk = (cx: number, cz: number) => Uint8Array;
+
 interface WasmModule {
   default(): Promise<unknown>;
   WasmCore: new (seed: number, config: string, nowMs: number, wallMs: number, debug: boolean) => WasmCore;
+  worldgen_chunk: WorldgenChunk;
 }
 
 let modulePromise: Promise<WasmModule> | null = null;
@@ -56,4 +63,13 @@ export interface WasmCoreInit {
 export async function createWasmCore(init: WasmCoreInit): Promise<WasmCore> {
   const mod = await loadModule();
   return new mod.WasmCore(init.seed, init.config, init.nowMs, init.wallMs, init.debug);
+}
+
+// Init the wasm (gating first paint) and return the synchronous chunk worldgen the voxel store fills its
+// base from. The wasm now loads for ONLINE too (not only the offline core), so the procedural base always
+// comes from the single Rust source. Awaited once during the engine load; later chunk streams call the
+// returned function synchronously on the already-inited module.
+export async function loadWorldgen(): Promise<WorldgenChunk> {
+  const mod = await loadModule();
+  return (cx, cz) => mod.worldgen_chunk(cx, cz);
 }
