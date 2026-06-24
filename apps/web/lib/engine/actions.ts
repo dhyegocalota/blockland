@@ -13,11 +13,11 @@ export function createActions(runtime: GameRuntime): void {
   createBlockActions(runtime);
   createStructurePlacement(runtime);
 
-  // The admin wiped the world: rebuild it in place (like a fresh boot) and respawn, so every player
-  // resets without being kicked back to the lobby. The server's reset already cleared its own world
-  // and creatures; the local creatures (single-player) and poofs are cleared to match. A reset is a
-  // fresh start, so OFFLINE it also wipes the local player's progress: zero stars/bag, refill hearts,
-  // empty the banked inventory, and drop the persisted record — then repaint the HUD.
+  // The admin wiped the world (the coop `onWorldReset` callback): the server's reset already cleared its
+  // world + creatures; rebuild the local terrain in place (like a fresh boot) and respawn, so every
+  // player resets without being kicked back to the lobby. A reset is a fresh start, so it also wipes the
+  // local player's progress: zero stars/bag, refill hearts, empty the banked inventory, and drop the
+  // persisted record — then repaint the HUD.
   runtime.resetLocalWorld = function resetLocalWorld(): void {
     const { player } = runtime.state;
     runtime.chime();
@@ -36,16 +36,6 @@ export function createActions(runtime: GameRuntime): void {
     player.vel.set(0, 0, 0);
     runtime.savePos();
     runtime.updateHotbarCounts();
-    runtime.updateStats();
-  };
-
-  // The admin reset only the scores (not the world): OFFLINE this zeros every progress metric — the
-  // live stars and the persisted record — while the banked inventory and the world are untouched, then
-  // repaints the HUD. (Single-player has no pvp-kill metric, so stars + record cover it.)
-  runtime.resetLocalScores = function resetLocalScores(): void {
-    const { player } = runtime.state;
-    player.stars = 0;
-    localStorage.removeItem(runtime.bestKey);
     runtime.updateStats();
   };
 }

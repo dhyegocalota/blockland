@@ -175,8 +175,18 @@ describe('wasmOfflineConfig', () => {
     const config = wasmOfflineConfig({ tenant: 'acme', world: 'main', brand: { name: 'Acme', image: 'x.png' } });
     expect(config).toMatchObject({
       tenant: 'acme', world: 'main', brand_name: 'Acme', brand_image: 'x.png',
-      tick_hz: 20, max_players: 10, idle_secs: 45, edit_reach: 9, max_speed: 18,
-      move_per_sec: 40, edit_per_sec: 25, chat_per_sec: 2,
+      tick_hz: 20, max_players: 10, idle_secs: 45, edit_reach: 9,
+      edit_per_sec: 25, chat_per_sec: 2,
     });
+  });
+
+  // Movement parity: offline is a single local player with no cheating to prevent, so the core's move
+  // anti-cheat must never rubber-band it. The speed cap + per-move budget are raised far above any
+  // single-tick move (the world spans 163840 units) so `dist <= max_speed * dt` always holds and the move
+  // is taken whole, exactly like the TS offline engine moved the player directly. Online is untouched.
+  it('lifts the move clamp offline (speed cap + move budget above any real move) so it never rubber-bands', () => {
+    const config = wasmOfflineConfig({ tenant: 'acme', world: 'main', brand: { name: 'Acme', image: 'x.png' } });
+    expect(config.max_speed).toBeGreaterThan(163840);
+    expect(config.move_per_sec).toBeGreaterThan(163840);
   });
 });

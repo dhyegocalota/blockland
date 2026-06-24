@@ -3470,6 +3470,45 @@ mod tests {
         );
     }
 
+    // Offline (single local player) runs with the move clamp lifted: the web side passes a `max_speed` far
+    // above any real move, so the same jump that converges above is instead taken WHOLE (factor == 1),
+    // matching the TS offline engine that moved the player directly with no rubber-band. Online keeps the
+    // real cap (the test above); this proves a high cap removes the clamp without otherwise changing physics.
+    #[tokio::test]
+    async fn an_uncapped_speed_takes_every_move_whole_no_rubber_band() {
+        let mut room = test_room().await;
+        room.max_speed = 1_000_000.0;
+        add_player(&mut room, 1, false);
+        room.on_input(
+            Instant::now(),
+            1,
+            ClientMsg::Move {
+                x: 50.0,
+                y: 20.0,
+                z: 50.0,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        );
+        // A jump far beyond the online speed budget is taken to the exact reported position — no converge.
+        room.on_input(
+            Instant::now(),
+            1,
+            ClientMsg::Move {
+                x: 120.0,
+                y: 20.0,
+                z: 50.0,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        );
+        assert_eq!(
+            room.players.get(&1).unwrap().x,
+            120.0,
+            "with the clamp lifted the move lands exactly where the client reported (no rubber-band)"
+        );
+    }
+
     // Stand a player on the open ground with a hostile creature spawned on the same spot, so after the
     // sim advances it they are at the same level and within bite range.
     fn bite_setup(room: &mut Room) {

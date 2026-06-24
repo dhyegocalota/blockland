@@ -24,14 +24,25 @@ const BATCH_CHUNK = 256;
 
 // The fixed, global room limits the offline core runs under — the same values the server reads from
 // `tenants.toml` (which CLAUDE.md fixes globally; tenants.toml is branding only). The WasmCore deserializes
-// these into its RoomConfig, so offline simulates with the identical movement/edit/idle bounds as online.
+// these into its RoomConfig, so offline simulates with the identical edit/idle bounds as online.
+//
+// EXCEPT the movement anti-cheat: online, the room steps an over-budget move toward the client at only
+// `max_speed * dt + 2` per tick (a rubber-band that converges a cheating/desynced player). Offline there is
+// ONE local player and no cheating to prevent, so that clamp would only add a rubber-band the TS engine
+// never had (it moved the player directly). We make the clamp a no-op by raising the speed cap + the
+// per-second move budget far above any real move: the world spans WORLD_SIZE (163840) units, so a single
+// tick can never move farther than that, and a cap above it keeps `dist <= max_speed * dt` always true —
+// the move is taken whole (factor == 1), identical to the TS offline. Online keeps the real cap (its config
+// is read straight from tenants.toml and is untouched here).
+const OFFLINE_UNCLAMPED_RATE = 1_000_000.0;
+
 export const OFFLINE_ROOM_LIMITS = {
   tick_hz: 20,
   max_players: 10,
   idle_secs: 45,
   edit_reach: 9.0,
-  max_speed: 18.0,
-  move_per_sec: 40.0,
+  max_speed: OFFLINE_UNCLAMPED_RATE,
+  move_per_sec: OFFLINE_UNCLAMPED_RATE,
   edit_per_sec: 25.0,
   chat_per_sec: 2.0,
 } as const;

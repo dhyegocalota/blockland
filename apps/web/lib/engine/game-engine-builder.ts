@@ -26,17 +26,15 @@ import { createScene } from './rendering/scene-setup';
 import { createChunkMesher } from './rendering/chunk-mesher';
 import { createPoofRuntime } from './rendering/poofs-runtime';
 import { createHeartDropRuntime } from './rendering/heart-drop-runtime';
-import { createCreatureGroup, loadFaceTexture } from './rendering/face-texture';
+import { loadFaceTexture } from './rendering/face-texture';
 import { resolveCoopPlan, type EngineMode } from './builder-plan';
 import { createActions } from './actions';
 import { createCreatureView } from './rendering/creature-view';
 import { createCoopView } from './rendering/coop-view';
-import { createCreatureSimulation } from './offline/creature-simulation';
 import { createCreatureTargeting } from './online/creature-targeting';
 import { createHud } from './rendering/hud';
 import { createGameLoop } from './game-loop';
 import { createCoopWiring } from './online/coop-wiring';
-import { createOfflineMode } from './offline/offline-mode';
 import type { CoopBridge } from './api';
 import type { GameRuntime } from './runtime';
 
@@ -141,7 +139,6 @@ export class GameEngineBuilder {
       return [...creatures, ...serverCreatures, ...players];
     };
     const state = createEngineState({ spawn: savedPos ? new Vec3(savedPos.x, savedPos.y, savedPos.z) : spawnPoint([]) });
-    const creatureGroup = createCreatureGroup(scene);
 
     const runtime = {
       brand, bridge, faceUrl, faceBlockName,
@@ -151,7 +148,7 @@ export class GameEngineBuilder {
       world, chunkMeshes, materials,
       mesher, poofRuntime, heartDropRuntime, view,
       state, inventory: new BlockInventory(),
-      blockedStructures: new Set<string>(), creatures: [], heartDrops: [], creatureGroup, coop: null,
+      blockedStructures: new Set<string>(), creatures: [], heartDrops: [], coop: null,
       last: 0, lastPosSave: 0, audio: undefined,
     } as unknown as GameRuntime;
 
@@ -185,9 +182,7 @@ export class GameEngineBuilder {
     createHud(runtime);
     createActions(runtime);
     createCreatureView(runtime);
-    createCreatureSimulation(runtime);
     createCreatureTargeting(runtime);
-    createOfflineMode(runtime);
     createCoopWiring(runtime);
     createGameLoop(runtime);
 
@@ -203,7 +198,6 @@ export class GameEngineBuilder {
       onReady: () => {
         runtime.updateChunks(true);
         runtime.processMeshQueue(isTouch ? 24 : 60);
-        if (plan.populateAtBoot) runtime.populateCreatures();
         runtime.buildHotbar(faceUrl);
         runtime.selectSlot(1);
         runtime.updateStats();

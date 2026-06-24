@@ -1,8 +1,8 @@
 // Block break / place / dig, dependency-inverted onto the shared GameRuntime: the crosshair voxel
 // raycast, the primary tap target choice (player/creature/block), the break + place + the place
-// eligibility and player-overlap guards. Pure pieces it leans on (chooseCoopTarget/chooseLocalTarget,
-// place-eligibility, the DDA raycast, cellOverlapsActor) are already unit-tested; this is the glue that
-// drives them against the live world + coop.
+// eligibility and player-overlap guards. Pure pieces it leans on (chooseCoopTarget, place-eligibility,
+// the DDA raycast, cellOverlapsActor) are already unit-tested; this is the glue that drives them against
+// the live world + coop.
 import { Vec3 } from './vec3';
 import { t } from '../i18n';
 import { debug } from '../log';
@@ -13,7 +13,7 @@ import { blockById } from './blocks';
 import { type VoxelHit, raycastVoxel as ddaRaycast } from './raycast';
 import { cellOverlapsActor } from './actors';
 import { canPlaceSelected as canPlaceOffline, shouldSpendBlock } from './place-eligibility';
-import { chooseCoopTarget, chooseLocalTarget } from './attack-target';
+import { chooseCoopTarget } from './attack-target';
 import { DebugEventDir, DebugEventKind, debugReportRing } from './debug-report';
 import { chipTap, type Chip } from './dig-progress';
 import type { GameRuntime } from './runtime';
@@ -55,10 +55,8 @@ export function createBlockActions(runtime: GameRuntime): void {
       if (target === 'block' && block) runtime.breakBlock(block);
       return;
     }
-    const creatureHit = runtime.raycastCreature();
-    const target = chooseLocalTarget({ creatureT: creatureHit ? creatureHit.t : null, blockDistance, hasBlock: !!block });
-    if (target === 'creature' && creatureHit) { runtime.hitCreature(creatureHit.creature); return; }
-    if (target === 'block' && block) runtime.breakBlock(block);
+    // No coop yet (pre-join): creatures are server-authoritative, so a tap can only break a block.
+    if (block) runtime.breakBlock(block);
   };
 
   runtime.breakBlock = function breakBlock(r: VoxelHit): void {

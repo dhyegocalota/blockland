@@ -8,7 +8,7 @@
 // function fields. Fields are late-bound by design: a module may read runtime.spawnPoof before the
 // module that assigns it has run, because every call happens at game time, never at wire time.
 import type {
-  GfxScene, GfxCamera, GfxRenderer, GfxGroup, GfxChunkMesh, GfxMaterial, GfxCreatureBody,
+  GfxScene, GfxCamera, GfxRenderer, GfxChunkMesh, GfxMaterial,
 } from './rendering/gfx';
 import type { Vec3 } from './vec3';
 import type { Brand } from '../tenants';
@@ -34,10 +34,8 @@ export interface Creature {
   id: number;
   typeKey: string;
   def: CreatureDef;
-  // The authoritative position the offline AI reads/writes; rendering syncs cr.mesh from it each tick.
+  // The creature's world position (read by the spawn-actor + collision lists).
   pos: Vec3;
-  mesh: GfxGroup;
-  body: GfxCreatureBody;
   hp: number;
   dir: number;
   timer: number;
@@ -81,11 +79,11 @@ export interface GameRuntime {
   state: EngineState;
   inventory: BlockInventory;
   blockedStructures: Set<string>;
+  // Local creature records feeding the spawn-actor + collision lists. Creatures are server-authoritative
+  // (the core owns them online and offline), so this stays empty; the renderer draws them from coop-view.
   creatures: Creature[];
-  // Offline-only hearts dropped by defeated creatures, awaiting pickup or TTL expiry. Co-op heart drops
-  // are server-owned and live in coop.ts; these are the single-player mirror.
+  // Heart drops are server-owned (they live in coop.ts); `resetLocalWorld` clears this local mirror.
   heartDrops: HeartDrop[];
-  creatureGroup: GfxGroup;
   coop: CoopController | null;
   // The data-only rendering hooks for co-op entities, implemented by rendering/coop-view and handed to
   // createCoop so the network controller stays three.js-free.
@@ -133,27 +131,7 @@ export interface GameRuntime {
   cameraForward(): Vec3;
   spawnPoof(pos: Vec3, color: string): void;
   updatePoofs(dt: number): void;
-  buildCreatureBody(def: CreatureDef, x: number, y: number, z: number): {
-    mesh: GfxGroup;
-    body: GfxCreatureBody;
-  };
-  syncCreatureMesh(cr: Creature, transform: { x: number; y: number; z: number; rotationY: number; flashing: boolean }): void;
-  knockbackCreatureMesh(cr: Creature, delta: { x: number; z: number }): void;
-  disposeCreatureMesh(cr: Creature): void;
   flashDamage(): void;
-
-  // ---- Single-player creatures (filled by offline/creature-simulation) ----
-  spawnCreature(typeKey: string): void;
-  populateCreatures(): void;
-  updateCreatures(dt: number): void;
-  hurtPlayer(): void;
-  napAndRespawn(): void;
-  raycastCreature(): { creature: Creature; t: number } | null;
-  hitCreature(cr: Creature): void;
-  defeatCreature(cr: Creature): void;
-  // Advance the offline heart drops: bob their meshes, let a damaged player walking over one collect it
-  // for +1 heart, and drop any past its TTL. `now` is the rAF clock in ms (bob phase + TTL reference).
-  updateHeartDrops(now: number): void;
 
   // ---- Co-op targeting (filled by online/creature-targeting) ----
   raycastServerCreature(): { creature: CoopCreature; t: number } | null;
@@ -169,8 +147,9 @@ export interface GameRuntime {
   canPlaceSelected(): boolean;
   overlapsPlayer(x: number, y: number, z: number): boolean;
   buildStructure(kind: StructureKind): void;
+  // The admin wiped the world: the server's reset already cleared its world + creatures; this rebuilds
+  // the local terrain in place and respawns (the `onWorldReset` coop callback), so no one is kicked.
   resetLocalWorld(): void;
-  resetLocalScores(): void;
 
   // ---- Scoreboard ----
   storedBest(): number;
@@ -181,15 +160,11 @@ export interface GameRuntime {
   applyRemoteEdit(args: { x: number; y: number; z: number; id: number; mine: boolean }): void;
   applyRemoteEditBatch(edits: EditCell[]): void;
   applyRoomState(room: RoomState): void;
-  currentRoom(): RoomState;
-  applyLocalRoom(next: RoomState): void;
   applyHurt(by: string): void;
   localPose(): { x: number; y: number; z: number; yaw: number; pitch: number };
   sendCoopEdit(op: EditOp, x: number, y: number, z: number, id: number): void;
   debugSnapshot(): DebugSnapshot;
   debugReport(): string;
-  grantOfflineAdmin(): void;
-  enterOfflineMode(): void;
   startCoop(): void;
   bindApi(): void;
 

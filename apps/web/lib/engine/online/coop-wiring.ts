@@ -1,8 +1,9 @@
 // Co-op wiring, dependency-inverted onto the shared GameRuntime: the remote-edit appliers, room-state
-// sync, the hurt cue, the local pose/edit forwarders, the debug snapshot, the offline-admin grant, the
-// admin/GameApi bridge bind, and the createCoop call itself (startCoop). createCoop is invoked only when
-// a server URL is configured AND the player did not choose single-player, so the offline path never
-// opens a socket. All bodies move verbatim from the engine closure.
+// sync, the hurt cue, the local pose/edit forwarders, the debug snapshot, the admin/GameApi bridge bind,
+// and the createCoop call itself (startCoop). Both modes go through createCoop: online opens a socket;
+// offline (single-player) drives the in-process WASM game-core, which IS the authority (the lone player
+// joins as admin). So the admin/GameApi actions always route through the live `coop` controller in both
+// modes — there is no separate TS offline authority anymore.
 import { Vec3 } from '../vec3';
 import { t } from '../../i18n';
 import { debug } from '../../log';
@@ -13,8 +14,6 @@ import { buildDebugSnapshot, type DebugSnapshot } from '../debug-snapshot';
 import { debugReportRing, formatDebugReport } from '../debug-report';
 import { createCoop, MAIN_WORLD, type Appearance, type CoopHud, type CoopOptions, type RoomState } from '../../coop';
 import { createWasmCoreNet, wasmOfflineConfig, wasmOfflineDebug, wasmOfflineSeed } from './wasm-core-source';
-import { wasmOfflineEnabled } from './wasm-offline-flag';
-import { offlineAdminFeed, offlineResetFeed, offlineResetScoresFeed } from '../offline/feed-events';
 import type { EditCell, EditOp } from '../../protocol';
 import type { GameRuntime } from '../runtime';
 
@@ -80,15 +79,6 @@ export function createCoopWiring(runtime: GameRuntime): void {
     debug('engine', 'room state applied', { peace, blocked: blocked.length, pvp: pvpOn, chat: chatOn, approval });
   };
 
-  // Offline there is no server room: admin toggles mutate the local state directly and refresh the HUD
-  // (online always routes through coop instead, so the two paths never mix).
-  runtime.currentRoom = (): RoomState => ({ peace: state.peaceful, blockedStructures: [...runtime.blockedStructures], pvp: state.pvp, chatEnabled: state.chatEnabled, suspended: false, approvalRequired: state.approvalRequired, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true });
-
-  runtime.applyLocalRoom = function applyLocalRoom(next: RoomState): void {
-    runtime.applyRoomState(next);
-    runtime.bridge?.hud.onRoomState(next);
-  };
-
   // The server (which owns hearts in co-op) reports a hit — from a monster or another player. We only
   // play the damage cue; the heart count itself arrives authoritatively in the next snapshot.
   runtime.applyHurt = function applyHurt(by: string): void {
@@ -137,52 +127,22 @@ export function createCoopWiring(runtime: GameRuntime): void {
   };
 
   runtime.bindApi = function bindApi(): void {
-    // Offline there is no server to echo an admin toggle back as a feed event, so build + route the same
-    // FeedEvent locally — any admin config change shows in the feed in both modes.
-    const offlineAdmin = (action: string): void => {
-      if (!runtime.bridge) return;
-      runtime.bridge.hud.onEvent(offlineAdminFeed({ name: runtime.bridge.resolveName(), action }));
-    };
+    // Every action routes through the live coop authority (the socket online, the WASM core offline). The
+    // core echoes each admin toggle / reset / chat back as the same ServerMsg the socket does, so the feed,
+    // room-state and HUD update identically in both modes — no separate local-offline path.
     runtime.bridge?.bind({
       sendChat: (text) => {
         if (!state.chatEnabled) return;
-        if (runtime.coop) { runtime.coop.sendChat(text); return; }
-        runtime.bridge?.hud.onChat(runtime.bridge.resolveName(), text);
+        runtime.coop?.sendChat(text);
       },
-      setAdminPeace: (on) => {
-        if (runtime.coop) { runtime.coop.sendAdminSetPeace(on); return; }
-        runtime.applyLocalRoom({ ...runtime.currentRoom(), peace: on });
-        offlineAdmin(on ? 'peace_on' : 'peace_off');
-      },
-      setAdminStructure: (kind, allowed) => {
-        if (runtime.coop) { runtime.coop.sendAdminSetStructure(kind, allowed); return; }
-        const blocked = new Set(runtime.blockedStructures);
-        if (allowed) blocked.delete(kind); else blocked.add(kind);
-        runtime.applyLocalRoom({ ...runtime.currentRoom(), blockedStructures: [...blocked] });
-        offlineAdmin(allowed ? 'structure_allowed' : 'structure_blocked');
-      },
-      setAdminPvp: (on) => {
-        if (runtime.coop) { runtime.coop.sendAdminSetPvp(on); return; }
-        runtime.applyLocalRoom({ ...runtime.currentRoom(), pvp: on });
-        offlineAdmin(on ? 'pvp_on' : 'pvp_off');
-      },
-      setAdminChat: (on) => {
-        if (runtime.coop) { runtime.coop.sendAdminSetChat(on); return; }
-        runtime.applyLocalRoom({ ...runtime.currentRoom(), chatEnabled: on });
-        offlineAdmin(on ? 'chat_on' : 'chat_off');
-      },
+      setAdminPeace: (on) => runtime.coop?.sendAdminSetPeace(on),
+      setAdminStructure: (kind, allowed) => runtime.coop?.sendAdminSetStructure(kind, allowed),
+      setAdminPvp: (on) => runtime.coop?.sendAdminSetPvp(on),
+      setAdminChat: (on) => runtime.coop?.sendAdminSetChat(on),
       kickPlayer: (id) => runtime.coop?.sendAdminKick(id),
       banPlayer: (id) => runtime.coop?.sendAdminBan(id),
-      resetWorld: () => {
-        if (runtime.coop) { runtime.coop.sendAdminResetWorld(); return; }
-        runtime.resetLocalWorld();
-        runtime.bridge?.hud.onEvent(offlineResetFeed({ name: runtime.bridge.resolveName() }));
-      },
-      resetScores: () => {
-        if (runtime.coop) { runtime.coop.sendAdminResetScores(); return; }
-        runtime.resetLocalScores();
-        runtime.bridge?.hud.onEvent(offlineResetScoresFeed({ name: runtime.bridge.resolveName() }));
-      },
+      resetWorld: () => runtime.coop?.sendAdminResetWorld(),
+      resetScores: () => runtime.coop?.sendAdminResetScores(),
       suspendRoom: (on) => runtime.coop?.sendAdminSuspend(on),
       setRole: (id, role) => runtime.coop?.sendAdminSetRole(id, role),
       setApprovalRequired: (on) => runtime.coop?.sendAdminSetApproval(on),
@@ -193,15 +153,8 @@ export function createCoopWiring(runtime: GameRuntime): void {
       setLimits: (min, hours) => runtime.coop?.sendAdminSetLimits(min, hours),
       setModes: (online, offline) => runtime.coop?.sendAdminSetModes(online, offline),
       chime: runtime.chime,
-      setInfiniteResources: (on) => {
-        if (runtime.coop) { runtime.coop.sendAdminSetInfinite(on); return; }
-        state.infiniteResources = on;
-        runtime.updateHotbarCounts();
-      },
-      returnToSpawn: () => {
-        if (runtime.coop) { runtime.coop.sendRespawn(); return; }
-        player.pos.copy(runtime.spawnPoint()); player.vel.set(0, 0, 0); runtime.savePos();
-      },
+      setInfiniteResources: (on) => runtime.coop?.sendAdminSetInfinite(on),
+      returnToSpawn: () => runtime.coop?.sendRespawn(),
       debugSnapshot: runtime.debugSnapshot,
       debugReport: runtime.debugReport,
     });
@@ -264,9 +217,9 @@ export function createCoopWiring(runtime: GameRuntime): void {
     };
   }
 
-  // Offline-via-core (behind the `?wasmoffline=1` flag): run the single-player game on the local WasmCore
-  // instead of the TS offline engine. The core IS the admin authority (the lone player joins as admin), so
-  // the SAME createCoop wiring drives the renderer + admin panel — just sourced from the in-process core.
+  // Offline-via-core: the single-player game runs on the local WasmCore (this is the DEFAULT offline
+  // engine). The core IS the admin authority (the lone player joins as admin), so the SAME createCoop
+  // wiring drives the renderer + admin panel — just sourced from the in-process core instead of a socket.
   function startWasmOffline(): void {
     const bridge = runtime.bridge!;
     const name = bridge.resolveName();
@@ -285,19 +238,17 @@ export function createCoopWiring(runtime: GameRuntime): void {
   runtime.startCoop = function startCoop(): void {
     const serverUrl = runtime.serverUrl;
     if (runtime.coop) return;
+    // No HUD bridge (the headless boot): nothing drives a lobby choice; a configured server still has
+    // nothing to attach to here, so just log and return (the bridged boot is the real entry).
     if (!runtime.bridge) {
-      if (!serverUrl) { debug('coop', 'single-player (no hud bridge, no server url)'); runtime.grantOfflineAdmin(); }
-      else debug('coop', 'single-player (no hud bridge)');
+      if (serverUrl) debug('coop', 'single-player (no hud bridge)');
+      else debug('coop', 'single-player (no hud bridge, no server url)');
       return;
     }
+    // Offline now runs the WASM game-core BY DEFAULT — it IS the single-player engine. We go offline when
+    // there is no server to reach, or the player chose single-player in the lobby.
     const wantsOffline = !serverUrl || runtime.bridge.resolveOffline();
-    if (wantsOffline && wasmOfflineEnabled()) { startWasmOffline(); return; }
-    if (!serverUrl) { debug('coop', 'single-player (no server url)'); runtime.grantOfflineAdmin(); return; }
-    if (runtime.bridge.resolveOffline()) {
-      debug('coop', 'single-player (chosen)');
-      runtime.enterOfflineMode();
-      return;
-    }
+    if (wantsOffline) { startWasmOffline(); return; }
     const bridge = runtime.bridge;
     const name = bridge.resolveName();
     const look = bridge.resolveAppearance();
