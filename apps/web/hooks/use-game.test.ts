@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoopBridge } from '../lib/engine/api';
 
 vi.mock('../lib/tenants', async (importOriginal) => {
@@ -15,10 +15,18 @@ window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as ty
 
 import { useGame } from './use-game';
 
+afterEach(() => { cleanup(); document.body.innerHTML = ''; });
+
+// The engine now loads on Play, not on mount, so the bridge only exists after the player presses Play.
+// A #playBtn node (normally rendered by Game.tsx) is injected and clicked to drive bootEngine.
 async function mountWithBridge(): Promise<{ result: ReturnType<typeof renderHook<ReturnType<typeof useGame>, unknown>>['result']; bridge: CoopBridge }> {
   initGame.mockClear();
+  const playBtn = document.createElement('button');
+  playBtn.id = 'playBtn';
+  document.body.appendChild(playBtn);
   const { result } = renderHook(() => useGame());
   await waitFor(() => expect(result.current.brand).not.toBeNull());
+  act(() => { playBtn.click(); });
   await waitFor(() => expect(initGame).toHaveBeenCalled());
   return { result, bridge: initGame.mock.calls[0][1] as CoopBridge };
 }
@@ -30,6 +38,37 @@ describe('useGame', () => {
     expect(typeof result.current.requestCode).toBe('function');
     expect(result.current.lobby).toBeDefined();
     await waitFor(() => expect(result.current.brand).not.toBeNull());
+  });
+
+  it('does not load the engine on mount — only after Play — and drives the loader to ready', async () => {
+    initGame.mockClear();
+    const playBtn = document.createElement('button');
+    playBtn.id = 'playBtn';
+    document.body.appendChild(playBtn);
+    const { result } = renderHook(() => useGame());
+    await waitFor(() => expect(result.current.brand).not.toBeNull());
+    expect(initGame).not.toHaveBeenCalled();
+    expect(result.current.loaderState).toEqual({ phase: 'idle' });
+
+    act(() => { playBtn.click(); });
+    await waitFor(() => expect(initGame).toHaveBeenCalledOnce());
+    await waitFor(() => expect(result.current.loaderState).toEqual({ phase: 'ready' }));
+  });
+
+  it('shows the on-brand retry path when the engine import fails, then recovers on retry', async () => {
+    initGame.mockClear();
+    initGame.mockImplementationOnce(() => { throw new Error('boom'); });
+    const playBtn = document.createElement('button');
+    playBtn.id = 'playBtn';
+    document.body.appendChild(playBtn);
+    const { result } = renderHook(() => useGame());
+    await waitFor(() => expect(result.current.brand).not.toBeNull());
+
+    act(() => { playBtn.click(); });
+    await waitFor(() => expect(result.current.loaderState).toEqual({ phase: 'error' }));
+
+    act(() => { result.current.retryStart(); });
+    await waitFor(() => expect(result.current.loaderState).toEqual({ phase: 'ready' }));
   });
 
   it('pushes a feed notification and populates the in-game pending list when a guest is held', async () => {

@@ -1,7 +1,7 @@
 'use client';
 
 import { t } from '../lib/i18n';
-import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
+import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/engine/structures';
 import { type FeedEntry, type FeedEventKind } from '../lib/feed';
 import { LobbyBlockKind, ModeBlockReason, lobbyBlockBanner } from '../lib/lobby-modes';
 import type { NetState } from '../lib/net';
@@ -10,6 +10,8 @@ import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
 import AdminLimits from './AdminLimits';
 import LocaleSwitcher from './LocaleSwitcher';
+import GameLoader from './GameLoader';
+import { loaderVisible } from '../lib/engine/loader-state';
 import { useGame } from '../hooks/use-game';
 import { PVP_KILL_BADGE, pvpRanked, roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
@@ -75,6 +77,7 @@ export default function Game() {
   const {
     brand, failed, offline, offlineDismissed, setOfflineDismissed,
     name, look, solo, setSolo, soloRef, modeGates,
+    loaderState, retryStart,
     netState, ping, online, connectKey,
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData, debugCopied, copyDebugReport,
@@ -121,6 +124,7 @@ export default function Game() {
 
   return (
     <>
+      {loaderVisible(loaderState) && <GameLoader state={loaderState} retry={retryStart} />}
       <div id="hurtFlash"></div>
       <div id="modeBadge" className={solo ? 'offline' : 'online'}>{solo ? t('hud.offline') : t('hud.online')}</div>
       <div id="hud">

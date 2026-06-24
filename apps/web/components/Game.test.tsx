@@ -7,6 +7,7 @@ const useGame = vi.fn();
 vi.mock('../hooks/use-game', () => ({ useGame: () => useGame() }));
 
 import Game from './Game';
+import { LoaderPhase } from '../lib/engine/loader-state';
 
 afterEach(cleanup);
 
@@ -17,6 +18,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     brand: { id: 't1', name: 'Test', image: '/i.png', online_allowed: true, offline_allowed: true },
     offline: false, offlineDismissed: true, setOfflineDismissed: () => {},
     name: 'Kid', look: { skin: '#fff', shirt: '#fff', hair: '#fff' }, solo: false, setSolo: () => {}, soloRef: { current: false }, modeGates: { online: { disabled: false, reason: 0 }, offline: { disabled: false, reason: 0 } },
+    loaderState: { phase: LoaderPhase.Idle }, retryStart: () => {},
     netState: 'connecting' as const, ping: 0, online: 1, connectKey: null as string | null,
     roster: [], rosterOpen: false, setRosterOpen: () => {},
     debugOpen: false, setDebugOpen: () => {}, debugData: null,

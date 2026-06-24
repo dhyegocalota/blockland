@@ -5,7 +5,7 @@
 // connection without entering the 3D game. Mirrors the in-game #adminPanel; the connection + state
 // live in useLobbyAdmin (wired in use-game), this is just the markup.
 import { t } from '../lib/i18n';
-import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/game-engine';
+import { STRUCTURE_DEFS, STRUCTURE_KINDS } from '../lib/engine/structures';
 import { roleBadge } from '../lib/roster-roles';
 import AdminLimits from './AdminLimits';
 import LobbyReports from './LobbyReports';
