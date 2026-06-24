@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,16 +15,15 @@ use protocol::{
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rayon::prelude::*;
 use sim::World;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::MissedTickBehavior;
 
+use crate::conn::{Appearance, Conn, Outbound, SendOne};
 use crate::creatures::{separate_creatures, Creature, CreatureKind};
-use crate::db::Role;
-use crate::hub::{Hub, PlayerInfo, RoomKey, RoomSnapshot, TenantCfg};
-use crate::persistence::{DbPersistence, Persistence};
+use crate::host::{RoomConfig, RoomHost, TenantFlag};
+use crate::persistence::Persistence;
+use crate::role::Role;
 use crate::spatial_grid::SpatialGrid;
+use crate::stats::{BacklogEvent, PlayerInfo, RoomKey, RoomSnapshot};
 
 // Bulk edits (magic structures, and the world handed to a joining player) are capped so one player
 // cannot flood the room or build across the whole map.
@@ -91,116 +90,6 @@ const ATTACK_MIN_INTERVAL: Duration = Duration::from_millis(200);
 // internet blip lets them RESUME the same id/position/score/inventory instead of blinking out and back
 // as a brand-new player. Only once a disconnected slot outlives the window is it pruned with a `Left`.
 const RECONNECT_GRACE: Duration = Duration::from_secs(8);
-
-/// Cosmetic look a player picks before joining (validated server-side, broadcast to everyone).
-pub struct Appearance {
-    pub skin: String,
-    pub shirt: String,
-    pub hair: String,
-}
-
-/// What a connection's writer task receives. A fan-out JSON message (event, roster, …) is serialized
-/// ONCE by the room and shared as a `Frame` across every player. The hot per-tick snapshot is encoded
-/// ONCE to a compact binary blob and shared as `Binary`, sent as a WebSocket binary frame. A per-player
-/// message (welcome, inventory, error, …) travels as `One` and is serialized by the writer task itself.
-pub enum Outbound {
-    One(ServerMsg),
-    Frame(Arc<str>),
-    Binary(Arc<[u8]>),
-}
-
-/// The room's view of a connection's outbound channel, abstracted away from tokio so the game logic
-/// no longer depends on `mpsc` directly (a future WASM core backs this with a JS-bound queue instead).
-/// `send` is non-blocking — it drops the message if the channel is full or closed, so a slow client
-/// never stalls the room tick (mirroring the old `let _ = conn.try_send(..)` at every call site). `id`
-/// is a unique per-connection identity used by the reconnect-grace to tell a player's CURRENT socket
-/// apart from a stale one it already reconnected over (replacing the old `same_channel`).
-pub trait OutboundSink {
-    fn send(&self, msg: Outbound);
-    fn id(&self) -> u64;
-}
-
-/// Convenience for the per-player `One` sends (welcome, inventory, error, …), so those call sites read
-/// the same as before the trait extraction.
-trait SendOne {
-    fn send_one(&self, msg: ServerMsg);
-}
-
-impl SendOne for dyn OutboundSink + Send + Sync {
-    fn send_one(&self, msg: ServerMsg) {
-        self.send(Outbound::One(msg));
-    }
-}
-
-/// Process-global source of unique connection ids, so two distinct sinks never share an identity (and a
-/// clone of the SAME sink keeps it, which is what makes the reconnect-grace identity check work).
-static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
-
-/// The native (tokio-backed) `OutboundSink`: a real `mpsc::Sender<Outbound>` plus a unique id. The
-/// future WASM build provides its own impl over a JS-bound queue; the room only ever sees the trait.
-pub struct NativeSink {
-    tx: mpsc::Sender<Outbound>,
-    id: u64,
-}
-
-impl NativeSink {
-    pub fn new(tx: mpsc::Sender<Outbound>) -> Self {
-        Self {
-            tx,
-            id: NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed),
-        }
-    }
-}
-
-impl OutboundSink for NativeSink {
-    fn send(&self, msg: Outbound) {
-        let _ = self.tx.try_send(msg);
-    }
-    fn id(&self) -> u64 {
-        self.id
-    }
-}
-
-/// A player's outbound channel as the room holds it: a shared trait object so a resume can clone/swap it
-/// like the old `mpsc::Sender`. `Arc` so the same connection can sit in `Player.conn`, be cloned into an
-/// admin-broadcast list, and back the `Leave` identity check — all without re-wrapping.
-pub type Conn = Arc<dyn OutboundSink + Send + Sync>;
-
-pub enum RoomCmd {
-    Join {
-        name: String,
-        claim: String,
-        look: Appearance,
-        ip: IpAddr,
-        conn: Conn,
-        /// The connection task's already-measured latency. The room reads it straight into the snapshot;
-        /// ping is owned by the socket round-trip (see `conn.rs`), never the room's tick load.
-        ping: Arc<AtomicU32>,
-        reply: oneshot::Sender<Result<PlayerId, String>>,
-    },
-    Input {
-        id: PlayerId,
-        msg: ClientMsg,
-    },
-    Leave {
-        id: PlayerId,
-        /// The departing socket's outbound channel, so the room can prove this Leave belongs to the
-        /// player's CURRENT connection (by sink id) and ignore a stale one from a socket already
-        /// replaced by a reconnect — without it, a late Leave would freeze a live, resumed player.
-        conn: Conn,
-        /// True when the client closed cleanly (a WebSocket Close frame — page reload / leave). A clean
-        /// leave removes the player at once; an abrupt drop (no Close frame) holds the slot for reconnect.
-        clean: bool,
-    },
-    /// A logged-in account renamed itself: update the live player and broadcast the timeline event.
-    Rename {
-        account_id: String,
-        new_name: String,
-        old_name: String,
-    },
-    /// Push a server-originated message to everyone in the room (e.g. a shutdown notice on SIGTERM).
-    Announce(ServerMsg),
-}
 
 /// Simple token bucket; refilled every tick, spent per accepted message.
 struct Bucket {
@@ -310,31 +199,37 @@ struct Player {
 /// db, so `add_player` itself never reads the db or awaits. Carries the connection's ping atomic, the
 /// playtime accounting key + baseline, the pre-fetched timeline backlog to replay, and (for an admin
 /// join) the pre-fetched pending-approval list — all gathered while the gates ran.
-struct Admission {
-    account_id: String,
-    name: String,
-    role: Role,
-    claim: String,
-    look: Appearance,
-    ip: IpAddr,
-    ping: Arc<AtomicU32>,
-    playtime_key: String,
-    playtime_baseline_ms: i64,
-    backlog: Vec<crate::db::TimelineEvent>,
+pub struct Admission {
+    pub account_id: String,
+    pub name: String,
+    pub role: Role,
+    pub claim: String,
+    pub look: Appearance,
+    pub ip: IpAddr,
+    pub ping: Arc<AtomicU32>,
+    pub playtime_key: String,
+    pub playtime_baseline_ms: i64,
+    pub backlog: Vec<BacklogEvent>,
     // The admin's pre-fetched pending-approval list: `Some` only on an admin join (a non-admin never
     // gets it); `Some(None)` if the db read failed (the bans list is still sent, matching the old path).
-    admin_pending: Option<Option<Vec<protocol::PendingApproval>>>,
+    pub admin_pending: Option<Option<Vec<protocol::PendingApproval>>>,
 }
 
 pub struct Room {
-    hub: Arc<Hub>,
     key: RoomKey,
     brand: Brand,
     tick_hz: u32,
     max_players: usize,
+    // The hub limits the sync logic reads, cached as plain values so it no longer reaches through an
+    // `Arc<Hub>`: the idle kick window, the edit reach + speed cap, and the per-player rate-bucket rates.
+    idle_secs: u64,
+    edit_reach: f32,
+    max_speed: f32,
+    move_per_sec: f32,
+    edit_per_sec: f32,
+    chat_per_sec: f32,
     world: World,
     players: HashMap<PlayerId, Player>,
-    rx: mpsc::Receiver<RoomCmd>,
     tick: u64,
     empty_since: Option<Instant>,
     dirty: bool,
@@ -375,6 +270,9 @@ pub struct Room {
     // seam: the native server backs it with the real db, a future WASM/offline core with a no-op. The
     // game logic calls this instead of touching `self.hub.db` + `tokio::spawn` directly.
     persistence: Arc<dyn Persistence>,
+    // Every other hub-backed op the sync logic uses (alloc id, ban/claim maps, admin telemetry, the
+    // fire-and-forget admin-config db writes) behind a seam, so the room never holds an `Arc<Hub>`.
+    host: Arc<dyn RoomHost>,
 }
 
 /// One connection's last-sent snapshot view (its AOI-filtered entities), the baseline its per-tick delta
@@ -421,12 +319,6 @@ fn resolve_server_version(
     crate_version.to_string()
 }
 
-/// Which per-tenant moderation flag a write-through targets.
-enum TenantFlag {
-    Suspended,
-    ApprovalRequired,
-}
-
 // The ban/reclaim/idle sweep + admin telemetry don't need 30Hz; running them at ~2Hz keeps the hot tick
 // loop cheap (no per-tick DashMap lookups or player clones) without users noticing the slower cadence.
 const STATUS_EVERY_TICKS: u64 = 15; // 0.5s @ 30Hz
@@ -441,27 +333,30 @@ const SNAPSHOT_DECIMALS: f32 = 100.0;
 
 impl Room {
     pub fn new(
-        hub: Arc<Hub>,
-        tcfg: &TenantCfg,
-        world: String,
-        rx: mpsc::Receiver<RoomCmd>,
+        config: RoomConfig,
+        persistence: Arc<dyn Persistence>,
+        host: Arc<dyn RoomHost>,
     ) -> Self {
         let brand = Brand {
-            name: tcfg.name.clone(),
-            image: tcfg.image.clone(),
+            name: config.brand_name,
+            image: config.brand_image,
         };
-        // The saved world is restored asynchronously in run() (a db read can't happen in this sync
-        // constructor); start from the procedural base.
+        // The saved world is restored by the server driver after construction (a db read can't happen in
+        // this sync constructor); start from the procedural base.
         let world_state = World::new();
-        let persistence: Arc<dyn Persistence> = Arc::new(DbPersistence::new(hub.db.clone()));
         Self {
-            key: (tcfg.id.clone(), world),
+            key: (config.tenant, config.world),
             brand,
-            tick_hz: hub.limits.tick_hz,
-            max_players: hub.limits.max_players_per_room,
+            tick_hz: config.tick_hz,
+            max_players: config.max_players,
+            idle_secs: config.idle_secs,
+            edit_reach: config.edit_reach,
+            max_speed: config.max_speed,
+            move_per_sec: config.move_per_sec,
+            edit_per_sec: config.edit_per_sec,
+            chat_per_sec: config.chat_per_sec,
             world: world_state,
             players: HashMap::new(),
-            rx,
             tick: 0,
             empty_since: Some(Instant::now()),
             dirty: false,
@@ -485,370 +380,100 @@ impl Room {
             // Native server: seed from OS entropy, so spawns stay effectively random as before.
             rng: StdRng::from_entropy(),
             persistence,
-            hub,
+            host,
         }
     }
 
-    /// Load the tenant's saved world from the db and apply it onto the procedural base. Runs once at
-    /// room startup, before any command is processed, so the first joiner sees the restored world.
-    async fn restore_world(&mut self) {
-        let blob = match self.hub.db.load_world(&self.key.0).await {
-            Ok(Some(blob)) => blob,
-            Ok(None) => return,
-            Err(e) => {
-                tracing::error!(tenant = %self.key.0, error = %e, "failed to load world");
-                return;
-            }
-        };
-        match sim::decode_edits(&blob) {
-            Ok(items) => {
-                self.world.load_edits(&items);
-                tracing::info!(tenant = %self.key.0, edits = items.len(), "world restored");
-            }
-            Err(e) => {
-                tracing::error!(tenant = %self.key.0, error = %e, "failed to decode world blob")
-            }
-        }
+    /// The room's fixed tick rate, so the server driver can size its interval + persist cadence.
+    pub fn tick_hz(&self) -> u32 {
+        self.tick_hz
     }
 
-    pub async fn run(mut self) {
-        self.restore_world().await;
-        let dt = 1.0 / self.tick_hz as f32;
-        let mut interval =
-            tokio::time::interval(Duration::from_secs_f64(1.0 / self.tick_hz as f64));
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    // The I/O shell reads the clock ONCE per tick and feeds it to the game logic, which
-                    // never calls `Instant::now()` itself — the seam a WASM core needs.
-                    if !self.tick(Instant::now(), dt) {
-                        break;
-                    }
-                }
-                cmd = self.rx.recv() => {
-                    match cmd {
-                        // Likewise one clock read per event, passed into the handler.
-                        Some(c) => self.handle(Instant::now(), c).await,
-                        None => break,
-                    }
-                }
-            }
-        }
-        // Final save (awaited) so nothing is lost when the room closes.
-        if self.dirty {
-            let blob = sim::encode_edits(&self.world.snapshot());
-            if let Err(e) = self.hub.db.save_world(&self.key.0, &blob).await {
-                tracing::error!(tenant = %self.key.0, error = %e, "final world save failed");
-            }
-        }
-        self.hub.remove_room(&self.key);
-        tracing::info!(tenant = %self.key.0, world = %self.key.1, "room closed");
+    /// Whether the world diff has unsaved edits, so the server driver can decide on the final save.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
-    async fn handle(&mut self, now: Instant, cmd: RoomCmd) {
-        match cmd {
-            RoomCmd::Join {
-                name,
-                claim,
-                look,
-                ip,
-                conn,
-                ping,
-                reply,
-            } => {
-                self.on_join(now, name, claim, look, ip, conn, ping, reply)
-                    .await
-            }
-            RoomCmd::Input { id, msg } => self.on_input(now, id, msg),
-            RoomCmd::Leave { id, conn, clean } => self.on_leave(now, id, &conn, clean),
-            RoomCmd::Rename {
-                account_id,
-                new_name,
-                old_name,
-            } => self.on_rename(&account_id, &new_name, &old_name),
-            RoomCmd::Announce(msg) => self.broadcast(&msg),
-        }
+    /// The tenant key (`tenant`, `world`) the server driver uses to load/save the world and drop the room.
+    pub fn key(&self) -> &RoomKey {
+        &self.key
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn on_join(
-        &mut self,
-        now: Instant,
-        name: String,
-        claim: String,
-        look: Appearance,
-        ip: IpAddr,
-        conn: Conn,
-        ping: Arc<AtomicU32>,
-        reply: oneshot::Sender<Result<PlayerId, String>>,
-    ) {
-        // The ban is enforced in `admit`, after the claim resolves to a role, so a banned admin/moderator
-        // is still admitted; only the role is unknown here.
-        if self.players.len() >= self.max_players {
-            let _ = reply.send(Err("room_full".into()));
-            return;
-        }
-        // Identity: an empty name+claim is an anonymous guest (the server names them). Otherwise the
-        // claim TOKEN must resolve to an account in this tenant; the server adopts that account's
-        // CURRENT name (authoritative), ignoring the name the client typed.
-        let chosen = name.trim().to_string();
-        let guest = chosen.is_empty() && claim.is_empty();
-        if guest {
-            return self
-                .admit(
-                    now,
-                    String::new(),
-                    String::new(),
-                    Role::Player,
-                    claim,
-                    look,
-                    ip,
-                    conn,
-                    ping,
-                    reply,
-                )
-                .await;
-        }
-        let resolved = match self.hub.db.claim_to_account(&self.key.0, &claim).await {
-            Ok(found) => found,
-            Err(e) => {
-                tracing::error!(tenant = %self.key.0, error = %e, "claim lookup failed");
-                let _ = reply.send(Err("claim_required".into()));
-                return;
-            }
-        };
-        let Some((account_id, authoritative_name)) = resolved else {
-            tracing::debug!(tenant = %self.key.0, "join rejected: claim required");
-            let _ = reply.send(Err("claim_required".into()));
-            return;
-        };
-        let live = self.hub.claims.get(&account_id).as_deref() == Some(claim.as_str());
-        if !live {
-            tracing::debug!(tenant = %self.key.0, "join rejected: claim required");
-            let _ = reply.send(Err("claim_required".into()));
-            return;
-        }
-        let role = self.hub.db.role(&account_id).await.unwrap_or_else(|e| {
-            tracing::error!(tenant = %self.key.0, error = %e, "role lookup failed");
-            Role::Player
-        });
-        self.admit(
-            now,
-            account_id,
-            authoritative_name,
-            role,
-            claim,
-            look,
-            ip,
-            conn,
-            ping,
-            reply,
-        )
-        .await;
+    /// Encode the current world diff for the server driver's final save on room close.
+    pub fn world_snapshot_blob(&self) -> Vec<u8> {
+        sim::encode_edits(&self.world.snapshot())
     }
 
-    /// Admit a join: resume a held slot, run the async db-backed policy, then (on a pass) add the
-    /// player. The split keeps every db read + gate in `resolve_admission` (the server I/O shell) and
-    /// the game-state mutation in the sync, db-free `add_player`; the reply is sent here so neither half
-    /// owns the channel. Order/outcomes are identical to the old single `admit`.
-    #[allow(clippy::too_many_arguments)]
-    async fn admit(
-        &mut self,
-        now: Instant,
-        account_id: String,
-        authoritative_name: String,
-        role: Role,
-        claim: String,
-        look: Appearance,
-        ip: IpAddr,
-        conn: Conn,
-        ping: Arc<AtomicU32>,
-        reply: oneshot::Sender<Result<PlayerId, String>>,
-    ) {
-        // Reconnect resume: a player whose socket dropped within RECONNECT_GRACE rejoins straight back
-        // into their held slot (same id, position, score, inventory, hp) — no Left/Join churn, others
-        // saw at most a brief freeze. They already cleared every gate at the original join, so resume
-        // skips the policy entirely. Matched by identity: account for a logged-in player, IP for a guest.
-        if let Some(id) = self.try_resume(now, &account_id, ip, &look, &conn, &ping) {
-            let _ = reply.send(Ok(id));
-            return;
-        }
-        let admission = match self
-            .resolve_admission(account_id, authoritative_name, role, claim, look, ip, ping)
-            .await
-        {
-            Ok(admission) => admission,
-            Err(code) => {
-                let _ = reply.send(Err(code));
-                return;
-            }
-        };
-        let id = self.add_player(now, admission, conn);
-        let _ = reply.send(Ok(id));
+    /// Apply restored world edits onto the procedural base. The server driver loads the blob and decodes
+    /// it (a db read can't happen in the sync constructor); this folds the decoded edits in and logs it.
+    pub fn load_restored_edits(&mut self, items: &[(i32, i32, i32, u8)]) {
+        self.world.load_edits(items);
+        tracing::info!(tenant = %self.key.0, edits = items.len(), "world restored");
     }
 
-    /// The async policy phase: all the db reads + gates, in the same order with the same outcomes as the
-    /// old `admit`, refreshing the cached per-tenant config on `self` as it goes. Returns the rejection
-    /// code to reply, or a cleared-to-join `Admission` carrying everything the sync `add_player` needs
-    /// (including the pre-fetched timeline backlog and, for an admin, the pending-approval list). Does
-    /// NOT mutate game state.
-    #[allow(clippy::too_many_arguments)]
-    async fn resolve_admission(
-        &mut self,
-        account_id: String,
-        authoritative_name: String,
-        role: Role,
-        claim: String,
-        look: Appearance,
-        ip: IpAddr,
-        ping: Arc<AtomicU32>,
-    ) -> Result<Admission, String> {
-        // Role-aware ban gate: a banned IP is turned away here (the claim has resolved to a role) UNLESS
-        // the account is an admin or moderator — they must still get in to moderate, even from a shared
-        // home IP that someone got banned on. A banned guest/ordinary player stays refused.
-        if self.hub.bans.is_banned(ip) && !role.is_admin() && !role.is_moderator() {
-            return Err("banned".into());
-        }
-        // Refresh the per-tenant moderation flags + allowed modes from the db (this room is the single
-        // writer, so the cache stays authoritative between joins).
-        let (suspended, approval_required) = self
-            .hub
-            .db
-            .tenant_flags(&self.key.0)
-            .await
-            .unwrap_or((false, false));
+    /// Advance one tick at the server-read clock. Returns false when the room should close (empty past TTL).
+    pub fn tick_at(&mut self, now: Instant, dt: f32) -> bool {
+        self.tick(now, dt)
+    }
+
+    /// Whether the room is at its player cap; the server driver refuses a join up front when full.
+    pub fn is_full(&self) -> bool {
+        self.players.len() >= self.max_players
+    }
+
+    /// The clearance-to-join cached per-tenant moderation flags + allowed modes the async policy phase
+    /// (`resolve_admission`, server side) refreshes from the db before building an `Admission`. This room
+    /// is the single writer for its tenant, so the cache stays authoritative between joins.
+    pub fn set_moderation_flags(&mut self, suspended: bool, approval_required: bool) {
         self.suspended = suspended;
         self.approval_required = approval_required;
-        let (online_allowed, offline_allowed) = self
-            .hub
-            .db
-            .tenant_modes(&self.key.0)
-            .await
-            .unwrap_or((true, true));
+    }
+
+    pub fn set_modes(&mut self, online_allowed: bool, offline_allowed: bool) {
         self.online_allowed = online_allowed;
         self.offline_allowed = offline_allowed;
-        // Peace (monsters calm) is persisted so an admin who turned monsters ON keeps them on across a
-        // room restart, instead of silently resetting to calm and looking like "monsters deal no damage".
-        self.peace = self.hub.db.tenant_peace(&self.key.0).await.unwrap_or(true);
-        // Online play disabled for this tenant: reject the join (offline reaches the client only, gated
-        // there). Admins still get in so they can re-enable it from the in-game panel. The reject reason
-        // travels as the reply code; conn.rs turns it into the user-facing message (reject_message).
-        if !self.online_allowed && !role.is_admin() {
-            return Err("online_blocked".into());
-        }
-        // A suspended world turns everyone away except admins, who still need to get in to resume it.
-        if self.suspended && !role.is_admin() {
-            return Err("suspended".into());
-        }
-        // Approval gate (per-tenant, off by default): while on, admins always get in (to manage), and
-        // everyone else — including anonymous guests, who do NOT have to log in — is held for approval.
-        // The held player is keyed by account id, or by IP for a guest (same as playtime), recorded as
-        // pending so the admins are notified; they approve in-game (and by email when there is one).
-        if self.approval_required && !role.is_admin() {
-            let approval_key = playtime_key(&account_id, ip);
-            // A reject is one-shot (expel, not ban): tell this attempt "rejected" and clear the request,
-            // so a fresh join falls through to hold_for_approval below and the admins are re-notified.
-            if self
-                .hub
-                .db
-                .is_rejected(&self.key.0, &approval_key)
-                .await
-                .unwrap_or(false)
-            {
-                if let Err(e) = self
-                    .hub
-                    .db
-                    .clear_approval_request(&self.key.0, &approval_key)
-                    .await
-                {
-                    tracing::error!(error = %e, "clearing one-shot reject failed");
-                }
-                return Err("rejected".into());
-            }
-            if !self
-                .hub
-                .db
-                .is_approved(&self.key.0, &approval_key)
-                .await
-                .unwrap_or(false)
-            {
-                let display_name = if authoritative_name.is_empty() {
-                    "Guest"
-                } else {
-                    &authoritative_name
-                };
-                self.hold_for_approval(&approval_key, display_name).await;
-                return Err("needs_approval".into());
-            }
-        }
-        // Play-time budget (per-tenant): cache the tenant's config and turn an over-budget player away
-        // with "time_up". A logged-in player is keyed by account; an anonymous guest by their IP, so
-        // their budget still accrues (in the same `playtime` table) across guest sessions.
-        let (limit_min, window_h) = self
-            .hub
-            .db
-            .tenant_playtime(&self.key.0)
-            .await
-            .unwrap_or((0, 0));
-        self.playtime_limit_min = limit_min as u32;
-        self.playtime_window_h = window_h as u32;
-        self.playtime_limit_ms = limit_min * 60_000;
-        self.playtime_window_ms = window_h * 3_600_000;
-        let playtime_key = playtime_key(&account_id, ip);
-        let mut playtime_baseline = 0;
-        // Admins are never blocked by the play-time budget — even out of time they keep playing and can
-        // run the lobby/in-game admin panel. Moderators and players ARE subject to it.
-        if self.playtime_limit_ms > 0 && !role.is_admin() {
-            playtime_baseline = self
-                .hub
-                .db
-                .playtime_used(
-                    &self.key.0,
-                    &playtime_key,
-                    self.playtime_window_ms,
-                    epoch_ms() as i64,
-                )
-                .await
-                .unwrap_or(0);
-            if playtime_baseline >= self.playtime_limit_ms {
-                return Err("time_up".into());
-            }
-        }
-        // Pre-fetch the recent-timeline backlog (replayed to this connection) here, so `add_player`
-        // stays db-free. The legacy-report filter is applied at send time (it is pure).
-        let backlog = match self
-            .hub
-            .db
-            .recent_events(&self.key.0, crate::db::default_event_backlog())
-            .await
-        {
-            Ok(events) => events,
-            Err(e) => {
-                tracing::error!(tenant = %self.key.0, error = %e, "event backlog load failed");
-                Vec::new()
-            }
-        };
-        // An admin also gets the current pending-approval list (db-read) up front so `add_player` can
-        // push it without awaiting; the ban list is built from the in-memory cache there. A failed read
-        // yields `Some(None)` so the bans list is still sent, exactly as the old path did.
-        let admin_pending = match role.is_admin() {
-            true => Some(self.fetch_pending_for_admin().await),
-            false => None,
-        };
-        Ok(Admission {
-            account_id,
-            name: authoritative_name,
-            role,
-            claim,
-            look,
-            ip,
-            ping,
-            playtime_key,
-            playtime_baseline_ms: playtime_baseline,
-            backlog,
-            admin_pending,
-        })
+    }
+
+    pub fn set_peace(&mut self, peace: bool) {
+        self.peace = peace;
+    }
+
+    pub fn set_playtime(&mut self, limit_min: u32, window_h: u32, limit_ms: i64, window_ms: i64) {
+        self.playtime_limit_min = limit_min;
+        self.playtime_window_h = window_h;
+        self.playtime_limit_ms = limit_ms;
+        self.playtime_window_ms = window_ms;
+    }
+
+    pub fn suspended(&self) -> bool {
+        self.suspended
+    }
+
+    pub fn approval_required(&self) -> bool {
+        self.approval_required
+    }
+
+    pub fn online_allowed(&self) -> bool {
+        self.online_allowed
+    }
+
+    pub fn playtime_limit_ms(&self) -> i64 {
+        self.playtime_limit_ms
+    }
+
+    pub fn playtime_window_ms(&self) -> i64 {
+        self.playtime_window_ms
+    }
+
+    /// Broadcast the current pending-approval list to every online admin via the server driver: the
+    /// driver loads the list (a db read) and pushes it; this hands it the admin connections. Used by
+    /// `hold_for_approval` (server side) and the approval-toggle handler.
+    pub fn admin_conns(&self) -> Vec<Conn> {
+        self.players
+            .values()
+            .filter(|p| p.is_admin)
+            .map(|p| p.conn.clone())
+            .collect()
     }
 
     /// Sync game-state add (pure: no `.await`, no db) for a cleared-to-join player. Allocs an id, builds
@@ -856,7 +481,7 @@ impl Room {
     /// the spawn-area chunks, replays the pre-fetched backlog then settings (plus pending/bans for an
     /// admin), sends the inventory, and announces the refreshed roster. Returns the new id; the caller
     /// sends the reply.
-    fn add_player(&mut self, now: Instant, admission: Admission, conn: Conn) -> PlayerId {
+    pub fn add_player(&mut self, now: Instant, admission: Admission, conn: Conn) -> PlayerId {
         let Admission {
             account_id,
             name: authoritative_name,
@@ -870,7 +495,7 @@ impl Room {
             backlog,
             admin_pending,
         } = admission;
-        let id = self.hub.alloc_id();
+        let id = self.host.alloc_id();
         // A guest arrives without a name; give them a unique, recognizable one so two guests never
         // collide on a generic label. A logged-in player keeps their authoritative account name.
         let name = if authoritative_name.is_empty() {
@@ -879,7 +504,6 @@ impl Room {
             authoritative_name
         };
         let spawn = self.spawn_slot(None);
-        let limits = &self.hub.limits;
         let player = Player {
             id,
             name,
@@ -920,9 +544,9 @@ impl Room {
             // for a player to make them spend banked blocks).
             infinite: true,
             joined_at_ms: epoch_ms(),
-            move_b: Bucket::new(limits.move_per_sec),
-            edit_b: Bucket::new(limits.edit_per_sec),
-            chat_b: Bucket::new(limits.chat_per_sec),
+            move_b: Bucket::new(self.move_per_sec),
+            edit_b: Bucket::new(self.edit_per_sec),
+            chat_b: Bucket::new(self.chat_per_sec),
         };
         let welcome = ServerMsg::Welcome {
             you: id,
@@ -978,7 +602,7 @@ impl Room {
     /// slot (avatar held in place) and start the reconnect grace, so a quick rejoin RESUMES them. The
     /// tick prunes the slot (with a single `Left`) only if the grace expires. Ignores a stale Leave from
     /// a socket the player has already reconnected over (the sink id no longer matches the live conn).
-    fn on_leave(&mut self, now: Instant, id: PlayerId, conn: &Conn, clean: bool) {
+    pub fn on_leave(&mut self, now: Instant, id: PlayerId, conn: &Conn, clean: bool) {
         let Some(player) = self.players.get(&id) else {
             return;
         };
@@ -1012,7 +636,7 @@ impl Room {
     /// where they froze with their score/inventory/hp intact. Returns the resumed id, or `None` when
     /// there is no matching held slot (a normal fresh join). Matched by account for a logged-in player,
     /// by IP for a guest — mirroring `playtime_key`'s identity rule.
-    fn try_resume(
+    pub fn try_resume(
         &mut self,
         now: Instant,
         account_id: &str,
@@ -1075,7 +699,7 @@ impl Room {
 
     /// Apply a server-authoritative rename to the matching live player (matched by account_id, so a
     /// guest is never affected) and broadcast the timeline event to everyone in the room.
-    fn on_rename(&mut self, account_id: &str, new_name: &str, old_name: &str) {
+    pub fn on_rename(&mut self, account_id: &str, new_name: &str, old_name: &str) {
         for player in self.players.values_mut() {
             if !player.account_id.is_empty() && player.account_id == account_id {
                 player.name = new_name.to_string();
@@ -1090,9 +714,9 @@ impl Room {
         tracing::info!(tenant = %self.key.0, %new_name, %old_name, "player renamed");
     }
 
-    fn on_input(&mut self, now: Instant, id: PlayerId, msg: ClientMsg) {
-        let reach = self.hub.limits.edit_reach;
-        let max_speed = self.hub.limits.max_speed;
+    pub fn on_input(&mut self, now: Instant, id: PlayerId, msg: ClientMsg) {
+        let reach = self.edit_reach;
+        let max_speed = self.max_speed;
 
         // Admin-only room settings mutate `self` directly, so they're handled before the per-player
         // borrow below. Never trust the client: ignore unless the sender is a known room admin.
@@ -1504,13 +1128,7 @@ impl Room {
                 let changed = self.peace != on;
                 self.peace = on;
                 if changed {
-                    let db = self.hub.db.clone();
-                    let tenant = self.key.0.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = db.set_tenant_peace(&tenant, on).await {
-                            tracing::error!(error = %e, "set_tenant_peace failed");
-                        }
-                    });
+                    self.host.set_tenant_peace(self.key.0.clone(), on);
                 }
                 (changed, if on { "peace_on" } else { "peace_off" })
             }
@@ -1609,7 +1227,7 @@ impl Room {
             msg: message.into(),
         });
         if ban {
-            self.hub.bans.ban(target_ip, target_name.clone());
+            self.host.ban(target_ip, target_name.clone());
             self.broadcast_bans_to_admins();
         }
         self.players.remove(&target_id);
@@ -1789,46 +1407,9 @@ impl Room {
         self.announce_roster();
         // A guest's promotion is session-only (no account to persist to); registered players keep it.
         if !target_account.is_empty() {
-            let db = self.hub.db.clone();
-            tokio::spawn(async move {
-                if let Err(e) = db.set_role(&target_account, role).await {
-                    tracing::error!(error = %e, "set_role persist failed");
-                }
-            });
+            self.host.set_role(target_account, role);
         }
         tracing::info!(tenant = %self.key.0, %actor_id, %target_id, ?role, "role changed in-game");
-    }
-
-    /// Record a held-out player (a logged-in account, or a guest keyed by IP) as pending, email the
-    /// tenant's admins, and refresh the in-game pending list for any online admin so they can approve
-    /// immediately. A guest has no account, so the request carries an empty email (admins are still
-    /// notified in-game + by the tenant-admin email).
-    async fn hold_for_approval(&mut self, account_id: &str, name: &str) {
-        let email = match self.hub.db.get_account_by_id(account_id).await {
-            Ok(Some(account)) => account.email,
-            Ok(None) => String::new(),
-            Err(e) => {
-                tracing::error!(error = %e, "approval hold: account lookup failed");
-                return;
-            }
-        };
-        if let Err(e) = self
-            .hub
-            .db
-            .record_approval_request(&self.key.0, account_id, name, &email)
-            .await
-        {
-            tracing::error!(error = %e, "approval request persist failed");
-            return;
-        }
-        tracing::info!(tenant = %self.key.0, %account_id, "player held for approval");
-        let db = self.hub.db.clone();
-        let tenant = self.key.0.clone();
-        let player_name = name.to_string();
-        tokio::spawn(async move {
-            crate::notify::approval_request(&db, &tenant, &player_name).await;
-        });
-        self.broadcast_pending_to_admins().await;
     }
 
     /// Turn the per-tenant approval gate on or off. Admin-only; persists the flag, broadcasts the new
@@ -1866,10 +1447,7 @@ impl Room {
             .filter(|p| p.is_admin)
             .map(|p| p.conn.clone())
             .collect();
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            send_pending(&db, &tenant, &admin_conns).await;
-        });
+        self.host.refresh_pending_for_admins(tenant, admin_conns);
         tracing::info!(tenant = %self.key.0, %id, on, "approval gate set by admin");
     }
 
@@ -1893,13 +1471,8 @@ impl Room {
         self.playtime_window_h = window_h;
         self.playtime_limit_ms = limit_min as i64 * 60_000;
         self.playtime_window_ms = window_h as i64 * 3_600_000;
-        let db = self.hub.db.clone();
-        let tenant = self.key.0.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.set_tenant_playtime(&tenant, limit_min, window_h).await {
-                tracing::error!(error = %e, "set_tenant_playtime failed");
-            }
-        });
+        self.host
+            .set_tenant_playtime(self.key.0.clone(), limit_min, window_h);
         let state = self.room_state();
         self.broadcast(&state);
         self.broadcast(&ServerMsg::Event {
@@ -1937,16 +1510,8 @@ impl Room {
         }
         self.online_allowed = online_allowed;
         self.offline_allowed = offline_allowed;
-        let db = self.hub.db.clone();
-        let tenant = self.key.0.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db
-                .set_tenant_modes(&tenant, online_allowed, offline_allowed)
-                .await
-            {
-                tracing::error!(error = %e, "set_tenant_modes failed");
-            }
-        });
+        self.host
+            .set_tenant_modes(self.key.0.clone(), online_allowed, offline_allowed);
         let state = self.room_state();
         self.broadcast(&state);
         self.broadcast(&ServerMsg::Event {
@@ -1995,15 +1560,8 @@ impl Room {
             .filter(|p| p.is_admin)
             .map(|p| p.conn.clone())
             .collect();
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.approve_account(&tenant, &account_id).await {
-                tracing::error!(error = %e, "approve_account persist failed");
-                return;
-            }
-            tracing::info!(%tenant, %account_id, "account approved by admin");
-            send_pending(&db, &tenant, &admin_conns).await;
-        });
+        self.host
+            .approve_then_refresh(tenant, account_id, admin_conns);
     }
 
     /// Reject a pending account. Admin-only; the request is marked rejected (the held player's next join
@@ -2030,15 +1588,8 @@ impl Room {
             .filter(|p| p.is_admin)
             .map(|p| p.conn.clone())
             .collect();
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.reject_approval_request(&tenant, &account_id).await {
-                tracing::error!(error = %e, "reject persist failed");
-                return;
-            }
-            tracing::info!(%tenant, %account_id, "account rejected by admin");
-            send_pending(&db, &tenant, &admin_conns).await;
-        });
+        self.host
+            .reject_then_refresh(tenant, account_id, admin_conns);
     }
 
     /// Permanently ban a player still waiting for approval. Admin-only; the approval key carries the
@@ -2065,7 +1616,7 @@ impl Room {
             return;
         };
         let admin_name = admin.name.clone();
-        self.hub.bans.ban(ip, account_id.clone());
+        self.host.ban(ip, account_id.clone());
         self.broadcast(&ServerMsg::Event {
             kind: "admin".into(),
             name: admin_name,
@@ -2079,15 +1630,8 @@ impl Room {
             .filter(|p| p.is_admin)
             .map(|p| p.conn.clone())
             .collect();
-        let db = self.hub.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = db.clear_approval_request(&tenant, &account_id).await {
-                tracing::error!(error = %e, "ban pending: clearing request failed");
-                return;
-            }
-            tracing::info!(%tenant, %ip, "pending player banned by admin");
-            send_pending(&db, &tenant, &admin_conns).await;
-        });
+        self.host
+            .clear_request_then_refresh(tenant, account_id, admin_conns);
     }
 
     /// Lift a global IP ban. Admin-only; updates the live + persisted ban list and refreshes the ban
@@ -2104,7 +1648,7 @@ impl Room {
         let Ok(parsed) = ip.parse::<IpAddr>() else {
             return;
         };
-        if !self.hub.bans.unban(parsed) {
+        if !self.host.unban(parsed) {
             return;
         }
         let admin_name = admin.name.clone();
@@ -2119,9 +1663,8 @@ impl Room {
     fn bans_msg(&self) -> ServerMsg {
         ServerMsg::Bans {
             bans: self
-                .hub
-                .bans
-                .list_named()
+                .host
+                .list_named_bans()
                 .into_iter()
                 .map(|(ip, name)| BanEntry { ip, name })
                 .collect(),
@@ -2132,39 +1675,6 @@ impl Room {
         let msg = self.bans_msg();
         for p in self.players.values().filter(|p| p.is_admin) {
             p.conn.send_one(msg.clone());
-        }
-    }
-
-    /// Push the current pending-approval list to every online admin (no-op if none are online).
-    async fn broadcast_pending_to_admins(&self) {
-        let admin_conns: Vec<Conn> = self
-            .players
-            .values()
-            .filter(|p| p.is_admin)
-            .map(|p| p.conn.clone())
-            .collect();
-        send_pending(&self.hub.db, &self.key.0, &admin_conns).await;
-    }
-
-    /// Load the tenant's pending-approval list (wire-shaped) for an admin join, so the sync add can push
-    /// it without a db read. `None` mirrors the old send path's behavior on a failed read: skip the
-    /// PendingApprovals frame (the bans list is still sent by the caller).
-    async fn fetch_pending_for_admin(&self) -> Option<Vec<protocol::PendingApproval>> {
-        match self.hub.db.pending_approvals(&self.key.0).await {
-            Ok(pending) => Some(
-                pending
-                    .into_iter()
-                    .map(|p| protocol::PendingApproval {
-                        account_id: p.account_id,
-                        name: p.name,
-                        email: p.email,
-                    })
-                    .collect(),
-            ),
-            Err(e) => {
-                tracing::error!(error = %e, "pending approvals load failed");
-                None
-            }
         }
     }
 
@@ -2259,17 +1769,11 @@ impl Room {
     /// Write a per-tenant moderation flag through to the `tenants` row off the hot path; the caller has
     /// already updated the in-memory cache.
     fn persist_tenant_flag(&self, flag: TenantFlag, on: bool) {
-        let db = self.hub.db.clone();
         let tenant = self.key.0.clone();
-        tokio::spawn(async move {
-            let result = match flag {
-                TenantFlag::Suspended => db.set_tenant_suspended(&tenant, on).await,
-                TenantFlag::ApprovalRequired => db.set_tenant_approval_required(&tenant, on).await,
-            };
-            if let Err(e) = result {
-                tracing::error!(error = %e, "failed to persist tenant flag");
-            }
-        });
+        match flag {
+            TenantFlag::Suspended => self.host.set_tenant_suspended(tenant, on),
+            TenantFlag::ApprovalRequired => self.host.set_tenant_approval_required(tenant, on),
+        }
     }
 
     /// The static identity of every online player, so the per-tick Snapshot can stay slim. Broadcast
@@ -2348,7 +1852,7 @@ impl Room {
                 tracing::debug!(tenant = %self.key.0, %id, "reconnect grace expired, pruned");
             }
 
-            let idle = Duration::from_secs(self.hub.limits.idle_secs);
+            let idle = Duration::from_secs(self.idle_secs);
             let mut kicked: Vec<PlayerId> = Vec::new();
             for p in self.players.values() {
                 // A slot held for reconnect is left alone here; the grace prune above owns its lifetime.
@@ -2357,7 +1861,7 @@ impl Room {
                 }
                 // An admin/moderator is exempt from the ban (same rule as the join gate): a ban on their
                 // shared IP must never expel them mid-session, or they couldn't moderate.
-                if self.hub.bans.is_banned(p.ip) && !p.is_admin && !p.is_moderator {
+                if self.host.is_banned(p.ip) && !p.is_admin && !p.is_moderator {
                     p.conn.send_one(ServerMsg::Error {
                         code: "banned".into(),
                         msg: "Your access has been revoked.".into(),
@@ -2369,7 +1873,7 @@ impl Room {
                 // Kick-on-reclaim: a logged-in player whose claim is no longer the live one (someone
                 // re-claimed the account) is dropped. Guests (no account_id) are never affected.
                 let still_holds =
-                    self.hub.claims.get(&p.account_id).as_deref() == Some(p.claim.as_str());
+                    self.host.claim_holder(&p.account_id).as_deref() == Some(p.claim.as_str());
                 if !p.account_id.is_empty() && !still_holds {
                     p.conn.send_one(ServerMsg::Error {
                         code: "reclaimed".into(),
@@ -2531,7 +2035,7 @@ impl Room {
     /// single time for the whole room instead of once per writer task — the dominant cost as the
     /// creature + player counts grow. A serialization error drops the frame (it never happens for our
     /// wire types). The sink's `send` is non-blocking, so a slow client's full channel never stalls the tick.
-    fn broadcast(&self, msg: &ServerMsg) {
+    pub fn broadcast(&self, msg: &ServerMsg) {
         let Some(frame) = serialize_frame(msg) else {
             return;
         };
@@ -2567,49 +2071,37 @@ impl Room {
         // baseline updates are byte-identical to a sequential run — parallelism only reorders the
         // independent work, never the result. The sink's `send` stays non-blocking, so a slow client never stalls.
         let (grids, players, creatures, hearts) = (&grids, players, creatures, hearts);
-        self.players.par_iter_mut().for_each(|(&id, receiver)| {
-            let center = receiver_center(id, players);
-            let view = aoi_view(
-                id,
-                center,
-                &receiver.snapshot_baseline,
-                grids,
-                players,
-                creatures,
-                hearts,
-            );
-
-            let send_keyframe = periodic_keyframe || receiver.needs_keyframe;
-            let bytes: Arc<[u8]> = if send_keyframe {
-                encode_keyframe(tick, &view.players, &view.creatures, &view.hearts).into()
-            } else {
-                let baseline = &receiver.snapshot_baseline;
-                encode_delta(
-                    SnapshotView {
-                        tick: baseline.tick,
-                        players: &baseline.players,
-                        creatures: &baseline.creatures,
-                        hearts: &baseline.hearts,
-                    },
-                    SnapshotView {
-                        tick,
-                        players: &view.players,
-                        creatures: &view.creatures,
-                        hearts: &view.hearts,
-                    },
-                )
-                .into()
-            };
-
-            receiver.conn.send(Outbound::Binary(bytes));
-            receiver.needs_keyframe = false;
-            receiver.snapshot_baseline = SnapshotBaseline {
-                tick,
-                players: view.players,
-                creatures: view.creatures,
-                hearts: view.hearts,
-            };
-        });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            self.players.par_iter_mut().for_each(|(&id, receiver)| {
+                encode_snapshot_for_receiver(
+                    id,
+                    receiver,
+                    tick,
+                    periodic_keyframe,
+                    grids,
+                    players,
+                    creatures,
+                    hearts,
+                );
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.players.iter_mut().for_each(|(&id, receiver)| {
+                encode_snapshot_for_receiver(
+                    id,
+                    receiver,
+                    tick,
+                    periodic_keyframe,
+                    grids,
+                    players,
+                    creatures,
+                    hearts,
+                );
+            });
+        }
     }
 
     /// Fan a TRANSIENT spatial event (a swing / hit flash) out only to players whose AOI includes the event
@@ -2918,7 +2410,7 @@ impl Room {
     /// on the same in-reach solid block the server breaks it and broadcasts the edit to everyone, so the
     /// dig difficulty is authoritative.
     fn on_dig(&mut self, id: PlayerId, x: i32, y: i32, z: i32) {
-        let reach = self.hub.limits.edit_reach;
+        let reach = self.edit_reach;
         {
             let Some(p) = self.players.get_mut(&id) else {
                 return;
@@ -3115,7 +2607,7 @@ impl Room {
                 joined_at_ms: p.joined_at_ms,
             })
             .collect();
-        self.hub.room_stats.insert(
+        self.host.publish_stats(
             self.key.clone(),
             RoomSnapshot {
                 tenant: self.key.0.clone(),
@@ -3126,6 +2618,228 @@ impl Room {
             },
         );
     }
+}
+
+/// A focused test-only surface so the server crate's `room_driver` tests can drive the async admit
+/// policy against a real `Room` whose `players`/`tick` and `Player` fields are otherwise private. Gated
+/// behind the `test-support` feature (off in production); the in-crate tests reach the same fields
+/// directly and never use these.
+#[cfg(feature = "test-support")]
+impl Room {
+    /// Insert a minimal player the same way the in-crate `add_player` test helper does (name `p{id}`,
+    /// account `acc{id}`, claim `tok{id}`, at the origin holding chunk (0,0)), so the moved tests build
+    /// the same starting room without touching the private map.
+    pub fn test_insert_player(&mut self, id: PlayerId, is_admin: bool, conn: Conn) {
+        let now = Instant::now();
+        let player = Player {
+            id,
+            name: format!("p{id}"),
+            account_id: format!("acc{id}"),
+            is_admin,
+            is_moderator: false,
+            claim: format!("tok{id}"),
+            skin: "#000000".into(),
+            shirt: "#000000".into(),
+            hair: "#000000".into(),
+            ip: "127.0.0.1".parse().unwrap(),
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            ping: Arc::new(AtomicU32::new(0)),
+            score: 0,
+            pvp_kills: 0,
+            conn,
+            needs_keyframe: true,
+            snapshot_baseline: SnapshotBaseline::default(),
+            disconnected_at: None,
+            last_seen: now,
+            last_move: now,
+            move_synced: false,
+            hp: MAX_HP,
+            hurt_at: now,
+            loaded_chunks: Room::chunks_in_load_radius(0.0, 0.0).into_iter().collect(),
+            dig_block: None,
+            dig_hits: 0,
+            last_action: now - ATTACK_MIN_INTERVAL,
+            playtime_key: format!("acc{id}"),
+            playtime_baseline_ms: 0,
+            playtime_persisted_ms: 0,
+            inventory: HashMap::new(),
+            infinite: true,
+            joined_at_ms: 0,
+            move_b: Bucket::new(100.0),
+            edit_b: Bucket::new(100.0),
+            chat_b: Bucket::new(100.0),
+        };
+        self.players.insert(id, player);
+    }
+
+    pub fn test_players_len(&self) -> usize {
+        self.players.len()
+    }
+
+    pub fn test_players_contains(&self, id: PlayerId) -> bool {
+        self.players.contains_key(&id)
+    }
+
+    pub fn test_player_conn(&self, id: PlayerId) -> Conn {
+        self.players.get(&id).unwrap().conn.clone()
+    }
+
+    pub fn test_player_name(&self, id: PlayerId) -> String {
+        self.players.get(&id).unwrap().name.clone()
+    }
+
+    pub fn test_player_account_empty(&self, id: PlayerId) -> bool {
+        self.players.get(&id).unwrap().account_id.is_empty()
+    }
+
+    pub fn test_player_disconnected(&self, id: PlayerId) -> bool {
+        self.players.get(&id).unwrap().disconnected_at.is_some()
+    }
+
+    pub fn test_player_pos(&self, id: PlayerId) -> [f32; 3] {
+        let p = self.players.get(&id).unwrap();
+        [p.x, p.y, p.z]
+    }
+
+    pub fn test_player_score(&self, id: PlayerId) -> u32 {
+        self.players.get(&id).unwrap().score
+    }
+
+    pub fn test_player_hp(&self, id: PlayerId) -> u8 {
+        self.players.get(&id).unwrap().hp
+    }
+
+    pub fn test_player_inventory(&self, id: PlayerId, block: u8) -> Option<u32> {
+        self.players
+            .get(&id)
+            .unwrap()
+            .inventory
+            .get(&block)
+            .copied()
+    }
+
+    pub fn test_set_player_ip(&mut self, id: PlayerId, ip: IpAddr) {
+        self.players.get_mut(&id).unwrap().ip = ip;
+    }
+
+    pub fn test_set_player_moderator(&mut self, id: PlayerId, on: bool) {
+        self.players.get_mut(&id).unwrap().is_moderator = on;
+    }
+
+    pub fn test_set_player_hp(&mut self, id: PlayerId, hp: u8) {
+        self.players.get_mut(&id).unwrap().hp = hp;
+    }
+
+    pub fn test_set_player_pos(&mut self, id: PlayerId, x: f32, y: f32, z: f32) {
+        let p = self.players.get_mut(&id).unwrap();
+        p.x = x;
+        p.y = y;
+        p.z = z;
+    }
+
+    pub fn test_set_player_score(&mut self, id: PlayerId, score: u32) {
+        self.players.get_mut(&id).unwrap().score = score;
+    }
+
+    pub fn test_set_player_inventory(&mut self, id: PlayerId, block: u8, count: u32) {
+        self.players
+            .get_mut(&id)
+            .unwrap()
+            .inventory
+            .insert(block, count);
+    }
+
+    pub fn test_set_player_joined_at_ms(&mut self, id: PlayerId, joined_at_ms: u64) {
+        self.players.get_mut(&id).unwrap().joined_at_ms = joined_at_ms;
+    }
+
+    /// Backdate a held slot's disconnect so the next status sweep prunes it past the grace.
+    pub fn test_backdate_disconnect(&mut self, id: PlayerId, ago: Duration) {
+        self.players.get_mut(&id).unwrap().disconnected_at = Some(Instant::now() - ago);
+    }
+
+    /// Set the tick counter so a single `tick_at` lands on a status-sweep boundary.
+    pub fn test_set_tick(&mut self, tick: u64) {
+        self.tick = tick;
+    }
+
+    /// The status-sweep cadence (`STATUS_EVERY_TICKS`) and reconnect grace, so the moved tests can line a
+    /// single tick up with the sweep and backdate a drop past the grace.
+    pub fn test_status_every_ticks() -> u64 {
+        STATUS_EVERY_TICKS
+    }
+
+    pub fn test_reconnect_grace() -> Duration {
+        RECONNECT_GRACE
+    }
+
+    /// The wall-clock epoch the play-time accounting uses, so a moved test can backdate a join.
+    pub fn test_epoch_ms() -> u64 {
+        epoch_ms()
+    }
+}
+
+/// Encode one receiver's AOI-filtered snapshot (keyframe or delta), send it, and update its baseline.
+/// Shared by the native (rayon `par_iter_mut`) and wasm (`iter_mut`) broadcast paths so the per-receiver
+/// work is identical on both — only the iteration is parallel on native. The shared tick state + grids
+/// are read-only; the receiver touches only its OWN baseline + channel, so the parallel run is byte-
+/// identical to a sequential one (parallelism only reorders the independent work, never the result).
+#[allow(clippy::too_many_arguments)]
+fn encode_snapshot_for_receiver(
+    id: PlayerId,
+    receiver: &mut Player,
+    tick: u64,
+    periodic_keyframe: bool,
+    grids: &AoiGrids,
+    players: &[PlayerState],
+    creatures: &[CreatureState],
+    hearts: &[HeartDropState],
+) {
+    let center = receiver_center(id, players);
+    let view = aoi_view(
+        id,
+        center,
+        &receiver.snapshot_baseline,
+        grids,
+        players,
+        creatures,
+        hearts,
+    );
+
+    let send_keyframe = periodic_keyframe || receiver.needs_keyframe;
+    let bytes: Arc<[u8]> = if send_keyframe {
+        encode_keyframe(tick, &view.players, &view.creatures, &view.hearts).into()
+    } else {
+        let baseline = &receiver.snapshot_baseline;
+        encode_delta(
+            SnapshotView {
+                tick: baseline.tick,
+                players: &baseline.players,
+                creatures: &baseline.creatures,
+                hearts: &baseline.hearts,
+            },
+            SnapshotView {
+                tick,
+                players: &view.players,
+                creatures: &view.creatures,
+                hearts: &view.hearts,
+            },
+        )
+        .into()
+    };
+
+    receiver.conn.send(Outbound::Binary(bytes));
+    receiver.needs_keyframe = false;
+    receiver.snapshot_baseline = SnapshotBaseline {
+        tick,
+        players: view.players,
+        creatures: view.creatures,
+        hearts: view.hearts,
+    };
 }
 
 // Cap on a structure-kind id (the web prebuilt ids are short slugs like "trophy", "hero").
@@ -3357,48 +3071,22 @@ fn epoch_ms() -> u64 {
 
 /// The `playtime` table key for a player: their account id when logged in, else their IP (prefixed so
 /// it can never collide with a real account id), so an anonymous guest's budget accrues by address.
-fn playtime_key(account_id: &str, ip: IpAddr) -> String {
+pub fn playtime_key(account_id: &str, ip: IpAddr) -> String {
     if account_id.is_empty() {
         return format!("ip:{ip}");
     }
     account_id.to_string()
 }
 
-/// Load the tenant's pending-approval list and send it to each given (admin) connection.
-async fn send_pending(db: &crate::db::Db, tenant: &str, conns: &[Conn]) {
-    if conns.is_empty() {
-        return;
-    }
-    let pending = match db.pending_approvals(tenant).await {
-        Ok(list) => list,
-        Err(e) => {
-            tracing::error!(error = %e, "pending approvals load failed");
-            return;
-        }
-    };
-    let wire: Vec<protocol::PendingApproval> = pending
-        .into_iter()
-        .map(|p| protocol::PendingApproval {
-            account_id: p.account_id,
-            name: p.name,
-            email: p.email,
-        })
-        .collect();
-    for conn in conns {
-        conn.send_one(ServerMsg::PendingApprovals {
-            pending: wire.clone(),
-        });
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::aoi;
-    use crate::db::Db;
-    use crate::hub::Hub;
+    use crate::conn::{next_conn_id, OutboundSink};
+    use std::sync::atomic::AtomicU32;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use tokio::sync::mpsc;
 
     /// A `Persistence` that records its `record_chat` calls instead of writing, so a test can prove the
     /// game logic goes through the seam (rather than touching the db directly).
@@ -3421,6 +3109,63 @@ mod tests {
         fn flush_world(&self, _: &str, _: Vec<u8>) {}
     }
 
+    /// A `RoomHost` that mirrors an EMPTY real hub (a fresh memory-db `Hub::load` with no bans/claims):
+    /// it allocs ascending ids and answers every ban/claim/pending/config call as a no-op, exactly what
+    /// the pure-sync tests below need. The db-backed admit policy is covered by the server's tests.
+    #[derive(Default)]
+    struct FakeHost {
+        next_id: AtomicU32,
+    }
+
+    impl RoomHost for FakeHost {
+        fn alloc_id(&self) -> u32 {
+            self.next_id.fetch_add(1, Ordering::Relaxed) + 1
+        }
+        fn is_banned(&self, _ip: IpAddr) -> bool {
+            false
+        }
+        fn ban(&self, _ip: IpAddr, _name: String) {}
+        fn unban(&self, _ip: IpAddr) -> bool {
+            false
+        }
+        fn list_named_bans(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn claim_holder(&self, _account_id: &str) -> Option<String> {
+            None
+        }
+        fn publish_stats(&self, _key: RoomKey, _snapshot: RoomSnapshot) {}
+        fn set_tenant_peace(&self, _tenant: String, _on: bool) {}
+        fn set_role(&self, _account_id: String, _role: Role) {}
+        fn set_tenant_suspended(&self, _tenant: String, _on: bool) {}
+        fn set_tenant_approval_required(&self, _tenant: String, _on: bool) {}
+        fn set_tenant_playtime(&self, _tenant: String, _limit_min: u32, _window_h: u32) {}
+        fn set_tenant_modes(&self, _tenant: String, _online_allowed: bool, _offline_allowed: bool) {
+        }
+        fn refresh_pending_for_admins(&self, _tenant: String, _admin_conns: Vec<Conn>) {}
+        fn approve_then_refresh(
+            &self,
+            _tenant: String,
+            _account_id: String,
+            _admin_conns: Vec<Conn>,
+        ) {
+        }
+        fn reject_then_refresh(
+            &self,
+            _tenant: String,
+            _account_id: String,
+            _admin_conns: Vec<Conn>,
+        ) {
+        }
+        fn clear_request_then_refresh(
+            &self,
+            _tenant: String,
+            _account_id: String,
+            _admin_conns: Vec<Conn>,
+        ) {
+        }
+    }
+
     #[test]
     fn server_version_prefers_env_then_baked_sha_then_crate() {
         assert_eq!(
@@ -3439,16 +3184,29 @@ mod tests {
         assert_eq!(resolve_server_version(None, Some(""), "0.1.0"), "0.1.0");
     }
 
-    /// A room wired to a fresh memory-db hub. The command receiver is owned by the room; tests drive
-    /// it by calling its handlers directly rather than through the channel.
+    /// A room wired to a recording persistence + a `FakeHost` standing in for an EMPTY real hub. The
+    /// config values equal the hub `Limits` defaults the old hub-backed test_room used, so behavior is
+    /// identical. Async (no awaits inside) so callers' `.await` stays unchanged.
     async fn test_room() -> Room {
-        // Each test gets a fresh in-memory db, so the per-tenant flags (suspended/approval) start off
-        // with no cross-test leak — no file-backed-gate reset needed anymore.
-        let db = Arc::new(Db::memory().await);
-        let hub = Arc::new(Hub::load(db).await);
-        let tcfg = hub.tenants.get("acme").unwrap().clone();
-        let (_tx, rx) = mpsc::channel::<RoomCmd>(16);
-        Room::new(hub, &tcfg, "main".into(), rx)
+        let config = RoomConfig {
+            tenant: "acme".into(),
+            world: "main".into(),
+            brand_name: "Acme".into(),
+            brand_image: String::new(),
+            tick_hz: 30,
+            max_players: 10,
+            idle_secs: 45,
+            edit_reach: 9.0,
+            max_speed: 18.0,
+            move_per_sec: 40.0,
+            edit_per_sec: 25.0,
+            chat_per_sec: 2.0,
+        };
+        Room::new(
+            config,
+            Arc::new(RecordingPersistence::default()),
+            Arc::new(FakeHost::default()),
+        )
     }
 
     /// Decode whatever a connection received back into a `ServerMsg`: a per-player `One` is unwrapped
@@ -3476,11 +3234,36 @@ mod tests {
         }
     }
 
-    /// A native sink over a fresh channel, returning the sink the room holds plus the backing receiver the
-    /// test reads off — the test-side mirror of `conn.rs` wiring a real socket to a `NativeSink`.
+    /// An `OutboundSink` over a tokio channel plus a unique id (via `next_conn_id`), the test-side mirror
+    /// of the server's `NativeSink` — identical semantics, so the room only ever sees the trait.
+    struct TestSink {
+        tx: mpsc::Sender<Outbound>,
+        id: u64,
+    }
+
+    impl TestSink {
+        fn new(tx: mpsc::Sender<Outbound>) -> Self {
+            Self {
+                tx,
+                id: next_conn_id(),
+            }
+        }
+    }
+
+    impl OutboundSink for TestSink {
+        fn send(&self, msg: Outbound) {
+            let _ = self.tx.try_send(msg);
+        }
+        fn id(&self) -> u64 {
+            self.id
+        }
+    }
+
+    /// A sink over a fresh channel, returning the sink the room holds plus the backing receiver the test
+    /// reads off — the test-side mirror of `conn.rs` wiring a real socket to a `NativeSink`.
     fn test_conn() -> (Conn, mpsc::Receiver<Outbound>) {
         let (tx, rx) = mpsc::channel::<Outbound>(64);
-        (Arc::new(NativeSink::new(tx)), rx)
+        (Arc::new(TestSink::new(tx)), rx)
     }
 
     /// Insert a minimal player into the room and return the channel that captures messages sent to it.
@@ -4767,97 +4550,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_ban_bans_the_ip_and_removes_target() {
-        // The ban store is db-backed (each test_room has its own in-memory db), so there is nothing to
-        // point at a throwaway file anymore.
-        let mut room = test_room().await;
-        let _admin_rx = add_player(&mut room, 1, true);
-        let _target_rx = add_player(&mut room, 2, false);
-        let target_ip: IpAddr = "203.0.113.9".parse().unwrap();
-        room.players.get_mut(&2).unwrap().ip = target_ip;
-
-        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 2 });
-        assert!(
-            !room.players.contains_key(&2),
-            "the banned player is removed"
-        );
-        assert!(room.hub.bans.is_banned(target_ip), "the ip is banned");
-    }
-
-    #[tokio::test]
-    async fn a_banned_ip_still_admits_an_admin_or_moderator_but_refuses_a_player() {
-        // A ban targets an IP. If a parent (admin) or helper (moderator) shares that banned address, they
-        // must still get in to moderate; only an ordinary player from it stays refused.
-        let mut room = test_room().await;
-        let banned_ip = "203.0.113.50";
-        room.hub
-            .bans
-            .ban(banned_ip.parse().unwrap(), "someone".into());
-
-        let (admin_result, _a) =
-            admit_from_ip(&mut room, "acc-a", "Parent", Role::Admin, banned_ip).await;
-        assert!(admin_result.is_ok(), "a banned IP still admits an admin");
-        let (mod_result, _m) =
-            admit_from_ip(&mut room, "acc-m", "Helper", Role::Moderator, banned_ip).await;
-        assert!(mod_result.is_ok(), "a banned IP still admits a moderator");
-        let (player_result, _p) =
-            admit_from_ip(&mut room, "acc-p", "Kid", Role::Player, banned_ip).await;
-        assert_eq!(
-            player_result,
-            Err("banned".into()),
-            "a banned IP still refuses an ordinary player"
-        );
-    }
-
-    #[tokio::test]
-    async fn admin_ban_refuses_to_ban_an_admin_or_moderator() {
-        // Banning staff is refused (a kick still works): an admin or moderator target is never banned, so
-        // a ban can't lock a fellow grown-up/helper out. A normal player is still bannable.
-        let mut room = test_room().await;
-        let _admin_rx = add_player(&mut room, 1, true);
-
-        let admin_target_ip: IpAddr = "203.0.113.71".parse().unwrap();
-        let _admin_target_rx = add_player(&mut room, 2, true);
-        room.players.get_mut(&2).unwrap().ip = admin_target_ip;
-        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 2 });
-        assert!(
-            room.players.contains_key(&2),
-            "an admin target is not removed"
-        );
-        assert!(
-            !room.hub.bans.is_banned(admin_target_ip),
-            "an admin target's ip is never banned"
-        );
-
-        let mod_target_ip: IpAddr = "203.0.113.72".parse().unwrap();
-        let _mod_target_rx = add_player(&mut room, 3, false);
-        room.players.get_mut(&3).unwrap().is_moderator = true;
-        room.players.get_mut(&3).unwrap().ip = mod_target_ip;
-        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 3 });
-        assert!(
-            room.players.contains_key(&3),
-            "a moderator target is not removed"
-        );
-        assert!(
-            !room.hub.bans.is_banned(mod_target_ip),
-            "a moderator target's ip is never banned"
-        );
-
-        let player_target_ip: IpAddr = "203.0.113.73".parse().unwrap();
-        let _player_target_rx = add_player(&mut room, 4, false);
-        room.players.get_mut(&4).unwrap().ip = player_target_ip;
-        room.on_input(Instant::now(), 1, ClientMsg::AdminBan { id: 4 });
-        assert!(
-            !room.players.contains_key(&4),
-            "a normal player is still banned"
-        );
-        assert!(
-            room.hub.bans.is_banned(player_target_ip),
-            "a normal player's ip is banned"
-        );
-    }
-
-    #[tokio::test]
     async fn pvp_off_never_hurts_a_player() {
         let mut room = test_room().await;
         let _attacker_rx = add_player(&mut room, 1, false);
@@ -5792,81 +5484,6 @@ mod tests {
         assert!(!room.players.contains_key(&3), "a moderator can kick");
     }
 
-    #[tokio::test]
-    async fn guest_joins_without_a_claim_and_gets_a_unique_name() {
-        let mut room = test_room().await;
-        let (conn, _conn_rx) = test_conn();
-        let (reply, reply_rx) = oneshot::channel();
-        let look = Appearance {
-            skin: "#fff".into(),
-            shirt: "#fff".into(),
-            hair: "#fff".into(),
-        };
-        room.on_join(
-            Instant::now(),
-            String::new(),
-            String::new(),
-            look,
-            "127.0.0.1".parse().unwrap(),
-            conn,
-            Arc::new(AtomicU32::new(0)),
-            reply,
-        )
-        .await;
-        let id = reply_rx
-            .await
-            .unwrap()
-            .expect("a guest joins with no claim");
-        let player = room.players.get(&id).unwrap();
-        assert_eq!(player.name, format!("Guest{id}"));
-        assert!(player.account_id.is_empty(), "a guest has no account");
-    }
-
-    /// Drive `admit` for a logged-in account with the given id/name/role and return its outcome plus
-    /// the captured connection. Mirrors the on_join → admit path without the claim resolution.
-    async fn admit_account(
-        room: &mut Room,
-        account_id: &str,
-        name: &str,
-        role: Role,
-    ) -> (Result<PlayerId, String>, mpsc::Receiver<Outbound>) {
-        let (conn, conn_rx) = test_conn();
-        let (reply, reply_rx) = oneshot::channel();
-        let look = Appearance {
-            skin: "#fff".into(),
-            shirt: "#fff".into(),
-            hair: "#fff".into(),
-        };
-        room.admit(
-            Instant::now(),
-            account_id.to_string(),
-            name.to_string(),
-            role,
-            "claim".into(),
-            look,
-            "127.0.0.1".parse().unwrap(),
-            conn,
-            Arc::new(AtomicU32::new(0)),
-            reply,
-        )
-        .await;
-        (reply_rx.await.unwrap(), conn_rx)
-    }
-
-    #[tokio::test]
-    async fn approval_off_by_default_lets_everyone_in() {
-        let mut room = test_room().await;
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "kid@x.com", "Kid")
-            .await
-            .unwrap()
-            .account_id;
-        let (result, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
-        assert!(result.is_ok(), "approval off admits a normal player");
-    }
-
     /// The split's proof: the sync `add_player`, handed a pre-built `Admission` (the policy already
     /// ran), adds the player + emits Welcome and the roster WITHOUT any db read — it is not `.await`ed
     /// and never touches `hub.db`. The room's db is left empty (no claim/flags/playtime rows): a stray
@@ -5910,329 +5527,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approval_required_refuses_unapproved_then_admits_after_approve() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_approval_required(&room.key.0, true)
-            .await
-            .unwrap();
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "kid@x.com", "Kid")
-            .await
-            .unwrap()
-            .account_id;
-
-        let (refused, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
-        assert_eq!(refused, Err("needs_approval".into()));
-        // The held-out account is now pending.
-        let pending = room.hub.db.pending_approvals("acme").await.unwrap();
-        assert_eq!(pending.len(), 1);
-
-        // After an admin approves it, the same account is admitted.
-        room.hub.db.approve_account("acme", &acc).await.unwrap();
-        let (allowed, _rx2) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
-        assert!(allowed.is_ok(), "an approved account is admitted");
-    }
-
-    #[tokio::test]
-    async fn approval_required_always_admits_admins() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_approval_required(&room.key.0, true)
-            .await
-            .unwrap();
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "parent@x.com", "Parent")
-            .await
-            .unwrap()
-            .account_id;
-        let (result, _rx) = admit_account(&mut room, &acc, "Parent", Role::Admin).await;
-        assert!(result.is_ok(), "an admin is never held out by the gate");
-        assert!(
-            room.hub
-                .db
-                .pending_approvals("acme")
-                .await
-                .unwrap()
-                .is_empty(),
-            "an admin never becomes a pending request"
-        );
-    }
-
-    #[tokio::test]
-    async fn approval_required_holds_an_anonymous_guest_then_admits_after_approve() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_approval_required(&room.key.0, true)
-            .await
-            .unwrap();
-        // An anonymous guest (no account, no login) is HELD for approval — never told to log in.
-        let (held, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.50").await;
-        assert_eq!(
-            held,
-            Err("needs_approval".into()),
-            "a guest waits for approval instead of being asked to log in"
-        );
-        // Recorded as pending, keyed by IP so the admin can approve it.
-        let pending = room.hub.db.pending_approvals(&room.key.0).await.unwrap();
-        assert_eq!(pending.len(), 1);
-        // After the admin approves that IP key, the same guest is admitted on retry.
-        room.hub
-            .db
-            .approve_account(&room.key.0, "ip:203.0.113.50")
-            .await
-            .unwrap();
-        let (allowed, _rx2) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.50").await;
-        assert!(allowed.is_ok(), "an approved guest is admitted");
-    }
-
-    #[tokio::test]
-    async fn holding_a_guest_broadcasts_pending_approvals_to_in_game_admins() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_approval_required(&room.key.0, true)
-            .await
-            .unwrap();
-        // An admin is already in the room (the in-game admin who must get the live notification).
-        let mut admin_rx = add_player(&mut room, 1, true);
-        // A guest joins and is held for approval.
-        let (held, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.60").await;
-        assert_eq!(held, Err("needs_approval".into()));
-        // The held guest's persist + broadcast is awaited inline by hold_for_approval, so the admin's
-        // connection already carries the refreshed pending list with the waiting guest.
-        let pending = std::iter::from_fn(|| admin_rx.try_recv_msg().ok()).find_map(|m| match m {
-            ServerMsg::PendingApprovals { pending } => Some(pending),
-            _ => None,
-        });
-        let pending = pending.expect("the in-game admin is notified with the pending list");
-        assert_eq!(
-            pending.len(),
-            1,
-            "the held guest appears in the pending list"
-        );
-    }
-
-    #[tokio::test]
-    async fn reject_is_one_shot_then_a_fresh_join_is_held_again() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_approval_required(&room.key.0, true)
-            .await
-            .unwrap();
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "kid@x.com", "Kid")
-            .await
-            .unwrap()
-            .account_id;
-        // The admin rejected the held request: the next join is told "rejected" exactly once.
-        room.hub
-            .db
-            .record_approval_request("acme", &acc, "Kid", "kid@x.com")
-            .await
-            .unwrap();
-        room.hub
-            .db
-            .reject_approval_request("acme", &acc)
-            .await
-            .unwrap();
-
-        let (rejected, _rx) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
-        assert_eq!(
-            rejected,
-            Err("rejected".into()),
-            "the rejected attempt ends"
-        );
-        assert!(
-            !room.hub.db.is_rejected("acme", &acc).await.unwrap(),
-            "the one-shot reject is cleared so a fresh join is not stuck on rejected"
-        );
-
-        // A fresh join is held for approval again, re-recording the pending row (admins re-notified).
-        let (held, _rx2) = admit_account(&mut room, &acc, "Kid", Role::Player).await;
-        assert_eq!(
-            held,
-            Err("needs_approval".into()),
-            "the next join is held for approval, not turned away forever"
-        );
-        let pending = room.hub.db.pending_approvals("acme").await.unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].account_id, acc);
-    }
-
-    #[tokio::test]
-    async fn banning_a_pending_player_bans_the_ip_and_drops_the_request() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_approval_required(&room.key.0, true)
-            .await
-            .unwrap();
-        let mut admin_rx = add_player(&mut room, 1, true);
-        // A held guest, recorded as pending by their IP key.
-        let (held, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.77").await;
-        assert_eq!(held, Err("needs_approval".into()));
-        assert_eq!(
-            room.hub.db.pending_approvals("acme").await.unwrap().len(),
-            1
-        );
-
-        room.on_input(
-            Instant::now(),
-            1,
-            ClientMsg::AdminBanPending {
-                account_id: "ip:203.0.113.77".into(),
-            },
-        );
-        // The ip ban is applied synchronously; the request clear is spawned, so let it run.
-        let banned_ip: IpAddr = "203.0.113.77".parse().unwrap();
-        assert!(
-            room.hub.bans.is_banned(banned_ip),
-            "the pending ip is banned"
-        );
-        for _ in 0..50 {
-            if room
-                .hub
-                .db
-                .pending_approvals("acme")
-                .await
-                .unwrap()
-                .is_empty()
-            {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert!(
-            room.hub
-                .db
-                .pending_approvals("acme")
-                .await
-                .unwrap()
-                .is_empty(),
-            "the banned player is removed from the pending list"
-        );
-
-        // The banned address is now turned away at the join gate (the same check the connect path runs).
-        let (conn, _conn_rx) = test_conn();
-        let (reply, reply_rx) = oneshot::channel();
-        let look = Appearance {
-            skin: "#fff".into(),
-            shirt: "#fff".into(),
-            hair: "#fff".into(),
-        };
-        room.on_join(
-            Instant::now(),
-            String::new(),
-            String::new(),
-            look,
-            banned_ip,
-            conn,
-            Arc::new(AtomicU32::new(0)),
-            reply,
-        )
-        .await;
-        assert_eq!(reply_rx.await.unwrap(), Err("banned".into()));
-        // The admin who acted received the refreshed ban list.
-        let saw_bans = std::iter::from_fn(|| admin_rx.try_recv_msg().ok())
-            .any(|m| matches!(m, ServerMsg::Bans { .. }));
-        assert!(saw_bans, "the admin gets the refreshed ban list");
-    }
-
-    #[tokio::test]
-    async fn ban_pending_never_bans_an_account_keyed_target() {
-        // Ban-pending only ever targets a guest by their `ip:<addr>` key. An account-keyed entry — the
-        // only way a target could resolve to an admin/moderator — is never banned through this path, so
-        // staff stay safe even if a client sends an account id.
-        let mut room = test_room().await;
-        let _admin_rx = add_player(&mut room, 1, true);
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "parent@x.com", "Parent")
-            .await
-            .unwrap()
-            .account_id;
-        room.hub
-            .db
-            .set_admin_by_name("acme", "Parent", true)
-            .await
-            .unwrap();
-
-        room.on_input(
-            Instant::now(),
-            1,
-            ClientMsg::AdminBanPending {
-                account_id: acc.clone(),
-            },
-        );
-        let before = room.hub.bans.list_named().len();
-        assert_eq!(before, 0, "an account-keyed ban-pending adds no ban");
-    }
-
-    #[tokio::test]
-    async fn admin_toggles_approval_and_approves_a_pending_account() {
-        let mut room = test_room().await;
-        let mut admin_rx = add_player(&mut room, 1, true);
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "kid@x.com", "Kid")
-            .await
-            .unwrap()
-            .account_id;
-
-        room.on_input(Instant::now(), 1, ClientMsg::AdminSetApproval { on: true });
-        assert!(room.approval_required);
-        let required = std::iter::from_fn(|| admin_rx.try_recv_msg().ok()).find_map(|m| match m {
-            ServerMsg::RoomState {
-                approval_required, ..
-            } => Some(approval_required),
-            _ => None,
-        });
-        assert_eq!(required, Some(true), "the toggle broadcasts RoomState");
-
-        room.hub
-            .db
-            .record_approval_request("acme", &acc, "Kid", "kid@x.com")
-            .await
-            .unwrap();
-        room.on_input(
-            Instant::now(),
-            1,
-            ClientMsg::AdminApprove {
-                account_id: acc.clone(),
-            },
-        );
-        // The approve is spawned async; let it run, then confirm the account is approved + cleared.
-        tokio::task::yield_now().await;
-        for _ in 0..50 {
-            if room.hub.db.is_approved("acme", &acc).await.unwrap() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert!(room.hub.db.is_approved("acme", &acc).await.unwrap());
-        assert!(room
-            .hub
-            .db
-            .pending_approvals("acme")
-            .await
-            .unwrap()
-            .is_empty());
-    }
-
-    #[tokio::test]
     async fn non_admin_approval_toggle_is_ignored() {
         let mut room = test_room().await;
         add_player(&mut room, 2, false);
@@ -6241,44 +5535,6 @@ mod tests {
             !room.approval_required,
             "a non-admin cannot turn approval on"
         );
-    }
-
-    /// Admit a guest/account from a chosen IP, so the play-time + mode-block paths can be exercised.
-    async fn admit_from_ip(
-        room: &mut Room,
-        account_id: &str,
-        name: &str,
-        role: Role,
-        ip: &str,
-    ) -> (Result<PlayerId, String>, mpsc::Receiver<Outbound>) {
-        let (conn, conn_rx) = test_conn();
-        let (reply, reply_rx) = oneshot::channel();
-        let look = Appearance {
-            skin: "#fff".into(),
-            shirt: "#fff".into(),
-            hair: "#fff".into(),
-        };
-        room.admit(
-            Instant::now(),
-            account_id.to_string(),
-            name.to_string(),
-            role,
-            "claim".into(),
-            look,
-            ip.parse().unwrap(),
-            conn,
-            Arc::new(AtomicU32::new(0)),
-            reply,
-        )
-        .await;
-        (reply_rx.await.unwrap(), conn_rx)
-    }
-
-    fn first_error_code(rx: &mut mpsc::Receiver<Outbound>) -> Option<String> {
-        std::iter::from_fn(|| rx.try_recv_msg().ok()).find_map(|m| match m {
-            ServerMsg::Error { code, .. } => Some(code),
-            _ => None,
-        })
     }
 
     /// The `you` id of the first Welcome a connection received (resume re-sends one), or None.
@@ -6316,11 +5572,6 @@ mod tests {
         drain_rosters(rx).pop()
     }
 
-    /// Count the roster frames a connection received (for the quiet-tick assertion).
-    fn count_rosters(rx: &mut mpsc::Receiver<Outbound>) -> usize {
-        drain_rosters(rx).len()
-    }
-
     #[tokio::test]
     async fn a_leave_broadcasts_an_updated_roster_with_one_fewer_player() {
         let mut room = test_room().await;
@@ -6331,30 +5582,6 @@ mod tests {
         let roster = last_roster(&mut peer_rx).expect("a leave refreshes the roster");
         assert_eq!(roster.len(), 1, "the roster drops the player who left");
         assert!(roster.iter().all(|p| p.id != 2), "the leaver is gone");
-    }
-
-    #[tokio::test]
-    async fn a_drop_then_resume_each_broadcast_an_away_toggled_roster() {
-        let mut room = test_room().await;
-        let mut peer_rx = add_player(&mut room, 1, false);
-        let _dropped_rx = add_player(&mut room, 2, false);
-        let conn2 = room.players.get(&2).unwrap().conn.clone();
-        // An abrupt drop marks the slot away=true and refreshes the roster (no Left during grace).
-        room.on_leave(Instant::now(), 2, &conn2, false);
-        let away = last_roster(&mut peer_rx).expect("a drop refreshes the roster");
-        assert!(
-            away.iter().find(|p| p.id == 2).unwrap().away,
-            "the dropped player shows away in the roster",
-        );
-        // A reconnect resumes the held slot and refreshes the roster with away=false again.
-        let (resumed, _r2) =
-            admit_from_ip(&mut room, "acc2", "p2", Role::Player, "127.0.0.1").await;
-        assert_eq!(resumed, Ok(2), "the slot resumes");
-        let back = last_roster(&mut peer_rx).expect("a resume refreshes the roster");
-        assert!(
-            !back.iter().find(|p| p.id == 2).unwrap().away,
-            "the resumed player is no longer away",
-        );
     }
 
     #[tokio::test]
@@ -6411,52 +5638,6 @@ mod tests {
             1,
             "the bumped kill count rides the roster",
         );
-    }
-
-    #[tokio::test]
-    async fn the_roster_is_not_rebroadcast_on_a_quiet_tick() {
-        let mut room = test_room().await;
-        let mut peer_rx = add_player(&mut room, 1, false);
-        add_player(&mut room, 2, false);
-        // Both players hold a live claim so the reclaim-kick sweep leaves them in place: the stretch is
-        // genuinely quiet (no leave/kick), exercising the path that used to re-send the roster.
-        room.hub.claims.set("acc1", "tok1");
-        room.hub.claims.set("acc2", "tok2");
-        // No roster-affecting change happens — just advance many ticks past several STATUS_EVERY_TICKS
-        // boundaries. The roster used to be re-sent every boundary; now a quiet tick emits none.
-        let _ = last_roster(&mut peer_rx); // ignore anything queued before the quiet stretch
-        for _ in 0..(STATUS_EVERY_TICKS * 4 + 3) {
-            room.tick(Instant::now(), 0.05);
-        }
-        assert!(
-            room.players.contains_key(&1) && room.players.contains_key(&2),
-            "both players stay through the quiet stretch (no leave/kick)",
-        );
-        assert_eq!(
-            count_rosters(&mut peer_rx),
-            0,
-            "a quiet stretch of ticks broadcasts no roster",
-        );
-    }
-
-    #[tokio::test]
-    async fn the_grace_prune_broadcasts_an_updated_roster() {
-        let mut room = test_room().await;
-        let mut peer_rx = add_player(&mut room, 1, false);
-        let _dropped_rx = add_player(&mut room, 2, false);
-        let conn2 = room.players.get(&2).unwrap().conn.clone();
-        room.on_leave(Instant::now(), 2, &conn2, false);
-        room.players.get_mut(&2).unwrap().disconnected_at =
-            Some(Instant::now() - RECONNECT_GRACE - Duration::from_secs(1));
-        // Keep the observing peer alive through the sweep: register its claim so the reclaim-kick (which
-        // fires for any account whose live claim isn't in the hub) leaves it in place to see the prune.
-        room.hub.claims.set("acc1", "tok1");
-        let _ = last_roster(&mut peer_rx); // clear the drop's roster
-        room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(Instant::now(), 0.05);
-        let roster = last_roster(&mut peer_rx).expect("the prune refreshes the roster");
-        assert_eq!(roster.len(), 1, "the pruned player leaves the roster");
-        assert!(roster.iter().all(|p| p.id != 2), "the pruned slot is gone");
     }
 
     #[tokio::test]
@@ -6524,45 +5705,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_rejoin_within_grace_resumes_the_same_slot_intact() {
-        let mut room = test_room().await;
-        // A guest joins from an IP, builds up score + inventory, then their socket drops.
-        let (admitted, mut first_rx) =
-            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
-        let id = admitted.expect("guest admitted");
-        {
-            let p = room.players.get_mut(&id).unwrap();
-            p.x = 12.0;
-            p.y = 34.0;
-            p.z = 56.0;
-            p.score = 7;
-            p.hp = 2;
-            p.inventory.insert(3, 9);
-        }
-        let dropped_conn = room.players.get(&id).unwrap().conn.clone();
-        room.on_leave(Instant::now(), id, &dropped_conn, false);
-        assert!(room.players.get(&id).unwrap().disconnected_at.is_some());
-
-        // The same guest rejoins (same IP) within the grace.
-        let (resumed, mut second_rx) =
-            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
-        assert_eq!(resumed, Ok(id), "the rejoin resumes the same player id");
-        assert_eq!(room.players.len(), 1, "no duplicate slot is created");
-        let p = room.players.get(&id).unwrap();
-        assert!(p.disconnected_at.is_none(), "the slot is live again");
-        assert_eq!((p.x, p.y, p.z), (12.0, 34.0, 56.0), "position is intact");
-        assert_eq!(p.score, 7, "score is intact");
-        assert_eq!(p.hp, 2, "hp is intact");
-        assert_eq!(p.inventory.get(&3), Some(&9), "inventory is intact");
-        // The resuming connection gets a Welcome for the SAME id; no Left was ever broadcast.
-        assert_eq!(first_welcome_id(&mut second_rx), Some(id));
-        assert!(
-            !saw_left(&mut first_rx, id),
-            "resume causes no Left/Join churn"
-        );
-    }
-
-    #[tokio::test]
     async fn a_slot_still_gone_after_the_grace_is_pruned_with_one_left() {
         let mut room = test_room().await;
         let mut peer_rx = add_player(&mut room, 1, false);
@@ -6581,25 +5723,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn an_authed_player_resumes_by_account_not_ip() {
-        let mut room = test_room().await;
-        // A logged-in player on one IP drops; they reconnect from a DIFFERENT IP (e.g. wifi → cellular).
-        let (admitted, _first_rx) =
-            admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "198.51.100.1").await;
-        let id = admitted.expect("authed player admitted");
-        let dropped_conn = room.players.get(&id).unwrap().conn.clone();
-        room.on_leave(Instant::now(), id, &dropped_conn, false);
-        let (resumed, _second_rx) =
-            admit_from_ip(&mut room, "acc-jo", "Jo", Role::Player, "203.0.113.9").await;
-        assert_eq!(
-            resumed,
-            Ok(id),
-            "the account resumes its slot across an IP change"
-        );
-        assert_eq!(room.players.len(), 1, "no duplicate slot");
-    }
-
     #[test]
     fn playtime_key_keys_anon_by_ip_and_account_by_id() {
         assert_eq!(
@@ -6607,126 +5730,6 @@ mod tests {
             "ip:203.0.113.7"
         );
         assert_eq!(playtime_key("acc1", "203.0.113.7".parse().unwrap()), "acc1");
-    }
-
-    #[tokio::test]
-    async fn anonymous_playtime_accrues_by_ip_and_kicks_with_time_up() {
-        let mut room = test_room().await;
-        // A 1-minute budget within a 24h window for this tenant.
-        room.hub
-            .db
-            .set_tenant_playtime(&room.key.0, 1, 24)
-            .await
-            .unwrap();
-        // An anonymous guest (empty account id) joins from a known IP.
-        let (admitted, mut rx) =
-            admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
-        let id = admitted.expect("a guest within budget is admitted");
-        // Pretend the session started two minutes ago, past the 1-minute budget.
-        let two_min_ms = 2 * 60_000u64;
-        room.players.get_mut(&id).unwrap().joined_at_ms = epoch_ms() - two_min_ms;
-        // The status sweep flushes the time and sends the over-budget guest to the lobby.
-        room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(Instant::now(), 0.05);
-        assert_eq!(first_error_code(&mut rx).as_deref(), Some("time_up"));
-        assert!(!room.players.contains_key(&id), "the guest is removed");
-        // The accrual write is fire-and-forget (spawned off the tick), so let it land before reading.
-        let mut used = 0;
-        for _ in 0..50 {
-            tokio::task::yield_now().await;
-            used = room
-                .hub
-                .db
-                .playtime_used(
-                    &room.key.0,
-                    "ip:203.0.113.7",
-                    24 * 3_600_000,
-                    epoch_ms() as i64,
-                )
-                .await
-                .unwrap();
-            if used >= 60_000 {
-                break;
-            }
-        }
-        assert!(used >= 60_000, "anonymous time accrued by IP, got {used}ms");
-        // The IP is now over budget, so the next guest from it is turned away with "time_up".
-        let (blocked, _rx2) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.7").await;
-        assert_eq!(blocked, Err("time_up".into()), "the IP is over budget");
-    }
-
-    #[tokio::test]
-    async fn an_admin_over_the_playtime_budget_still_plays_but_a_moderator_does_not() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_playtime(&room.key.0, 1, 24)
-            .await
-            .unwrap();
-        // Burn the IP's budget: a guest plays 2 minutes, past the 1-minute limit.
-        let (admitted, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.9").await;
-        let id = admitted.expect("first guest admitted");
-        room.players.get_mut(&id).unwrap().joined_at_ms = epoch_ms() - 2 * 60_000;
-        room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(Instant::now(), 0.05);
-        for _ in 0..50 {
-            tokio::task::yield_now().await;
-            let used = room
-                .hub
-                .db
-                .playtime_used(
-                    &room.key.0,
-                    "ip:203.0.113.9",
-                    24 * 3_600_000,
-                    epoch_ms() as i64,
-                )
-                .await
-                .unwrap();
-            if used >= 60_000 {
-                break;
-            }
-        }
-        // A moderator from that over-budget IP is turned away — moderators are subject to the limit.
-        let (mod_res, _r1) = admit_from_ip(&mut room, "", "", Role::Moderator, "203.0.113.9").await;
-        assert_eq!(
-            mod_res,
-            Err("time_up".into()),
-            "a moderator over budget is blocked"
-        );
-        // An admin from the same over-budget IP still gets in.
-        let (admin_res, _r2) = admit_from_ip(&mut room, "", "", Role::Admin, "203.0.113.9").await;
-        let admin_id = admin_res.expect("an admin over budget still plays");
-        // And an admin already past their session time is never kicked by the play-time sweep.
-        room.players.get_mut(&admin_id).unwrap().joined_at_ms = epoch_ms() - 5 * 60_000;
-        room.tick = STATUS_EVERY_TICKS - 1;
-        room.tick(Instant::now(), 0.05);
-        assert!(
-            room.players.contains_key(&admin_id),
-            "an admin is never kicked by the playtime sweep"
-        );
-    }
-
-    #[tokio::test]
-    async fn online_blocked_rejects_a_non_admin_join_but_admits_admins() {
-        let mut room = test_room().await;
-        room.hub
-            .db
-            .set_tenant_modes(&room.key.0, false, true)
-            .await
-            .unwrap();
-        let (refused, _rx) = admit_from_ip(&mut room, "", "", Role::Player, "203.0.113.9").await;
-        assert_eq!(refused, Err("online_blocked".into()));
-        // An admin still gets in so they can re-enable online play from the panel.
-        let acc = room
-            .hub
-            .db
-            .claim_account("acme", "parent@x.com", "Parent")
-            .await
-            .unwrap()
-            .account_id;
-        let (allowed, _rx) =
-            admit_from_ip(&mut room, &acc, "Parent", Role::Admin, "203.0.113.9").await;
-        assert!(allowed.is_ok(), "an admin is admitted to manage the world");
     }
 
     #[tokio::test]

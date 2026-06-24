@@ -9,11 +9,15 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use game_core::{Room, RoomConfig};
+
 use crate::bans::Bans;
 use crate::db::{Db, Tenant};
-use crate::room::{Room, RoomCmd};
+use crate::persistence::DbPersistence;
+use crate::room_driver::{self, NativeRoomHost};
+use crate::room_io::RoomCmd;
 
-pub type RoomKey = (String, String);
+pub use game_core::{RoomKey, RoomSnapshot};
 
 /// In-memory mirror of the active claim per account: the single live session token that may act as
 /// that account. Warmed from the db on startup, then the source of truth the room checks every
@@ -118,29 +122,6 @@ fn d_speed() -> f32 {
 struct FileConfig {
     #[serde(default)]
     limits: Limits,
-}
-
-/// One row per online player in the admin view.
-#[derive(Debug, Clone, Serialize)]
-pub struct PlayerInfo {
-    pub id: u32,
-    pub name: String,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub ping_ms: u32,
-    pub idle_ms: u64,
-    pub joined_at_ms: u64,
-}
-
-/// Per-room snapshot published every tick for the admin endpoint.
-#[derive(Debug, Clone, Serialize)]
-pub struct RoomSnapshot {
-    pub tenant: String,
-    pub world: String,
-    pub tick: u64,
-    pub edits: usize,
-    pub players: Vec<PlayerInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -311,8 +292,24 @@ impl Hub {
             dashmap::mapref::entry::Entry::Occupied(e) => Ok(e.get().clone()),
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 let (tx, rx) = mpsc::channel::<RoomCmd>(512);
-                let room = Room::new(hub.clone(), &tcfg, world.to_string(), rx);
-                tokio::spawn(room.run());
+                let config = RoomConfig {
+                    tenant: tcfg.id.clone(),
+                    world: world.to_string(),
+                    brand_name: tcfg.name.clone(),
+                    brand_image: tcfg.image.clone(),
+                    tick_hz: hub.limits.tick_hz,
+                    max_players: hub.limits.max_players_per_room,
+                    idle_secs: hub.limits.idle_secs,
+                    edit_reach: hub.limits.edit_reach,
+                    max_speed: hub.limits.max_speed,
+                    move_per_sec: hub.limits.move_per_sec,
+                    edit_per_sec: hub.limits.edit_per_sec,
+                    chat_per_sec: hub.limits.chat_per_sec,
+                };
+                let persistence = Arc::new(DbPersistence::new(hub.db.clone()));
+                let host = Arc::new(NativeRoomHost { hub: hub.clone() });
+                let room = Room::new(config, persistence, host);
+                tokio::spawn(room_driver::run(room, hub.clone(), rx));
                 e.insert(tx.clone());
                 tracing::info!(%tenant, %world, "room spawned");
                 Ok(tx)

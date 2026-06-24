@@ -8,7 +8,7 @@ use rand::Rng;
 
 use crate::db::Db;
 use crate::hub::{Claims, Hub};
-use crate::room::RoomCmd;
+use crate::room_io::RoomCmd;
 
 const TOKEN_HEX_CHARS: usize = 32;
 const CODE_DIGITS: usize = 6;

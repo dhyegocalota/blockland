@@ -11,8 +11,10 @@ use futures_util::{SinkExt, StreamExt};
 use protocol::{ClientMsg, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
+use game_core::{Appearance, Conn, Outbound};
+
 use crate::hub::Hub;
-use crate::room::{Appearance, Conn, NativeSink, Outbound, RoomCmd};
+use crate::room_io::{NativeSink, RoomCmd};
 
 // Large enough for a chunked EditBatch (the client caps each batch to BATCH_CHUNK cells).
 const MAX_TEXT_BYTES: usize = 32 * 1024;

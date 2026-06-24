@@ -589,6 +589,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "game-core"
+version = "0.1.0"
+dependencies = [
+ "protocol",
+ "rand 0.8.6",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sim",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2192,12 +2206,12 @@ dependencies = [
  "axum",
  "dashmap",
  "futures-util",
+ "game-core",
  "hex",
  "hmac",
  "libsql",
  "protocol",
  "rand 0.8.6",
- "rayon",
  "reqwest",
  "rust-s3",
  "sentry",
