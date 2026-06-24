@@ -434,6 +434,14 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.connect_reconnecting': '📡 Reconectando…',
     'coop.connect_ready': '✅ Pronto!',
     'coop.connect_hint': 'Estamos preparando tudo pra você. Já já dá pra construir e explorar! 🧱',
+
+    // Game loader (code-split engine + wasm core booting after Play, before the world is live)
+    'loading.title': 'Montando o jogo…',
+    'loading.engine': 'Carregando o motor do jogo…',
+    'loading.world': 'Preparando seu mundo…',
+    'loading.error_title': 'Algo deu errado',
+    'loading.error_hint': 'Não foi possível carregar o jogo. Tenta de novo! 🧱',
+    'loading.retry': 'Tentar de novo',
     'debug.copy_report': '📋 Copiar relatório',
     'debug.copied': '✅ Copiado',
   },
@@ -866,6 +874,14 @@ export const messages: Record<Locale, Record<string, string>> = {
     'coop.connect_reconnecting': '📡 Reconnecting…',
     'coop.connect_ready': '✅ Ready!',
     'coop.connect_hint': "We're getting everything ready for you. You'll be building and exploring in a moment! 🧱",
+
+    // Game loader (code-split engine + wasm core booting after Play, before the world is live)
+    'loading.title': 'Assembling the game…',
+    'loading.engine': 'Loading the game engine…',
+    'loading.world': 'Preparing your world…',
+    'loading.error_title': 'Something went wrong',
+    'loading.error_hint': "We couldn't load the game. Give it another try! 🧱",
+    'loading.retry': 'Try again',
     'debug.copy_report': '📋 Copy report',
     'debug.copied': '✅ Copied',
   },

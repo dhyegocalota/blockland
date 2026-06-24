@@ -3,13 +3,14 @@
 // All of the Game screen's state, effects and handlers live here so the component is just markup.
 // It owns the lobby/login lifecycle, boots the Three.js engine via a CoopBridge, and composes the
 // smaller hooks (chat, feed, room-admin). The returned object is spread into the component.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { resolveTenant, type Brand } from '../lib/tenants';
 import { lobbyAdminPanelActive, lobbyModeGates, shouldPushToOnline, shouldPushToSolo } from '../lib/lobby-modes';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
 import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
+import { IDLE_STATE, LoaderPhase, LoaderStage, loaderReducer } from '../lib/engine/loader-state';
 import type { Appearance, RoomState, RosterEntry } from '../lib/coop';
 import { randomLook } from '../lib/look';
 import { CHAT_FADE_MS } from '../lib/chat';
@@ -97,8 +98,13 @@ export function useGame() {
   // break/build/hit clicks would be silently dropped, so the overlay gates input on them.
   const [welcomed, setWelcomed] = useState(false);
   const [firstSnapshot, setFirstSnapshot] = useState(false);
+  // The code-split engine + wasm core load behind an on-brand loader the moment the player presses
+  // Play (the lobby itself never pulls three.js / wasm). This drives that loading screen.
+  const [loaderState, dispatchLoader] = useReducer(loaderReducer, IDLE_STATE);
 
   const gameApiRef = useRef<GameApi | null>(null);
+  const engineCleanupRef = useRef<(() => void) | undefined>(undefined);
+  const engineRequestedRef = useRef(false);
   const soloRef = useRef(false);
   // The lobby admin's live RoomState, captured for the engine bridge (read at game start). Holds the
   // config only while the lobby-admin connection is live, null otherwise — the offline game seeds its
@@ -204,63 +210,84 @@ export function useGame() {
     return () => { alive = false; };
   }, []);
 
-  // Boot the engine only after `brand` has rendered, so the HUD DOM (#controls, #start, ...) the engine
-  // wires up actually exists. Running this inside the tenant promise raced React's commit and threw.
-  useEffect(() => {
-    if (!brand) return;
-    let cleanup: (() => void) | undefined;
-    let alive = true;
-    const bridge: CoopBridge = {
-      resolveName: () => loadName().trim(),
-      resolveAppearance: () => loadLook(),
-      resolveClaim: (resolvedName) => resolveClaim(brand.id, resolvedName),
-      resolveOffline: () => soloRef.current,
-      resolveInitialRoom: () => lobbyRoomRef.current,
-      hud: {
-        onState: (state) => {
-          setNetState(state);
-          if (state === 'online') setWelcomed(true);
-          debug('coop', 'net state', { state });
-        },
-        onPing: (value) => setPing(value),
-        onChat: (from, text) => pushChatLine(from, text),
-        onCount: (count) => { setFirstSnapshot(true); setOnline(count); },
-        onRoster: (players) => setRoster(players),
-        onEvent: (event) => {
-          if (event.kind === 'reset_scores') gameApiRef.current?.chime();
-          pushFeedEntry(event);
-        },
-        // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
-        onScore: () => undefined,
-        onRole: (role) => { setIsAdmin(role.admin); setIsModerator(role.moderator); },
-        onRoomState: (state) => {
-          if (state.suspended && !suspendedRef.current) gameApiRef.current?.chime();
-          suspendedRef.current = state.suspended;
-          setRoom(state);
-        },
-        onPendingApprovals: (pending) => {
-          const fresh = diffPendingApprovals(seenApprovalsRef.current, pending);
-          fresh.forEach((event) => pushFeedEntry(event));
-          seenApprovalsRef.current = new Set(pending.map((entry) => entry.accountId));
-          setPendingApprovals(pending);
-          debug('coop', 'pending approvals (hud)', { count: pending.length, fresh: fresh.length });
-        },
-        onBans: (bans) => setBans(bans),
-        onError: (code) => {
-          const key = AUTH_ERROR_KEYS[code];
-          if (key) setAuthToast(t(key));
-          debug('coop', 'error (hud)', { code, toast: key ? true : false });
-        },
+  // The engine's HUD bridge: stable callbacks the running game pushes net/roster/admin state through.
+  // Built lazily (not on lobby render) so nothing here forces the heavy engine into the lobby bundle.
+  const makeBridge = useCallback((activeBrand: Brand): CoopBridge => ({
+    resolveName: () => loadName().trim(),
+    resolveAppearance: () => loadLook(),
+    resolveClaim: (resolvedName) => resolveClaim(activeBrand.id, resolvedName),
+    resolveOffline: () => soloRef.current,
+    resolveInitialRoom: () => lobbyRoomRef.current,
+    hud: {
+      onState: (state) => {
+        setNetState(state);
+        if (state === 'online') setWelcomed(true);
+        debug('coop', 'net state', { state });
       },
-      bind: (api) => { gameApiRef.current = api; },
-    };
-    import('../lib/game-engine').then((mod) => {
-      if (!alive) return;
+      onPing: (value) => setPing(value),
+      onChat: (from, text) => pushChatLine(from, text),
+      onCount: (count) => { setFirstSnapshot(true); setOnline(count); },
+      onRoster: (players) => setRoster(players),
+      onEvent: (event) => {
+        if (event.kind === 'reset_scores') gameApiRef.current?.chime();
+        pushFeedEntry(event);
+      },
+      // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
+      onScore: () => undefined,
+      onRole: (role) => { setIsAdmin(role.admin); setIsModerator(role.moderator); },
+      onRoomState: (state) => {
+        if (state.suspended && !suspendedRef.current) gameApiRef.current?.chime();
+        suspendedRef.current = state.suspended;
+        setRoom(state);
+      },
+      onPendingApprovals: (pending) => {
+        const fresh = diffPendingApprovals(seenApprovalsRef.current, pending);
+        fresh.forEach((event) => pushFeedEntry(event));
+        seenApprovalsRef.current = new Set(pending.map((entry) => entry.accountId));
+        setPendingApprovals(pending);
+        debug('coop', 'pending approvals (hud)', { count: pending.length, fresh: fresh.length });
+      },
+      onBans: (bans) => setBans(bans),
+      onError: (code) => {
+        const key = AUTH_ERROR_KEYS[code];
+        if (key) setAuthToast(t(key));
+        debug('coop', 'error (hud)', { code, toast: key ? true : false });
+      },
+    },
+    bind: (api) => { gameApiRef.current = api; },
+  }), [pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom, setPendingApprovals, setBans]);
+
+  // Pressing Play dynamically imports the code-split engine (stage 'engine'), builds it — which inits
+  // the wasm core + generates the world (stage 'world') — then re-clicks Play so the engine's own start
+  // listener hides the lobby and reveals the live world (loader → ready, fading out). On failure the
+  // loader swaps to an on-brand retry message instead of leaving a blank screen.
+  const bootEngine = useCallback(async (): Promise<void> => {
+    if (!brand) return;
+    if (engineRequestedRef.current) return;
+    engineRequestedRef.current = true;
+    dispatchLoader({ kind: 'start' });
+    try {
+      const mod = await import('../lib/game-engine');
       debug('engine', 'engine module loaded', { id: brand.id, name: brand.name });
-      cleanup = mod.initGame(brand, bridge);
-    });
-    return () => { alive = false; if (cleanup) cleanup(); };
-  }, [brand, pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom, setPendingApprovals, setBans]);
+      dispatchLoader({ kind: 'stage', stage: LoaderStage.World });
+      engineCleanupRef.current = mod.initGame(brand, makeBridge(brand));
+      dispatchLoader({ kind: 'ready' });
+      document.getElementById('playBtn')?.click();
+      debug('engine', 'world ready', { id: brand.id, mode: soloRef.current ? 'offline' : 'online' });
+    } catch (error) {
+      engineRequestedRef.current = false;
+      dispatchLoader({ kind: 'fail' });
+      warn('engine', 'engine boot failed', { error: String(error) });
+    }
+  }, [brand, makeBridge]);
+
+  const retryStart = useCallback((): void => {
+    dispatchLoader({ kind: 'retry' });
+    bootEngine();
+  }, [bootEngine]);
+
+  // Tear the running engine down on unmount (the engine itself owns its in-session cleanup).
+  useEffect(() => () => { engineCleanupRef.current?.(); }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -359,7 +386,9 @@ export function useGame() {
 
   // Play actually starting the game tears down the headless lobby admin connection so it never
   // collides with the in-game coop socket on the same claim. The gate above stops propagation when a
-  // login is still needed, so this bubble-phase listener only fires when the engine truly boots.
+  // login is still needed, so this bubble-phase listener only fires when the engine truly boots. The
+  // first click loads the engine behind the loader; bootEngine re-clicks once built, and is guarded so
+  // that second click is a no-op (only the engine's own start listener acts on it).
   useEffect(() => {
     if (!brand) return;
     const tenantId = brand.id;
@@ -370,10 +399,11 @@ export function useGame() {
       setWelcomed(false);
       setFirstSnapshot(false);
       debug('coop', 'mode entry', { mode: soloRef.current ? 'offline' : 'online', name: loadName().trim(), tenant: tenantId });
+      bootEngine();
     }
     playBtn.addEventListener('click', onStart);
     return () => playBtn.removeEventListener('click', onStart);
-  }, [brand]);
+  }, [brand, bootEngine]);
 
   useEffect(() => {
     if (!brand) return;
@@ -505,6 +535,7 @@ export function useGame() {
   return {
     brand, failed, offline, offlineDismissed, setOfflineDismissed,
     name, look, solo, setSolo, soloRef, modeGates,
+    loaderState, retryStart,
     netState, ping, online, interactive, connectKey,
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData, debugCopied, copyDebugReport,
