@@ -1124,7 +1124,37 @@ impl Db {
                 params![tenant, email, admin as i64],
             )
             .await?;
-        Ok(changed > 0)
+        if changed > 0 {
+            return Ok(true);
+        }
+        // No account for this email yet (they have never logged in). When GRANTING, pre-create a
+        // pending account so the role is waiting for them: claim_account matches by email on first
+        // login and keeps the role. Revoking a non-existent account is just a no-op.
+        if !admin {
+            return Ok(false);
+        }
+        self.pre_authorize_account(tenant, email, true, false).await
+    }
+
+    /// Create a placeholder account for an email that has never logged in, carrying a pre-granted role
+    /// so an admin can authorize someone before their first login. The name is set to the email (it is
+    /// NOT NULL and unique per tenant); `claim_account` renames it to the player's chosen name on first
+    /// login and preserves the role.
+    async fn pre_authorize_account(
+        &self,
+        tenant: &str,
+        email: &str,
+        admin: bool,
+        moderator: bool,
+    ) -> Result<bool, libsql::Error> {
+        self.conn()?
+            .execute(
+                "INSERT INTO accounts (account_id, tenant, email, name, is_admin, is_moderator, created_at) \
+                 VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)",
+                params![gen_account_id(), tenant, email, admin as i64, moderator as i64, now_ms()],
+            )
+            .await?;
+        Ok(true)
     }
 
     /// Set the moderator flag on the `(tenant, name)` account. Granting moderator clears admin in the
@@ -1160,7 +1190,15 @@ impl Db {
                 params![tenant, email, moderator as i64],
             )
             .await?;
-        Ok(changed > 0)
+        if changed > 0 {
+            return Ok(true);
+        }
+        // Same pre-authorization as admin: granting moderator to an email that never logged in creates
+        // a pending account that keeps the role at first login; revoking a non-existent one is a no-op.
+        if !moderator {
+            return Ok(false);
+        }
+        self.pre_authorize_account(tenant, email, false, true).await
     }
 
     /// Whether the account is a room admin. Unknown accounts are not admins.
@@ -2400,7 +2438,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_admin_by_email_grants_then_revokes_and_reports_unknown() {
+    async fn set_admin_by_email_grants_revokes_existing_and_isolates_tenants() {
         let db = memory_db().await;
         // Seed the auto-admin first account so the account under test starts non-admin.
         account(&db, "acme", "first@x.com", "First").await;
@@ -2419,15 +2457,60 @@ mod tests {
             .unwrap());
         assert!(!db.is_admin(&ann).await.unwrap());
 
-        // An unknown email reports no change, and tenants are isolated.
+        // Revoking a role from an email that never existed is a harmless no-op — no row is created.
         assert!(!db
-            .set_admin_by_email("acme", "nobody@x.com", true)
+            .set_admin_by_email("acme", "nobody@x.com", false)
             .await
             .unwrap());
-        assert!(!db
+        assert!(db
+            .get_account_by_email("acme", "nobody@x.com")
+            .await
+            .unwrap()
+            .is_none());
+        // Pre-authorizing in another tenant creates a SEPARATE account there and never touches acme.
+        assert!(db
             .set_admin_by_email("demo", "ann@x.com", true)
             .await
             .unwrap());
+        assert!(!db.is_admin(&ann).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn granting_admin_by_email_pre_authorizes_a_player_who_never_logged_in() {
+        let db = memory_db().await;
+        // A regular player registers first, so the pre-authorized email is NOT the tenant's auto-admin.
+        account(&db, "acme", "first@x.com", "First").await;
+
+        // Grant admin to an email that has no account yet.
+        assert!(db
+            .set_admin_by_email("acme", "future@x.com", true)
+            .await
+            .unwrap());
+        let pending = db
+            .get_account_by_email("acme", "future@x.com")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(pending.is_admin);
+        assert_eq!(pending.name, "future@x.com"); // placeholder until they pick a name
+
+        // On first login they claim the email and choose a name; the admin role carries over.
+        let claimed = db
+            .claim_account("acme", "future@x.com", "Captain")
+            .await
+            .unwrap();
+        assert!(claimed.is_admin);
+        assert_eq!(claimed.name, "Captain");
+        assert!(db.is_admin(&claimed.account_id).await.unwrap());
+
+        // The same pre-authorization works for moderator.
+        assert!(db
+            .set_moderator_by_email("acme", "mod@x.com", true)
+            .await
+            .unwrap());
+        let mod_claim = db.claim_account("acme", "mod@x.com", "Mod").await.unwrap();
+        assert!(mod_claim.is_moderator);
+        assert!(!mod_claim.is_admin);
     }
 
     #[tokio::test]
@@ -2471,7 +2554,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_moderator_by_email_grants_then_revokes_and_reports_unknown() {
+    async fn set_moderator_by_email_grants_revokes_existing_and_isolates_tenants() {
         let db = memory_db().await;
         let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         let role = |id: String| {
@@ -2496,15 +2579,22 @@ mod tests {
             .unwrap());
         assert_eq!(role(ann.clone()).await, Role::Player);
 
-        // An unknown email reports no change, and tenants are isolated.
+        // Revoking from an email that never existed is a no-op (no row created).
         assert!(!db
-            .set_moderator_by_email("acme", "nobody@x.com", true)
+            .set_moderator_by_email("acme", "nobody@x.com", false)
             .await
             .unwrap());
-        assert!(!db
+        assert!(db
+            .get_account_by_email("acme", "nobody@x.com")
+            .await
+            .unwrap()
+            .is_none());
+        // Pre-authorizing in another tenant creates a SEPARATE account there and never touches acme.
+        assert!(db
             .set_moderator_by_email("demo", "ann@x.com", true)
             .await
             .unwrap());
+        assert_eq!(role(ann.clone()).await, Role::Player);
     }
 
     #[tokio::test]
