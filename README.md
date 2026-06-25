@@ -716,13 +716,21 @@ that doesn't hold the lease rejects the join with `served_elsewhere` (the client
 tenant-affinity LB, e.g. subdomain-hashed, routes the retry to the holder). The owner id is `SERVER_ID`
 (else the hostname), **stable across restarts**, so a single instance always re-acquires its own room
 and never self-deadlocks. Raise `MAX_PLAYERS_PER_ROOM` / `MAX_CONNECTIONS_PER_IP` per the loadtest above
-when stress-testing a single instance. Verified end-to-end with two instances on one DB: A joining
-`acme` gets `welcome` (holds the lease) while B joining the same room gets `served_elsewhere`.
+when stress-testing a single instance.
 
-Running multiple instances requires a **concurrency-capable shared libSQL** (a remote/replicated
-Turso-style db, the same one all instances point at) — a single local SQLite **file** is single-writer
-and two processes opening a fresh one race on init (`database is locked`). The lease coordination lives
-entirely in that shared db, so a remote libSQL is the multi-server deployment requirement.
+The shared db is a **remote libSQL (Turso)**: set `DATABASE_URL` (+ `DATABASE_AUTH_TOKEN`) and every
+instance points at the same one — concurrent, no file lock. Unset, the server opens a single local
+SQLite **file** (one instance only; SQLite is single-writer, so two processes racing a fresh file get
+`database is locked`). For local multi-server dev, run `turso dev --port 8090` and set
+`DATABASE_URL=http://127.0.0.1:8090` on each instance. Because a long-lived **remote** connection's
+Hrana stream expires on inactivity (`STREAM_EXPIRED`), the db opens a fresh connection **per operation**
+when remote (a local file/`:memory:` keeps one shared connection); every query thus runs on a live
+stream and reads/writes the one shared db, keeping the lease strongly consistent.
+
+Verified end-to-end against a local `turso dev`: two instances start **concurrently** on the one db (no
+lock); A joining `acme` gets `welcome` and holds the lease while B joining the same room gets
+`served_elsewhere` (even after several 5 s renews — no stream expiry); and when A is killed, B **takes
+over** the room once A's lease passes the 30 s stale window.
 
 **CI (`.github/workflows/ci.yml`, two jobs on push-to-main + every PR):**
 

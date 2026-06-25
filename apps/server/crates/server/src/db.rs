@@ -141,26 +141,59 @@ pub struct PendingApproval {
     pub email: String,
 }
 
-/// Owns the libSQL handle. Cloneable connections are cheap; we hold the `Database` so the
-/// file stays open for the process lifetime.
+/// Owns the libSQL handle. `conn()` hands out the connection each operation runs on:
+/// - **Remote** libSQL (Turso / `turso dev`): a fresh connection PER OP (`shared` is `None`). A
+///   long-lived remote connection's Hrana stream expires on inactivity (`STREAM_EXPIRED`), which would
+///   break the room-lease queries; a per-op connection always runs on a live stream and reads/writes
+///   the one shared db directly, so the lease stays strongly consistent across instances.
+/// - **Local** file / `:memory:`: ONE shared connection (`shared` is `Some`) — a local connection has
+///   no stream to expire, and a fresh `:memory:` connection would be a SEPARATE empty db, so the single
+///   connection IS the store. `Connection` is `Arc`-backed (cheap to clone).
 pub struct Db {
-    _database: Database,
-    conn: Connection,
+    database: Database,
+    shared: Option<Connection>,
 }
 
 impl Db {
-    /// Open the local file db, create the schema, and seed the built-in tenants if empty.
-    pub async fn open() -> Result<Self, libsql::Error> {
-        let path =
-            std::env::var("DATABASE_PATH").unwrap_or_else(|_| DEFAULT_DATABASE_PATH.to_string());
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            let _ = std::fs::create_dir_all(parent);
+    fn conn(&self) -> Result<Connection, libsql::Error> {
+        match &self.shared {
+            Some(conn) => Ok(conn.clone()),
+            None => self.database.connect(),
         }
-        let database = Builder::new_local(&path).build().await?;
-        let conn = database.connect()?;
-        let db = Self {
-            _database: database,
-            conn,
+    }
+}
+
+impl Db {
+    /// Open the db (remote libSQL when `DATABASE_URL` is set, else a local file), create the schema,
+    /// and seed the built-in tenants if empty.
+    pub async fn open() -> Result<Self, libsql::Error> {
+        let db = match std::env::var("DATABASE_URL") {
+            // Remote libSQL — a Turso cloud db OR a local `turso dev` / `sqld` server. It is concurrent
+            // with no file lock, so MANY server instances can share ONE db (the room-lease coordination
+            // point that lets them run behind a load balancer). This is the multi-server backing.
+            // `DATABASE_AUTH_TOKEN` is empty for a no-auth local dev server. No shared connection — a
+            // fresh one per op (see the struct doc).
+            Ok(url) if !url.trim().is_empty() => {
+                let token = std::env::var("DATABASE_AUTH_TOKEN").unwrap_or_default();
+                tracing::info!(%url, "opening remote libSQL (shared db, multi-server)");
+                let database = Builder::new_remote(url, token).build().await?;
+                Self {
+                    database,
+                    shared: None,
+                }
+            }
+            // A single local SQLite file — one instance only (SQLite is single-writer, so two processes
+            // opening one file race on init / lock; use DATABASE_URL above to run more than one instance).
+            _ => {
+                let path = std::env::var("DATABASE_PATH")
+                    .unwrap_or_else(|_| DEFAULT_DATABASE_PATH.to_string());
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let database = Builder::new_local(&path).build().await?;
+                let shared = Some(database.connect()?);
+                Self { database, shared }
+            }
         };
         db.ensure().await?;
         Ok(db)
@@ -170,17 +203,14 @@ impl Db {
     #[cfg(test)]
     pub(crate) async fn memory() -> Self {
         let database = Builder::new_local(":memory:").build().await.unwrap();
-        let conn = database.connect().unwrap();
-        let db = Self {
-            _database: database,
-            conn,
-        };
+        let shared = Some(database.connect().unwrap());
+        let db = Self { database, shared };
         db.ensure().await.unwrap();
         db
     }
 
     async fn ensure(&self) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS tenants (
                     id TEXT PRIMARY KEY,
@@ -191,7 +221,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS accounts (
                     account_id TEXT PRIMARY KEY,
@@ -232,12 +262,12 @@ impl Db {
             // until an admin approves them, which clears it.
             "ALTER TABLE approval_requests ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0",
         ] {
-            let _ = self.conn.execute(column, ()).await;
+            let _ = self.conn()?.execute(column, ()).await;
         }
         // Backfill `image` from the legacy `avatar` column where it exists and image is still blank.
         // The whole statement is ignored on a slim db that never had an `avatar` column.
         let _ = self
-            .conn
+            .conn()?
             .execute(
                 "UPDATE tenants SET image = avatar WHERE image = '' AND avatar IS NOT NULL",
                 (),
@@ -256,10 +286,10 @@ impl Db {
             "ALTER TABLE tenants DROP COLUMN face_texture",
             "ALTER TABLE tenants DROP COLUMN face_block_name",
         ] {
-            let _ = self.conn.execute(column, ()).await;
+            let _ = self.conn()?.execute(column, ()).await;
         }
         // Per-account play time used inside the current rolling window (for the play-time limit).
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS playtime (
                     tenant TEXT NOT NULL,
@@ -271,7 +301,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS bans (
                     ip TEXT PRIMARY KEY,
@@ -280,7 +310,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS worlds (
                     tenant TEXT PRIMARY KEY,
@@ -293,7 +323,7 @@ impl Db {
         // The cross-instance room lease: one row per served room (tenant, world), naming the server
         // instance that owns it and when it last beat. The shared db is the only coordination point,
         // so two instances behind a load balancer can never serve the same room at once.
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS room_leases (
                     tenant TEXT NOT NULL,
@@ -305,7 +335,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS leaderboard (
                     tenant TEXT NOT NULL,
@@ -317,7 +347,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS magic_links (
                     token TEXT PRIMARY KEY,
@@ -330,7 +360,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 // One row per signed-in device (keyed by token), so an account can hold several live
                 // claims at once — logging in on a new device never evicts the others.
@@ -343,7 +373,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,7 +388,7 @@ impl Db {
             )
             .await?;
         // Every accepted chat line, kept for the admin chat-log report within the retention window.
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS chat_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -371,7 +401,7 @@ impl Db {
             )
             .await?;
         // An approved account (allowed in while the tenant's approval gate is on) is a row here.
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS approvals (
                     tenant TEXT NOT NULL,
@@ -383,7 +413,7 @@ impl Db {
             )
             .await?;
         // A not-yet-approved account that tried to join while the gate was on, awaiting an admin.
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS approval_requests (
                     tenant TEXT NOT NULL,
@@ -397,7 +427,7 @@ impl Db {
                 (),
             )
             .await?;
-        self.conn
+        self.conn()?
             .execute(
                 "CREATE TABLE IF NOT EXISTS waitlist (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -411,7 +441,7 @@ impl Db {
             .await?;
 
         let mut rows = self
-            .conn
+            .conn()?
             .query("SELECT COUNT(*) AS n FROM tenants", ())
             .await?;
         let count = match rows.next().await? {
@@ -423,7 +453,7 @@ impl Db {
                 self.insert_tenant(&tenant).await?;
             }
             // The demo world is a 5-minutes-per-24h taste; real tenants stay unlimited.
-            self.conn
+            self.conn()?
                 .execute(
                     "UPDATE tenants SET playtime_limit_min = 5, playtime_window_h = 24 WHERE id = 'demo'",
                     (),
@@ -436,7 +466,7 @@ impl Db {
     /// A tenant's play-time budget: (minutes allowed, window hours). Both 0 means unlimited.
     pub async fn tenant_playtime(&self, tenant: &str) -> Result<(i64, i64), libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT playtime_limit_min, playtime_window_h FROM tenants WHERE id = ?1",
                 params![tenant],
@@ -451,7 +481,7 @@ impl Db {
     /// A tenant's runtime moderation flags: (suspended, approval_required). Both off for a fresh tenant.
     pub async fn tenant_flags(&self, tenant: &str) -> Result<(bool, bool), libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT suspended, approval_required FROM tenants WHERE id = ?1",
                 params![tenant],
@@ -464,7 +494,7 @@ impl Db {
     }
 
     pub async fn set_tenant_suspended(&self, tenant: &str, on: bool) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE tenants SET suspended = ?2 WHERE id = ?1",
                 params![tenant, on as i64],
@@ -478,7 +508,7 @@ impl Db {
         tenant: &str,
         on: bool,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE tenants SET approval_required = ?2 WHERE id = ?1",
                 params![tenant, on as i64],
@@ -494,7 +524,7 @@ impl Db {
         limit_min: u32,
         window_h: u32,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE tenants SET playtime_limit_min = ?2, playtime_window_h = ?3 WHERE id = ?1",
                 params![tenant, limit_min as i64, window_h as i64],
@@ -506,7 +536,7 @@ impl Db {
     /// A tenant's allowed game modes: (online_allowed, offline_allowed). Both on for a fresh tenant.
     pub async fn tenant_modes(&self, tenant: &str) -> Result<(bool, bool), libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT online_allowed, offline_allowed FROM tenants WHERE id = ?1",
                 params![tenant],
@@ -525,7 +555,7 @@ impl Db {
         online_allowed: bool,
         offline_allowed: bool,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE tenants SET online_allowed = ?2, offline_allowed = ?3 WHERE id = ?1",
                 params![tenant, online_allowed as i64, offline_allowed as i64],
@@ -537,7 +567,7 @@ impl Db {
     /// Whether monsters are calm for a tenant (default true = calm for a fresh world).
     pub async fn tenant_peace(&self, tenant: &str) -> Result<bool, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query("SELECT peace FROM tenants WHERE id = ?1", params![tenant])
             .await?;
         match rows.next().await? {
@@ -548,7 +578,7 @@ impl Db {
 
     /// Persist whether monsters are calm, so the admin's peace toggle survives a room restart.
     pub async fn set_tenant_peace(&self, tenant: &str, peace: bool) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE tenants SET peace = ?2 WHERE id = ?1",
                 params![tenant, peace as i64],
@@ -560,7 +590,7 @@ impl Db {
     /// A tenant's persisted world blob (the compressed edit diff), if it has one.
     pub async fn load_world(&self, tenant: &str) -> Result<Option<Vec<u8>>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query("SELECT blob FROM worlds WHERE tenant = ?1", params![tenant])
             .await?;
         match rows.next().await? {
@@ -571,7 +601,7 @@ impl Db {
 
     /// Write a tenant's world blob (replacing any previous one).
     pub async fn save_world(&self, tenant: &str, blob: &[u8]) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO worlds (tenant, blob, updated_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT(tenant) DO UPDATE SET blob = ?2, updated_at = ?3",
@@ -594,7 +624,7 @@ impl Db {
         stale_ms: i64,
     ) -> Result<bool, libsql::Error> {
         let stale_before = now_ms - stale_ms;
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO room_leases (tenant, world, owner, heartbeat_ms) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(tenant, world) DO UPDATE SET owner = excluded.owner, heartbeat_ms = excluded.heartbeat_ms
@@ -603,7 +633,7 @@ impl Db {
             )
             .await?;
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT owner FROM room_leases WHERE tenant = ?1 AND world = ?2",
                 params![tenant, world],
@@ -623,7 +653,7 @@ impl Db {
         owner: &str,
         now_ms: i64,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE room_leases SET heartbeat_ms = ?4 WHERE tenant = ?1 AND world = ?2 AND owner = ?3",
                 params![tenant, world, owner, now_ms],
@@ -639,7 +669,7 @@ impl Db {
         world: &str,
         owner: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "DELETE FROM room_leases WHERE tenant = ?1 AND world = ?2 AND owner = ?3",
                 params![tenant, world, owner],
@@ -650,7 +680,7 @@ impl Db {
 
     /// Every banned IP as a string, to warm the in-memory ban set on startup.
     pub async fn all_bans(&self) -> Result<Vec<String>, libsql::Error> {
-        let mut rows = self.conn.query("SELECT ip FROM bans", ()).await?;
+        let mut rows = self.conn()?.query("SELECT ip FROM bans", ()).await?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
             out.push(row.get::<String>(0)?);
@@ -659,7 +689,7 @@ impl Db {
     }
 
     pub async fn add_ban(&self, ip: &str) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO bans (ip, created_at) VALUES (?1, ?2) ON CONFLICT(ip) DO NOTHING",
                 params![ip, now_ms()],
@@ -669,7 +699,7 @@ impl Db {
     }
 
     pub async fn remove_ban(&self, ip: &str) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute("DELETE FROM bans WHERE ip = ?1", params![ip])
             .await?;
         Ok(())
@@ -679,7 +709,7 @@ impl Db {
     /// number of rows removed.
     pub async fn purge_stale_bans(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
         let cutoff = now_ms() - max_age_ms;
-        self.conn
+        self.conn()?
             .execute("DELETE FROM bans WHERE created_at < ?1", params![cutoff])
             .await
     }
@@ -687,7 +717,7 @@ impl Db {
     /// Insert a ban with an explicit timestamp, to exercise the retention purge.
     #[cfg(test)]
     pub(crate) async fn add_ban_at(&self, ip: &str, created_at: i64) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO bans (ip, created_at) VALUES (?1, ?2)
                  ON CONFLICT(ip) DO UPDATE SET created_at = excluded.created_at",
@@ -700,7 +730,7 @@ impl Db {
     /// Drop timeline/moderation events older than the retention window. Returns the rows removed.
     pub async fn purge_stale_events(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
         let cutoff = now_ms() - max_age_ms;
-        self.conn
+        self.conn()?
             .execute("DELETE FROM events WHERE created_at < ?1", params![cutoff])
             .await
     }
@@ -709,7 +739,7 @@ impl Db {
     /// rows removed.
     pub async fn purge_stale_playtime(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
         let cutoff = now_ms() - max_age_ms;
-        self.conn
+        self.conn()?
             .execute(
                 "DELETE FROM playtime WHERE window_start_ms < ?1",
                 params![cutoff],
@@ -720,7 +750,7 @@ impl Db {
     /// Drop chat lines older than the retention window. Returns the rows removed.
     pub async fn purge_stale_chat(&self, max_age_ms: i64) -> Result<u64, libsql::Error> {
         let cutoff = now_ms() - max_age_ms;
-        self.conn
+        self.conn()?
             .execute("DELETE FROM chat_log WHERE sent_at < ?1", params![cutoff])
             .await
     }
@@ -734,7 +764,7 @@ impl Db {
         text: &str,
         sent_at: i64,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO chat_log (tenant, name, text, sent_at) VALUES (?1, ?2, ?3, ?4)",
                 params![tenant, name, text, sent_at],
@@ -751,7 +781,7 @@ impl Db {
         account_id: &str,
         created_at: i64,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO events (tenant, account_id, kind, name, detail, created_at)
                  VALUES (?1, ?2, 'test', '', '', ?3)",
@@ -769,7 +799,7 @@ impl Db {
         account_id: &str,
         window_start_ms: i64,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO playtime (tenant, account_id, window_start_ms, used_ms)
                  VALUES (?1, ?2, ?3, 0)",
@@ -788,7 +818,7 @@ impl Db {
         now_ms: i64,
     ) -> Result<i64, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT window_start_ms, used_ms FROM playtime WHERE tenant = ?1 AND account_id = ?2",
                 params![tenant, account_id],
@@ -822,7 +852,7 @@ impl Db {
         let fresh = used == 0;
         let new_used = used + delta_ms;
         if fresh {
-            self.conn
+            self.conn()?
                 .execute(
                     "INSERT INTO playtime (tenant, account_id, window_start_ms, used_ms)
                      VALUES (?1, ?2, ?3, ?4)
@@ -831,7 +861,7 @@ impl Db {
                 )
                 .await?;
         } else {
-            self.conn
+            self.conn()?
                 .execute(
                     "UPDATE playtime SET used_ms = ?3 WHERE tenant = ?1 AND account_id = ?2",
                     params![tenant, account_id, new_used],
@@ -844,7 +874,7 @@ impl Db {
     /// Raw tenant upsert. Kept separate from `ensure()` so seeding never re-enters schema
     /// setup, which would deadlock on the connection.
     async fn insert_tenant(&self, tenant: &Tenant) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO tenants (id, name, image, created_at)
                  VALUES (?1, ?2, ?3, ?4)
@@ -862,7 +892,7 @@ impl Db {
 
     pub async fn get_tenant(&self, id: &str) -> Result<Option<Tenant>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT id, name, image, playtime_limit_min, playtime_window_h, online_allowed, \
                  offline_allowed FROM tenants WHERE id = ?1",
@@ -877,7 +907,7 @@ impl Db {
 
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT id, name, image, playtime_limit_min, playtime_window_h, online_allowed, \
                  offline_allowed FROM tenants ORDER BY created_at ASC",
@@ -897,7 +927,7 @@ impl Db {
     }
 
     pub async fn delete_tenant(&self, id: &str) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute("DELETE FROM tenants WHERE id = ?1", params![id])
             .await?;
         Ok(())
@@ -910,7 +940,7 @@ impl Db {
     ) -> Result<Vec<ScoreEntry>, libsql::Error> {
         let clamped = limit.clamp(1, MAX_TOP_LIMIT) as i64;
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT a.name, l.score FROM leaderboard l
                  JOIN accounts a ON a.account_id = l.account_id
@@ -937,7 +967,7 @@ impl Db {
     ) -> Result<Vec<ScoreEntry>, libsql::Error> {
         let clamped = limit.clamp(1, MAX_TOP_LIMIT) as i64;
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT a.name, l.score FROM leaderboard l
                  JOIN accounts a ON a.account_id = l.account_id
@@ -962,7 +992,7 @@ impl Db {
         if score < 0 {
             return Ok(());
         }
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO leaderboard (tenant, account_id, score, created_at)
                  SELECT a.tenant, a.account_id, ?2, ?3 FROM accounts a WHERE a.account_id = ?1
@@ -977,7 +1007,7 @@ impl Db {
 
     /// Wipe every leaderboard score for a tenant (the admin "reset everyone's score" action).
     pub async fn reset_scores(&self, tenant: &str) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute("DELETE FROM leaderboard WHERE tenant = ?1", params![tenant])
             .await?;
         Ok(())
@@ -991,7 +1021,7 @@ impl Db {
         email: &str,
     ) -> Result<Option<Account>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT account_id, name, is_admin, is_moderator FROM accounts WHERE tenant = ?1 AND email = ?2",
                 params![tenant, email],
@@ -1016,7 +1046,7 @@ impl Db {
         name: &str,
     ) -> Result<Option<Account>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT account_id, email, is_admin, is_moderator FROM accounts WHERE tenant = ?1 AND name = ?2",
                 params![tenant, name],
@@ -1040,7 +1070,7 @@ impl Db {
         account_id: &str,
     ) -> Result<Option<Account>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT tenant, email, name, is_admin, is_moderator FROM accounts WHERE account_id = ?1",
                 params![account_id],
@@ -1070,7 +1100,7 @@ impl Db {
         admin: bool,
     ) -> Result<bool, libsql::Error> {
         let changed = self
-            .conn
+            .conn()?
             .execute(
                 "UPDATE accounts SET is_admin = ?3, is_moderator = is_moderator AND ?3 = 0 \
                  WHERE tenant = ?1 AND name = ?2",
@@ -1087,7 +1117,7 @@ impl Db {
         admin: bool,
     ) -> Result<bool, libsql::Error> {
         let changed = self
-            .conn
+            .conn()?
             .execute(
                 "UPDATE accounts SET is_admin = ?3, is_moderator = is_moderator AND ?3 = 0 \
                  WHERE tenant = ?1 AND email = ?2",
@@ -1106,7 +1136,7 @@ impl Db {
         moderator: bool,
     ) -> Result<bool, libsql::Error> {
         let changed = self
-            .conn
+            .conn()?
             .execute(
                 "UPDATE accounts SET is_moderator = ?3, is_admin = is_admin AND ?3 = 0 \
                  WHERE tenant = ?1 AND name = ?2",
@@ -1123,7 +1153,7 @@ impl Db {
         moderator: bool,
     ) -> Result<bool, libsql::Error> {
         let changed = self
-            .conn
+            .conn()?
             .execute(
                 "UPDATE accounts SET is_moderator = ?3, is_admin = is_admin AND ?3 = 0 \
                  WHERE tenant = ?1 AND email = ?2",
@@ -1153,7 +1183,7 @@ impl Db {
     /// Returns false when no such account exists.
     pub async fn set_role(&self, account_id: &str, role: Role) -> Result<bool, libsql::Error> {
         let changed = self
-            .conn
+            .conn()?
             .execute(
                 "UPDATE accounts SET is_admin = ?2, is_moderator = ?3 WHERE account_id = ?1",
                 params![
@@ -1169,7 +1199,7 @@ impl Db {
     /// Every account of a tenant for the /admin panel, oldest-first.
     pub async fn list_accounts(&self, tenant: &str) -> Result<Vec<AccountInfo>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT account_id, name, email, is_admin, is_moderator FROM accounts
                  WHERE tenant = ?1 ORDER BY created_at ASC",
@@ -1192,7 +1222,7 @@ impl Db {
     /// How many accounts a tenant has. Used to make the first registered account its admin.
     pub async fn account_count(&self, tenant: &str) -> Result<i64, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT COUNT(*) AS n FROM accounts WHERE tenant = ?1",
                 params![tenant],
@@ -1250,7 +1280,7 @@ impl Db {
         let account_id = gen_account_id();
         // The first registered account of a tenant becomes its admin automatically.
         let first_in_tenant = self.account_count(tenant).await? == 0;
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO accounts (account_id, tenant, email, name, is_admin, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1294,7 +1324,7 @@ impl Db {
         {
             return Ok(None);
         }
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE accounts SET name = ?2 WHERE account_id = ?1",
                 params![account_id, new_name],
@@ -1312,7 +1342,7 @@ impl Db {
         email: &str,
         ttl_ms: i64,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO magic_links (token, code, tenant, name, email, expires_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1331,7 +1361,7 @@ impl Db {
     ) -> Result<Option<MagicLink>, libsql::Error> {
         let mut rows = match (token, code) {
             (Some(tok), _) => {
-                self.conn
+                self.conn()?
                     .query(
                         "SELECT token, tenant, name, email FROM magic_links WHERE token = ?1 AND expires_at > ?2",
                         params![tok, now_ms()],
@@ -1339,7 +1369,7 @@ impl Db {
                     .await?
             }
             (None, Some((tenant, name, c))) => {
-                self.conn
+                self.conn()?
                     .query(
                         "SELECT token, tenant, name, email FROM magic_links
                          WHERE tenant = ?1 AND name = ?2 AND code = ?3 AND expires_at > ?4",
@@ -1358,7 +1388,7 @@ impl Db {
             name: row.get::<String>(2)?,
             email: row.get::<String>(3)?,
         };
-        self.conn
+        self.conn()?
             .execute(
                 "DELETE FROM magic_links WHERE token = ?1",
                 params![found_token],
@@ -1369,7 +1399,7 @@ impl Db {
 
     /// Make `token` the active claim for an account, replacing any previous one.
     pub async fn set_claim(&self, account_id: &str, token: &str) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO device_claims (token, account_id, tenant, created_at)
                  SELECT ?2, a.account_id, a.tenant, ?3 FROM accounts a WHERE a.account_id = ?1
@@ -1387,7 +1417,7 @@ impl Db {
         token: &str,
     ) -> Result<Option<(String, String)>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT c.account_id, a.name FROM device_claims c
                  JOIN accounts a ON a.account_id = c.account_id
@@ -1403,7 +1433,7 @@ impl Db {
 
     /// Drop the active claim for an account, only if `token` is the one currently held (logout).
     pub async fn clear_claim(&self, account_id: &str, token: &str) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "DELETE FROM device_claims WHERE account_id = ?1 AND token = ?2",
                 params![account_id, token],
@@ -1415,7 +1445,7 @@ impl Db {
     /// All active claims as (account_id, token), used to warm the in-memory claim map on startup.
     pub async fn all_claims(&self) -> Result<Vec<(String, String)>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query("SELECT account_id, token FROM device_claims", ())
             .await?;
         let mut out = Vec::new();
@@ -1434,7 +1464,7 @@ impl Db {
         name: &str,
         detail: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO events (tenant, account_id, kind, name, detail, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1453,7 +1483,7 @@ impl Db {
     ) -> Result<Vec<TimelineEvent>, libsql::Error> {
         let clamped = limit.clamp(1, MAX_EVENT_BACKLOG) as i64;
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT kind, name, detail FROM (
                     SELECT id, kind, name, detail FROM events
@@ -1480,7 +1510,7 @@ impl Db {
         name: &str,
         text: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO chat_log (tenant, name, text, sent_at) VALUES (?1, ?2, ?3, ?4)",
                 params![tenant, name, text, now_ms()],
@@ -1498,7 +1528,7 @@ impl Db {
     ) -> Result<Vec<ChatEntry>, libsql::Error> {
         let clamped = limit.clamp(1, MAX_CHAT_BACKLOG) as i64;
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT name, text, sent_at FROM chat_log
                  WHERE tenant = ?1 ORDER BY id DESC LIMIT ?2",
@@ -1525,7 +1555,7 @@ impl Db {
     ) -> Result<Vec<PlaytimeEntry>, libsql::Error> {
         let clamped = limit.clamp(1, MAX_REPORT_ROWS) as i64;
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT account_id, used_ms FROM playtime
                  WHERE tenant = ?1 ORDER BY used_ms DESC, window_start_ms DESC LIMIT ?2",
@@ -1545,7 +1575,7 @@ impl Db {
     /// Whether the account is approved to play in the tenant (only consulted when the gate is on).
     pub async fn is_approved(&self, tenant: &str, account_id: &str) -> Result<bool, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT 1 FROM approvals WHERE tenant = ?1 AND account_id = ?2",
                 params![tenant, account_id],
@@ -1560,7 +1590,7 @@ impl Db {
         tenant: &str,
         account_id: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO approvals (tenant, account_id, approved_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT(tenant, account_id) DO NOTHING",
@@ -1579,7 +1609,7 @@ impl Db {
         name: &str,
         email: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO approval_requests (tenant, account_id, name, email, requested_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)
@@ -1597,7 +1627,7 @@ impl Db {
         tenant: &str,
         account_id: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "DELETE FROM approval_requests WHERE tenant = ?1 AND account_id = ?2",
                 params![tenant, account_id],
@@ -1613,7 +1643,7 @@ impl Db {
         tenant: &str,
         account_id: &str,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "UPDATE approval_requests SET rejected = 1 WHERE tenant = ?1 AND account_id = ?2",
                 params![tenant, account_id],
@@ -1624,7 +1654,7 @@ impl Db {
 
     pub async fn is_rejected(&self, tenant: &str, account_id: &str) -> Result<bool, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT 1 FROM approval_requests WHERE tenant = ?1 AND account_id = ?2 AND rejected = 1",
                 params![tenant, account_id],
@@ -1640,7 +1670,7 @@ impl Db {
         tenant: &str,
     ) -> Result<Vec<PendingApproval>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT account_id, name, email FROM approval_requests
                  WHERE tenant = ?1 AND rejected = 0 ORDER BY requested_at ASC",
@@ -1661,7 +1691,7 @@ impl Db {
     /// Email addresses of a tenant's admins, so a held-out join can notify the grown-ups.
     pub async fn tenant_admin_emails(&self, tenant: &str) -> Result<Vec<String>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query(
                 "SELECT email FROM accounts WHERE tenant = ?1 AND is_admin = 1 ORDER BY created_at ASC",
                 params![tenant],
@@ -1682,7 +1712,7 @@ impl Db {
         name: Option<&str>,
         phone: Option<&str>,
     ) -> Result<(), libsql::Error> {
-        self.conn
+        self.conn()?
             .execute(
                 "INSERT INTO waitlist (email, name, phone, created_at) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(email) DO UPDATE SET
@@ -1697,7 +1727,7 @@ impl Db {
     #[cfg(test)]
     pub(crate) async fn waitlist_emails(&self) -> Result<Vec<String>, libsql::Error> {
         let mut rows = self
-            .conn
+            .conn()?
             .query("SELECT email FROM waitlist ORDER BY id ASC", ())
             .await?;
         let mut out = Vec::new();
@@ -2134,8 +2164,8 @@ mod tests {
         .unwrap();
 
         let db = Db {
-            _database: database,
-            conn,
+            database,
+            shared: Some(conn),
         };
         db.ensure().await.unwrap();
 
@@ -2145,7 +2175,7 @@ mod tests {
 
         // A brand-new tenant must insert cleanly into the migrated table: the dead NOT NULL branding
         // columns (hero, title_a, ...) are gone, so the slim id/name/image upsert no longer violates them.
-        db.conn
+        db.conn().unwrap()
             .execute(
                 "INSERT INTO tenants (id, name, image, created_at) VALUES ('fresh', 'Fresh', '/x.png', 2)",
                 (),
@@ -2191,7 +2221,8 @@ mod tests {
         let db = memory_db().await;
         let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.submit_score(&ann, 99).await.unwrap();
-        db.conn
+        db.conn()
+            .unwrap()
             .execute("DELETE FROM accounts WHERE account_id = ?1", params![ann])
             .await
             .unwrap();
