@@ -1,6 +1,10 @@
 // Offline dig progress, pure: count taps against the cell being chipped, resetting when the player
 // switches to a different cell, and report when enough taps have landed to break it. Mirrors the Rust
 // server's authoritative tap counting so an offline dig takes exactly as many taps as a co-op dig.
+//
+// NB: DEFERRED dedup — offline digs could be routed through the WASM core's input (room.rs `on_dig`) to
+// drop this mirror entirely, but that's a riskier offline-path change that was postponed. Until then,
+// keep the tap counting identical to the Rust side.
 
 export interface Chip {
   x: number;

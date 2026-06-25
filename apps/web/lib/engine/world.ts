@@ -3,6 +3,11 @@
 // no DOM. The base of a chunk is generated ONCE on first load by the injected `worldgen` (a wasm call into
 // `sim::worldgen_chunk`) and cached; every hot per-voxel read (physics, raycast, meshing) then reads this
 // in-memory cache — never wasm per voxel/frame.
+//
+// NB: `localIdx` / `inBounds` / the solid checks mirror sim (chunk_index / bounds / is_solid) but STAY
+// client-side on purpose — they are hot PER-VOXEL predicates; routing each through WASM would be
+// thousands of crossings per frame. The constants they use are code-generated, so they cannot drift.
+// Not a dedup candidate.
 import { AIR, CHUNK, SIZE_X, SIZE_Y, SIZE_Z, WATER_ID } from './constants';
 import type { WorldgenChunk } from './online/wasm-core-loader';
 

@@ -3,6 +3,12 @@
 // `isClear` is true; if nothing within `maxRadius` is clear it falls back to the base. No three.js,
 // no DOM — the Rust server runs the identical ring order (room.rs `find_spawn_slot`) so the online
 // truth and the offline prediction agree on which slot a blocked spawn snaps to.
+//
+// NB: this is a DELIBERATE hand-kept mirror of the Rust spawn algorithm (sim::find_spawn_slot /
+// random_spawn_base / spawn_column_clear). Single-sourcing it from the core (a wasm_api export + a
+// cross-language golden test) is a known follow-up that was deferred: it predicts over the LIVE client
+// world, so moving it carries gameplay risk not worth rushing. Until then, keep the ring order and the
+// clearance rule byte-for-byte identical to the Rust side.
 
 // A column is a clear spawn slot when its body — the two cells just above the surface, where the
 // player stands — is not solid (so the player never lands inside terrain, the monument or a built

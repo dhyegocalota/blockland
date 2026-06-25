@@ -2,7 +2,10 @@
 // a count per block id; this models the count math (never below zero, "have one to place") without
 // any three.js or DOM, so it stays unit-tested. The display formatting lives here too: admins build
 // freely (infinite) so their slots show no number, regular players see how many they banked.
-
+//
+// NB: this count math mirrors the Rust room.rs `bank_block`/`spend_block`. Replacing the class with the
+// server/WASM-pushed inventory as the single source is a DEFERRED dedup — kept for now because the
+// offline prediction needs local bank/spend before the core round-trip. Keep the math in sync by hand.
 export class BlockInventory {
   private readonly counts = new Map<number, number>();
 

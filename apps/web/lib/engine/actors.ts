@@ -84,6 +84,8 @@ export function cellOverlapsActor({
 
 // Lift `feet` upward while the actor's two-cell column is blocked, so it ends up standing in clear
 // space. Stops just under the world top so it can never run off the column.
+// NB: mirrors the Rust room.rs `lift_stuck_players` (whose comment points back here). Extracting a
+// shared `sim` fn behind a wasm_api export is a DEFERRED dedup; keep the lift loop in sync by hand.
 export function clearFeetAbove({ feet, isSolid }: { feet: number; isSolid: (y: number) => boolean }): number {
   let clear = feet;
   while (clear < SIZE_Y - 2 && (isSolid(clear) || isSolid(clear + 1))) clear++;

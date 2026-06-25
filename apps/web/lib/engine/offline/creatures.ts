@@ -3,6 +3,11 @@
 // The wander/chase AI + hit-reward helpers that used to live here were deleted once the offline game
 // moved to the Rust game-core via WASM — the core runs the AI now, so the TS copies were dead
 // duplication. No three.js, no DOM: names resolve from `nameKey`.
+//
+// NB: the hp/speed/reward fields mirror the Rust creatures.rs `CreatureKind::config()`. These are the
+// cleanest remaining dedup: they should be code-generated from Rust (like EYE_HEIGHT / DEATH_FALL_MS in
+// constants.gen.ts) so they can never drift — a DEFERRED follow-up. The look fields (colour/size/emoji/
+// nameKey) are client-only presentation and stay here.
 
 export type CreatureKind = 'animal' | 'monster';
 
