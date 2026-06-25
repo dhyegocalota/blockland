@@ -158,6 +158,9 @@ pub struct Hub {
     pub bans: Arc<Bans>,
     pub db: Arc<Db>,
     pub claims: Claims,
+    /// This process's stable room-lease owner id (env `SERVER_ID`, else the hostname). Stable across
+    /// restarts of the same instance, so a restart re-acquires its own lease and never self-deadlocks.
+    pub owner: String,
 }
 
 // Timeline events and play-time windows are dropped after this window so usage logs are never kept
@@ -171,6 +174,8 @@ impl Hub {
     pub async fn load(db: Arc<Db>) -> Self {
         let admin_token =
             std::env::var("ADMIN_TOKEN").unwrap_or_else(|_| "dev-admin-secret".into());
+        let owner = resolve_owner_id();
+        tracing::info!(%owner, "room-lease owner resolved");
         let limits = apply_env_overrides(load_limits());
 
         let tenants = db.list_tenants().await.unwrap_or_else(|e| {
@@ -223,6 +228,7 @@ impl Hub {
             bans: Arc::new(Bans::load(db.clone()).await),
             db,
             claims,
+            owner,
         }
     }
 
@@ -437,6 +443,36 @@ fn env_override<T: std::str::FromStr>(name: &str, fallback: T) -> T {
     }
 }
 
+// The room-lease owner id is read from `SERVER_ID`, else the hostname (`HOSTNAME` env, then
+// `/etc/hostname`), else a fixed `local`. Every source is stable across restarts of the same
+// instance, so a restart re-acquires its own lease (single-server prod never deadlocks itself).
+const SERVER_ID_ENV: &str = "SERVER_ID";
+const HOSTNAME_ENV: &str = "HOSTNAME";
+const HOSTNAME_FILE: &str = "/etc/hostname";
+const DEFAULT_OWNER_ID: &str = "local";
+
+fn resolve_owner_id() -> String {
+    if let Ok(id) = std::env::var(SERVER_ID_ENV) {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    if let Ok(host) = std::env::var(HOSTNAME_ENV) {
+        let trimmed = host.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    if let Ok(host) = std::fs::read_to_string(HOSTNAME_FILE) {
+        let trimmed = host.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    DEFAULT_OWNER_ID.to_string()
+}
+
 // The room/brand path only needs id, name and the one branding image.
 fn tenant_to_cfg(tenant: Tenant) -> TenantCfg {
     TenantCfg {
@@ -507,6 +543,19 @@ mod tests {
 
         std::env::remove_var(set);
         std::env::remove_var(garbage);
+    }
+
+    #[test]
+    fn resolve_owner_id_prefers_server_id_then_falls_back_stably() {
+        // SERVER_ID wins when set, so an operator can pin a stable per-instance id.
+        std::env::set_var(SERVER_ID_ENV, "blockland-eu-1");
+        assert_eq!(resolve_owner_id(), "blockland-eu-1");
+        // A blank SERVER_ID is ignored; the resolver never returns an empty (would-be-shared) owner.
+        std::env::set_var(SERVER_ID_ENV, "   ");
+        assert!(!resolve_owner_id().trim().is_empty());
+        std::env::remove_var(SERVER_ID_ENV);
+        // With neither SERVER_ID nor a hostname source, the fixed fallback keeps a single server stable.
+        assert!(!resolve_owner_id().is_empty());
     }
 
     fn tenant(id: &str) -> Tenant {

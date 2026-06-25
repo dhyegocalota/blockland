@@ -277,6 +277,7 @@ fn reject_message(code: &str) -> &'static str {
         "rejected" => "A grown-up didn't let you in this time.",
         "needs_approval" => "Waiting for a grown-up to let you in.",
         "time_up" => "You've used your play time for now.",
+        "served_elsewhere" => "This world is busy on another server. Try again in a moment.",
         _ => "Couldn't join this world right now.",
     }
 }
@@ -343,6 +344,10 @@ mod tests {
             "Waiting for a grown-up to let you in."
         );
         assert_eq!(reject_message("room_full"), "This world is full right now.");
+        assert_eq!(
+            reject_message("served_elsewhere"),
+            "This world is busy on another server. Try again in a moment."
+        );
         // An unknown code gets a neutral fallback, not the misleading "Room full or unavailable.".
         assert_eq!(
             reject_message("whatever"),

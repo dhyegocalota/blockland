@@ -165,11 +165,21 @@ impl RoomHost for NativeRoomHost {
     }
 }
 
+// A room lease is considered stale (free to be retaken by another instance) once its last heartbeat
+// is this old; the owning instance renews well within the window so a live room is never stolen.
+pub const LEASE_STALE_MS: i64 = 30_000;
+const LEASE_RENEW_MS: u64 = 5_000;
+
 pub async fn run(mut room: Room, hub: Arc<Hub>, mut rx: mpsc::Receiver<RoomCmd>) {
     restore_world(&mut room, &hub).await;
     let dt = 1.0 / room.tick_hz() as f32;
     let mut interval = tokio::time::interval(Duration::from_secs_f64(1.0 / room.tick_hz() as f64));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    // Keep our cross-instance lease warm while the room is open, so no other instance treats it as
+    // stale and takes over. The lease is only ever HELD here once a join cleared it in
+    // `resolve_admission`; renew is a no-op (UPDATE ... WHERE owner) when the row isn't ours.
+    let mut renew = tokio::time::interval(Duration::from_millis(LEASE_RENEW_MS));
+    renew.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -177,6 +187,16 @@ pub async fn run(mut room: Room, hub: Arc<Hub>, mut rx: mpsc::Receiver<RoomCmd>)
                 // never calls `Instant::now()` itself — the seam a WASM core needs.
                 if !room.tick_at(Instant::now(), dt) {
                     break;
+                }
+            }
+            _ = renew.tick() => {
+                let (tenant, world) = room.key().clone();
+                if let Err(e) = hub
+                    .db
+                    .renew_room_lease(&tenant, &world, &hub.owner, epoch_ms() as i64)
+                    .await
+                {
+                    tracing::error!(%tenant, %world, error = %e, "room lease renew failed");
                 }
             }
             cmd = rx.recv() => {
@@ -194,6 +214,12 @@ pub async fn run(mut room: Room, hub: Arc<Hub>, mut rx: mpsc::Receiver<RoomCmd>)
         if let Err(e) = hub.db.save_world(&room.key().0, &blob).await {
             tracing::error!(tenant = %room.key().0, error = %e, "final world save failed");
         }
+    }
+    // Release our lease so another instance can serve this room immediately (DELETE ... WHERE owner,
+    // so a row another instance already took over is never removed).
+    let (tenant, world) = room.key().clone();
+    if let Err(e) = hub.db.release_room_lease(&tenant, &world, &hub.owner).await {
+        tracing::error!(%tenant, %world, error = %e, "room lease release failed");
     }
     hub.remove_room(room.key());
     tracing::info!(tenant = %room.key().0, world = %room.key().1, "room closed");
@@ -390,7 +416,27 @@ async fn resolve_admission(
     ip: IpAddr,
     ping: Arc<AtomicU32>,
 ) -> Result<Admission, String> {
-    let tenant = room.key().0.clone();
+    let (tenant, world) = room.key().clone();
+    // Cross-instance room lease: before this instance serves the room it must hold the lease. With a
+    // stable owner id this always succeeds for our own room (unheld -> take, ours -> keep, our stale
+    // -> retake), so a single server never fails to serve itself; only a DIFFERENT live instance's
+    // hold turns the join away with `served_elsewhere`. Two instances behind a load balancer can thus
+    // never serve the same room at once.
+    let acquired = hub
+        .db
+        .acquire_room_lease(
+            &tenant,
+            &world,
+            &hub.owner,
+            epoch_ms() as i64,
+            LEASE_STALE_MS,
+        )
+        .await
+        .unwrap_or(false);
+    if !acquired {
+        tracing::debug!(%tenant, %world, owner = %hub.owner, "join rejected: room served elsewhere");
+        return Err("served_elsewhere".into());
+    }
     // Role-aware ban gate: a banned IP is turned away here (the claim has resolved to a role) UNLESS
     // the account is an admin or moderator — they must still get in to moderate, even from a shared
     // home IP that someone got banned on. A banned guest/ordinary player stays refused.
@@ -1460,6 +1506,53 @@ mod tests {
             room.test_players_contains(admin_id),
             "an admin is never kicked by the playtime sweep"
         );
+    }
+
+    #[tokio::test]
+    async fn a_room_held_by_another_live_instance_rejects_the_join_with_served_elsewhere() {
+        let (mut room, hub) = test_room().await;
+        let (tenant, world) = room.key().clone();
+        // Another instance already holds this room's lease, fresh right now.
+        assert!(hub
+            .db
+            .acquire_room_lease(
+                &tenant,
+                &world,
+                "other-instance",
+                epoch_ms() as i64,
+                LEASE_STALE_MS
+            )
+            .await
+            .unwrap());
+        let (refused, _rx) =
+            admit_from_ip(&mut room, &hub, "", "", Role::Player, "203.0.113.9").await;
+        assert_eq!(
+            refused,
+            Err("served_elsewhere".into()),
+            "a room served by another live instance turns the join away"
+        );
+    }
+
+    #[tokio::test]
+    async fn this_instance_acquires_its_own_lease_and_admits() {
+        let (mut room, hub) = test_room().await;
+        let (tenant, world) = room.key().clone();
+        // No lease yet: a join takes the lease for THIS instance and is admitted.
+        let (admitted, _rx) =
+            admit_from_ip(&mut room, &hub, "", "", Role::Player, "203.0.113.9").await;
+        assert!(admitted.is_ok(), "this instance serves its own room");
+        // The lease is now ours; a foreign instance is refused while we hold it.
+        assert!(!hub
+            .db
+            .acquire_room_lease(
+                &tenant,
+                &world,
+                "other-instance",
+                epoch_ms() as i64,
+                LEASE_STALE_MS
+            )
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

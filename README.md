@@ -682,12 +682,41 @@ Rust codecs — to target nearby entities; `SPREAD` toggles whole-map AOI vs the
 origin-cluster worst case. It reports avg RX bytes/s/bot, frames/s, p50/p95 and the per-action send
 mix — capacity confidence before shipping.
 
+_Result — 1000 bots, one room, 30s steady-state_ (release build, single instance, Apple-Silicon
+12-core / 24 GB, all 1000 bots from one machine; `BOTS=1000 DURATION_S=30 SPREAD=1 TENANT=acme`):
+
+| metric | value |
+| --- | --- |
+| bots connected | **1000 / 1000** (1 connect error, 12 reconnects over the run) |
+| snapshot frames decoded | **1.87 M** |
+| total RX | **7.56 GB** |
+| frames/bot/s (steady state) | **~48** |
+| avg RX/bot/s | **~200 KB** (peaks ~447 KB/s early, before AOI culling spreads the bots out) |
+| per-bot RX p50 / p95 (cumulative) | **5.2 MB / 24.5 MB** |
+| client→server sent | move 407 k · dig 24 k · place 16 k · break 12 k · creature-hit 1.3 k · pvp 965 · chat 5.7 k |
+
+The server held all 1000 concurrent players through a realistic build/dig/hunt/PvP/chat mix on one
+instance; per-bot RX stays bounded by AOI culling (it falls as the spread widens). With the
+multi-server room-lease (see **Deploy & versioning** below), this scales horizontally — one room per
+instance, several instances behind a load balancer — without two instances ever serving the same room.
+
 **Deploy & versioning.** The backend bakes its short git SHA at compile (`build.rs` →
 `cargo:rustc-env`), shown as `version` in the debug panel; the web exposes `/api/version` so open
 clients detect a newer release and surface a non-dismissable update screen. The two-stage server
 `Dockerfile` (rust-slim → debian-slim, dependency-cache layer, bundled `tenants.toml`, `/healthz`
 HEALTHCHECK) builds with the repo root as context so it can `COPY .git` and self-stamp — designed for
 Dokploy; the web client deploys to Vercel.
+
+**Multi-server.** Several server instances can run behind a load balancer; **two instances never serve
+the same room**. Each room (one per tenant, `world = "main"`) is guarded by a DB **room-lease** in the
+shared libSQL — `room_leases (tenant, world, owner, heartbeat_ms)`. On a join the instance must
+`acquire_room_lease`; the holder renews its heartbeat every 5 s while the room is open and releases it
+on close, and a lease unrenewed for 30 s (`LEASE_STALE_MS`, a crashed instance) is takeable. An instance
+that doesn't hold the lease rejects the join with `served_elsewhere` (the client retries — a
+tenant-affinity LB, e.g. subdomain-hashed, routes the retry to the holder). The owner id is `SERVER_ID`
+(else the hostname), **stable across restarts**, so a single instance always re-acquires its own room
+and never self-deadlocks. Raise `MAX_PLAYERS_PER_ROOM` / `MAX_CONNECTIONS_PER_IP` per the loadtest above
+when stress-testing a single instance.
 
 **CI (`.github/workflows/ci.yml`, two jobs on push-to-main + every PR):**
 

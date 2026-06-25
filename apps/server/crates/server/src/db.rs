@@ -290,6 +290,21 @@ impl Db {
                 (),
             )
             .await?;
+        // The cross-instance room lease: one row per served room (tenant, world), naming the server
+        // instance that owns it and when it last beat. The shared db is the only coordination point,
+        // so two instances behind a load balancer can never serve the same room at once.
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS room_leases (
+                    tenant TEXT NOT NULL,
+                    world TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    heartbeat_ms INTEGER NOT NULL,
+                    PRIMARY KEY (tenant, world)
+                )",
+                (),
+            )
+            .await?;
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS leaderboard (
@@ -561,6 +576,73 @@ impl Db {
                 "INSERT INTO worlds (tenant, blob, updated_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT(tenant) DO UPDATE SET blob = ?2, updated_at = ?3",
                 params![tenant, blob.to_vec(), now_ms()],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Take (or keep) the lease on a room for `owner`. The upsert wins only when the row is unheld,
+    /// already ours, or stale (its last heartbeat is older than `stale_ms`); otherwise a live other
+    /// owner's row is left untouched. The threshold is computed in Rust and bound, then a follow-up
+    /// SELECT confirms who holds the row — we own it iff that owner is us.
+    pub async fn acquire_room_lease(
+        &self,
+        tenant: &str,
+        world: &str,
+        owner: &str,
+        now_ms: i64,
+        stale_ms: i64,
+    ) -> Result<bool, libsql::Error> {
+        let stale_before = now_ms - stale_ms;
+        self.conn
+            .execute(
+                "INSERT INTO room_leases (tenant, world, owner, heartbeat_ms) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(tenant, world) DO UPDATE SET owner = excluded.owner, heartbeat_ms = excluded.heartbeat_ms
+                 WHERE room_leases.owner = excluded.owner OR room_leases.heartbeat_ms < ?5",
+                params![tenant, world, owner, now_ms, stale_before],
+            )
+            .await?;
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT owner FROM room_leases WHERE tenant = ?1 AND world = ?2",
+                params![tenant, world],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(row.get::<String>(0)? == owner),
+            None => Ok(false),
+        }
+    }
+
+    /// Refresh our lease heartbeat. A no-op if the row is no longer ours (another owner took over).
+    pub async fn renew_room_lease(
+        &self,
+        tenant: &str,
+        world: &str,
+        owner: &str,
+        now_ms: i64,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "UPDATE room_leases SET heartbeat_ms = ?4 WHERE tenant = ?1 AND world = ?2 AND owner = ?3",
+                params![tenant, world, owner, now_ms],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Drop our lease on room close, only when the row is still ours (never steal another owner's row).
+    pub async fn release_room_lease(
+        &self,
+        tenant: &str,
+        world: &str,
+        owner: &str,
+    ) -> Result<(), libsql::Error> {
+        self.conn
+            .execute(
+                "DELETE FROM room_leases WHERE tenant = ?1 AND world = ?2 AND owner = ?3",
+                params![tenant, world, owner],
             )
             .await?;
         Ok(())
@@ -1838,6 +1920,92 @@ mod tests {
         let db = memory_db().await;
         assert_eq!(db.tenant_playtime("demo").await.unwrap(), (5, 24));
         assert_eq!(db.tenant_playtime("acme").await.unwrap(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn room_lease_same_owner_always_reacquires_and_renews() {
+        let db = memory_db().await;
+        let stale = 30_000;
+        // Unheld -> taken.
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", 1_000, stale)
+            .await
+            .unwrap());
+        // Already ours -> kept (a restart of the same instance re-acquires, never deadlocks).
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", 2_000, stale)
+            .await
+            .unwrap());
+        // Renew refreshes the heartbeat without changing the owner.
+        db.renew_room_lease("acme", "main", "srv-1", 3_000)
+            .await
+            .unwrap();
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", 4_000, stale)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn room_lease_refuses_a_fresh_owner_while_live_then_lets_it_take_over_when_stale() {
+        let db = memory_db().await;
+        let stale = 30_000;
+        let live_now = 100_000;
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", live_now, stale)
+            .await
+            .unwrap());
+        // A different instance is refused while srv-1's lease is still live (within the stale window).
+        assert!(!db
+            .acquire_room_lease("acme", "main", "srv-2", live_now + 1_000, stale)
+            .await
+            .unwrap());
+        // srv-1 still owns it (the refused upsert left the row untouched).
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", live_now + 1_000, stale)
+            .await
+            .unwrap());
+        // Once srv-1's heartbeat is older than the stale window, srv-2 takes over.
+        let after_stale = live_now + 1_000 + stale + 1;
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-2", after_stale, stale)
+            .await
+            .unwrap());
+        // And srv-1 can no longer reclaim it while srv-2 is live.
+        assert!(!db
+            .acquire_room_lease("acme", "main", "srv-1", after_stale + 1, stale)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn renew_and_release_only_touch_our_own_lease() {
+        let db = memory_db().await;
+        let stale = 30_000;
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", 1_000, stale)
+            .await
+            .unwrap());
+        // A wrong-owner renew never refreshes the row, so it can still go stale and be retaken.
+        db.renew_room_lease("acme", "main", "srv-2", 1_000_000)
+            .await
+            .unwrap();
+        // A wrong-owner release never removes our row.
+        db.release_room_lease("acme", "main", "srv-2")
+            .await
+            .unwrap();
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-1", 2_000, stale)
+            .await
+            .unwrap());
+        // Our own release frees the room for a fresh different owner immediately.
+        db.release_room_lease("acme", "main", "srv-1")
+            .await
+            .unwrap();
+        assert!(db
+            .acquire_room_lease("acme", "main", "srv-2", 3_000, stale)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
