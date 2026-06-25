@@ -51,6 +51,9 @@ export interface EngineState {
   // The React admin/moderator panel is up and the cursor is freed for it: pointer lock is released
   // without pausing, and a lost lock must NOT pop the settings panel while this is set.
   cursorOverlay: boolean;
+  // performance.now() when this player's hearts hit 0, else null. Drives the first-person death fall
+  // (camera rolls + drops to the ground) during the server's post-death pause; cleared on respawn.
+  deadSince: number | null;
   started: boolean;
   disposed: boolean;
   rafId: number;
@@ -78,6 +81,7 @@ export function createEngineState({ spawn }: { spawn: Vec3 }): EngineState {
     fps: 0,
     paused: false,
     cursorOverlay: false,
+    deadSince: null,
     started: false,
     disposed: false,
     rafId: 0,

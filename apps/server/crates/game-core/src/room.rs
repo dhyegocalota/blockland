@@ -67,6 +67,9 @@ const MELEE_RANGE: f32 = 8.0;
 // so survival is identical, owned here by the server.
 pub const MAX_HP: u8 = 3;
 pub const HURT_COOLDOWN: Duration = Duration::from_millis(1200);
+// On death the player stays down (hp 0, frozen where they fell, inputs ignored) for this brief beat
+// so the client can play the fall, then the next tick respawns them. Online + offline share it.
+pub const DEATH_FALL: Duration = Duration::from_millis(900);
 // A defeated creature drops a heart pickup at its position: a player within PICKUP_RADIUS of it who is
 // below MAX_HP collects it for +1 hp. Drops expire after HEART_TTL so they never accumulate. Exported to
 // the web as HEART_PICKUP_RADIUS / HEART_DROP_TTL_MS so healing is identical online and offline.
@@ -276,6 +279,10 @@ pub struct Room {
     // Every other hub-backed op the sync logic uses (alloc id, ban/claim maps, admin telemetry, the
     // fire-and-forget admin-config db writes) behind a seam, so the room never holds an `Arc<Hub>`.
     host: Arc<dyn RoomHost>,
+    // Players in their post-death pause: id -> the instant they died. While present, the player is dead
+    // (hp 0) and frozen where they fell — the client plays the fall — and a tick respawns them once
+    // DEATH_FALL has elapsed. Both online and offline (same core), so the death beat is shared.
+    dying: HashMap<PlayerId, Instant>,
 }
 
 /// One connection's last-sent snapshot view (its AOI-filtered entities), the baseline its per-tick delta
@@ -384,6 +391,7 @@ impl Room {
             rng: StdRng::from_entropy(),
             persistence,
             host,
+            dying: HashMap::new(),
         }
     }
 
@@ -633,6 +641,7 @@ impl Room {
         // the slot for RECONNECT_GRACE so a reconnect can resume it.
         if clean {
             self.players.remove(&id);
+            self.dying.remove(&id);
             self.broadcast(&ServerMsg::Left { id });
             self.announce_roster();
             tracing::debug!(tenant = %self.key.0, %id, "player left cleanly, removed immediately");
@@ -816,6 +825,24 @@ impl Room {
         } = msg
         {
             self.on_admin_set_modes(now, id, online_allowed, offline_allowed);
+            return;
+        }
+
+        // A player in their post-death pause is frozen: drop movement and every action until the tick
+        // respawns them, so they can't move, build or fight while lying on the ground. Keepalive/pong
+        // still flows. (Admin settings above are unaffected.)
+        if self.dying.contains_key(&id)
+            && matches!(
+                msg,
+                ClientMsg::Move { .. }
+                    | ClientMsg::Edit { .. }
+                    | ClientMsg::EditBatch { .. }
+                    | ClientMsg::Hit { .. }
+                    | ClientMsg::AttackPlayer { .. }
+                    | ClientMsg::Dig { .. }
+                    | ClientMsg::Respawn
+            )
+        {
             return;
         }
 
@@ -1749,7 +1776,12 @@ impl Room {
             tracing::debug!(%attacker_id, %target_id, dist, "pvp attack rejected: out of range");
             return;
         }
-        // Hearts are server-owned: apply the damage, flash the target, and respawn it if it ran out.
+        // A target already down in their death pause takes no further hits — so a second swing never
+        // double-credits the kill or extends the fall.
+        if self.dying.contains_key(&target_id) {
+            return;
+        }
+        // Hearts are server-owned: apply the damage, flash the target, and start its death if it ran out.
         let Some(target) = self.players.get_mut(&target_id) else {
             return;
         };
@@ -1783,7 +1815,7 @@ impl Room {
                 name: attacker_name,
                 detail: target_name,
             });
-            self.respawn(now, target_id);
+            self.begin_death(now, target_id);
             // The bumped pvp-kill count rides the roster, so refresh it for everyone.
             if scored {
                 self.announce_roster();
@@ -1849,6 +1881,18 @@ impl Room {
 
     fn tick(&mut self, now: Instant, dt: f32) -> bool {
         self.tick += 1;
+
+        // End any death pause whose beat has elapsed: respawn the player (which clears `dying`). The
+        // client saw hp 0 hold for DEATH_FALL and played the fall; now they snap to spawn at full health.
+        let revived: Vec<PlayerId> = self
+            .dying
+            .iter()
+            .filter(|(_, died_at)| now.duration_since(**died_at) >= DEATH_FALL)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in revived {
+            self.respawn(now, id);
+        }
 
         // Rate buckets must refill every tick so limits stay smooth.
         for p in self.players.values_mut() {
@@ -2302,6 +2346,10 @@ impl Room {
             if p.disconnected_at.is_some() {
                 continue;
             }
+            // Already down in the death pause: no further bites until they respawn.
+            if p.hp == 0 {
+                continue;
+            }
             if now.duration_since(p.hurt_at) < HURT_COOLDOWN {
                 continue;
             }
@@ -2321,7 +2369,7 @@ impl Room {
             }
         }
         for id in dead {
-            self.respawn(now, id);
+            self.begin_death(now, id);
         }
     }
 
@@ -2371,7 +2419,18 @@ impl Room {
         ]
     }
 
+    /// Start a player's post-death pause: they stay dead (hp 0) frozen where they fell for DEATH_FALL,
+    /// then the next tick at/after that instant respawns them. The lethal-hit paths call this instead
+    /// of respawning instantly so the client has a beat to play the fall. A second call while already
+    /// dying is a no-op (the timer is not extended).
+    fn begin_death(&mut self, now: Instant, id: PlayerId) {
+        if self.players.contains_key(&id) {
+            self.dying.entry(id).or_insert(now);
+        }
+    }
+
     fn respawn(&mut self, now: Instant, id: PlayerId) {
+        self.dying.remove(&id);
         let spawn = self.spawn_slot(Some(id));
         let Some(p) = self.players.get_mut(&id) else {
             return;
@@ -3689,7 +3748,13 @@ mod tests {
         let mut rx = add_player(&mut room, 1, false);
         bite_setup(&mut room);
         room.players.get_mut(&1).unwrap().hp = 1;
-        room.simulate_creatures(Instant::now(), 0.1);
+        let t0 = Instant::now();
+        room.simulate_creatures(t0, 0.1);
+        // The lethal bite starts the death pause (down at 0 hp), not an instant respawn.
+        assert_eq!(room.players.get(&1).unwrap().hp, 0, "down during the fall");
+        assert!(room.dying.contains_key(&1));
+        // A tick after the pause respawns them at the spawn area.
+        room.tick(t0 + DEATH_FALL, 0.1);
         let (bx, bz) = World::spawn_base();
         let p = room.players.get(&1).unwrap();
         assert_eq!(p.hp, MAX_HP);
@@ -3874,30 +3939,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pvp_kill_credits_the_attacker_and_respawns_the_victim() {
+    async fn pvp_kill_credits_the_attacker_then_respawns_the_victim_after_the_fall() {
         let mut room = test_room().await;
         add_player(&mut room, 1, false);
         let mut target_rx = add_player(&mut room, 2, false);
         room.pvp = true;
         // Both at the origin (within MELEE_RANGE); the victim is one hit from death.
         room.players.get_mut(&2).unwrap().hp = 1;
-        room.on_attack_player(Instant::now(), 1, 2);
+        let t0 = Instant::now();
+        room.on_attack_player(t0, 1, 2);
         assert_eq!(
             room.players.get(&1).unwrap().pvp_kills,
             1,
             "the killer's pvp-kill count rises by one"
         );
+        // The victim is down in the death pause (frozen at 0 hp), not yet respawned.
+        assert_eq!(
+            room.players.get(&2).unwrap().hp,
+            0,
+            "the victim stays down during the fall"
+        );
+        assert!(room.dying.contains_key(&2));
+
+        // A tick at/after the pause respawns them at full health and clears the death state.
+        room.tick(t0 + DEATH_FALL, 0.1);
         assert_eq!(
             room.players.get(&2).unwrap().hp,
             MAX_HP,
-            "the victim respawns at full health"
+            "the victim respawns at full health after the fall"
         );
+        assert!(!room.dying.contains_key(&2));
         assert!(
             (0..50)
                 .filter_map(|_| target_rx.try_recv_msg().ok())
                 .any(|m| matches!(m, ServerMsg::Respawn { hp, .. } if hp == MAX_HP)),
             "the victim is told to respawn",
         );
+    }
+
+    #[tokio::test]
+    async fn a_player_in_the_death_pause_cannot_move_until_respawn() {
+        let mut room = test_room().await;
+        add_player(&mut room, 1, false);
+        let t0 = Instant::now();
+        room.begin_death(t0, 1);
+        {
+            let p = room.players.get_mut(&1).unwrap();
+            p.x = 5.0;
+            p.y = 30.0;
+            p.z = 5.0;
+        }
+        // A move while dead is dropped — the avatar stays frozen where it fell.
+        room.on_input(
+            t0,
+            1,
+            ClientMsg::Move {
+                x: 99.0,
+                y: 99.0,
+                z: 99.0,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+        );
+        let p = room.players.get(&1).unwrap();
+        assert_eq!(
+            (p.x, p.y, p.z),
+            (5.0, 30.0, 5.0),
+            "a dead player can't move"
+        );
+
+        // After the pause a tick respawns them, and movement works again.
+        room.tick(t0 + DEATH_FALL, 0.1);
+        assert!(!room.dying.contains_key(&1));
+        assert_eq!(room.players.get(&1).unwrap().hp, MAX_HP);
     }
 
     #[tokio::test]

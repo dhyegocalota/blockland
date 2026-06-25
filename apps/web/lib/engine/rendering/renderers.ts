@@ -9,13 +9,14 @@ import { lookDirection } from '../aim';
 import { SWING_DURATION_MS, SWING_PEAK_RAD } from '../constants';
 import { swingPose } from '../swing';
 import type { VoxelHit } from '../raycast';
+import type { DeathFall } from '../death-fall';
 
 const HAND_COLOR = '#caa472';
 const HAND_REST_ROTATION_X = -0.5;
 
 export interface ViewRenderer {
   // Aim the camera at the player's eye + look direction and paint the highlight at the aimed cell.
-  renderView(args: { pose: { x: number; y: number; z: number; yaw: number; pitch: number }; aim: VoxelHit | null }): void;
+  renderView(args: { pose: { x: number; y: number; z: number; yaw: number; pitch: number }; aim: VoxelHit | null; death?: DeathFall }): void;
   // Start a fresh swing of the first-person held tool (called on every primary action).
   swing(now?: number): void;
   // Draw the scene through the camera.
@@ -48,11 +49,17 @@ export function createViewRenderer({
   scene.add(camera);
   let swingStart = -Infinity;
 
-  function renderView({ pose, aim }: { pose: { x: number; y: number; z: number; yaw: number; pitch: number }; aim: VoxelHit | null }): void {
+  function renderView({ pose, aim, death }: { pose: { x: number; y: number; z: number; yaw: number; pitch: number }; aim: VoxelHit | null; death?: DeathFall }): void {
     camera.position.set(pose.x, pose.y, pose.z);
     const look = lookDirection({ yaw: pose.yaw, pitch: pose.pitch });
     lookTarget.set(camera.position.x + look.x, camera.position.y + look.y, camera.position.z + look.z);
     camera.lookAt(lookTarget);
+    // Death fall: roll the camera onto its side and sink it toward the ground (applied after lookAt so
+    // it layers on top of the aim, then recomputed fresh each frame from the pose above).
+    if (death && death.roll !== 0) {
+      camera.rotateZ(death.roll);
+      camera.position.y -= death.drop;
+    }
     handPivot.rotation.x = HAND_REST_ROTATION_X + swingPose({ tSinceStart: performance.now() - swingStart, durationMs: SWING_DURATION_MS, peakRad: SWING_PEAK_RAD });
     if (!aim) { highlight.visible = false; return; }
     highlight.visible = true;

@@ -14,6 +14,7 @@ import { blockVelocityIntoActors, collisionActors } from './actors';
 import { moveVector } from './movement';
 import { nextFrame, smoothFps } from './frame-cap';
 import { attackTick } from './attack';
+import { deathFall } from './death-fall';
 import { bindWindowInput, clampPitch } from './binds';
 import { getSettings, lookDelta } from '../settings';
 import type { GameRuntime } from './runtime';
@@ -62,22 +63,27 @@ export function createGameLoop(runtime: GameRuntime): void {
   runtime.attackUp = function attackUp(): void { state.attacking = false; };
 
   runtime.update = function update(dt: number): void {
-    const move = moveVector({
-      yaw: player.yaw, pitch: player.pitch, fly: player.fly,
-      forward: !!(keys.KeyW || keys.ArrowUp), back: !!(keys.KeyS || keys.ArrowDown),
-      right: !!(keys.KeyD || keys.ArrowRight), left: !!(keys.KeyA || keys.ArrowLeft),
-      joystickActive: joystick.active, joystickX: joystick.x, joystickY: joystick.y,
-    });
+    // While down in the death pause, every control is frozen (the server ignores them too) so the player
+    // lies still on the ground until they respawn.
+    const dead = state.deadSince !== null;
+    const move = dead
+      ? { x: 0, y: 0, z: 0 }
+      : moveVector({
+          yaw: player.yaw, pitch: player.pitch, fly: player.fly,
+          forward: !!(keys.KeyW || keys.ArrowUp), back: !!(keys.KeyS || keys.ArrowDown),
+          right: !!(keys.KeyD || keys.ArrowRight), left: !!(keys.KeyA || keys.ArrowLeft),
+          joystickActive: joystick.active, joystickX: joystick.x, joystickY: joystick.y,
+        });
 
     if (player.fly) {
       player.vel.set(move.x, move.y, move.z).multiplyScalar(FLY_SPEED);
-      if (keys.Space) player.vel.y = FLY_SPEED;
-      if (keys.ShiftLeft || keys.ShiftRight) player.vel.y = -FLY_SPEED;
+      if (!dead && keys.Space) player.vel.y = FLY_SPEED;
+      if (!dead && (keys.ShiftLeft || keys.ShiftRight)) player.vel.y = -FLY_SPEED;
     } else {
       player.vel.x = move.x * WALK_SPEED;
       player.vel.z = move.z * WALK_SPEED;
       player.vel.y += GRAVITY * dt;
-      if (keys.Space && player.onGround) { player.vel.y = JUMP_SPEED; player.onGround = false; }
+      if (!dead && keys.Space && player.onGround) { player.vel.y = JUMP_SPEED; player.onGround = false; }
     }
 
     runtime.blockIntoActors();
@@ -97,7 +103,8 @@ export function createGameLoop(runtime: GameRuntime): void {
 
     runtime.view.renderView({
       pose: { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch },
-      aim: runtime.raycastVoxel(),
+      aim: dead ? null : runtime.raycastVoxel(),
+      death: deathFall(state.deadSince, performance.now()),
     });
   };
 

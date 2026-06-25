@@ -200,6 +200,9 @@ export function createCoopWiring(runtime: GameRuntime): void {
       onHealth: (hp) => {
         if (hp < player.hearts) runtime.flashDamage();
         player.hearts = hp;
+        // Entering/leaving the death pause: hp 0 starts the first-person fall; any positive hp clears it.
+        if (hp <= 0 && state.deadSince === null) state.deadSince = performance.now();
+        if (hp > 0) state.deadSince = null;
         runtime.updateStats();
       },
       // A heart drop vanished within pickup range: play the collect cue the offline path plays, so a
@@ -209,6 +212,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
         player.pos.set(x, y, z);
         player.vel.set(0, 0, 0);
         player.hearts = hp;
+        state.deadSince = null;
         runtime.updateStats();
         runtime.toast(t('toast.nap'));
       },
