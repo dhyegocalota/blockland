@@ -8,7 +8,7 @@ import type { OnlinePresence } from '../lib/api';
 import type { RosterEntry } from '../lib/coop';
 import { badgedNames } from '../lib/roster-roles';
 
-const POLL_MS = 15000;
+const POLL_MS = 5000;
 const NAMES_SHOWN = 8;
 
 export default function LobbyPresence({ tenant, roster }: { tenant: string; roster: RosterEntry[] }) {

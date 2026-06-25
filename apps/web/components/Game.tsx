@@ -22,7 +22,8 @@ const VOLUME_STEP = 0.05;
 const PERCENT = 100;
 
 // The keyboard shortcut shown succinctly on each desktop HUD button (key caps are universal, not i18n).
-// Mobile (touch) has no keyboard, so the hint is hidden there. Exit has no shortcut (it reloads the page).
+// Mobile (touch) has no keyboard, so the hint is hidden there. Exit is bound to Backspace (⌫) — well
+// clear of the WASD movement keys so a page-reloading leave is never triggered by accident.
 const HUD_HOTKEYS = {
   controls: 'V',
   build: 'B',
@@ -32,6 +33,7 @@ const HUD_HOTKEYS = {
   settings: 'Esc',
   players: 'Tab',
   admin: 'M',
+  exit: '⌫',
 } as const;
 
 // A small key-cap badge rendered inside a desktop HUD button; nothing on touch devices.
@@ -174,7 +176,7 @@ export default function Game() {
           <button className="btn" id="spawnBtn" onClick={() => gameApiRef.current?.returnToSpawn()}>{t('hud.spawn')}<HotkeyHint keyCap={HUD_HOTKEYS.spawn} isTouch={isTouch} /></button>
           {room.chatEnabled && <button className="btn" id="chatBtn" onClick={openChat}>{t('hud.chat')}<HotkeyHint keyCap={HUD_HOTKEYS.chat} isTouch={isTouch} /></button>}
           <button className="btn" id="settingsBtn">{t('hud.settings')}<HotkeyHint keyCap={HUD_HOTKEYS.settings} isTouch={isTouch} /></button>
-          <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}</button>
+          <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}<HotkeyHint keyCap={HUD_HOTKEYS.exit} isTouch={isTouch} /></button>
         </div>
       </div>
 

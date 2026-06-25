@@ -26,6 +26,9 @@ import { connectStatusKey, isInteractive } from '../lib/engine/readiness';
 
 const NAME_KEY = 'bl-name';
 const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as const;
+// How often a non-admin lobby player re-resolves the tenant so an admin's runtime mode toggle (and
+// server reachability) reaches their start-screen buttons without a manual refresh.
+const LOBBY_TENANT_POLL_MS = 8000;
 const DEFAULT_LOOK: Appearance = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
 
 const AUTH_ERROR_KEYS: Record<string, string> = {
@@ -212,6 +215,29 @@ export function useGame() {
     return () => { alive = false; };
   }, []);
 
+  // A non-admin lobby player holds no live connection, so the tenant's allowed-mode flags (an admin can
+  // flip at runtime) and server reachability would otherwise stay frozen at page load. Re-resolve them
+  // on an interval while on the start screen so a re-enabled mode lights its button up live (and a
+  // recovered server re-enables online). Admins get this instantly over the lobby-admin socket, so they
+  // skip the poll; a transient failure keeps the last good value instead of surfacing the error screen.
+  const tenantReady = brand !== null;
+  useEffect(() => {
+    if (started || !tenantReady || lobbyConnected) return;
+    let alive = true;
+    async function refresh(): Promise<void> {
+      try {
+        const { tenant: active, offline: isOffline } = await resolveTenant();
+        if (!alive) return;
+        setBrand(active);
+        setOffline(isOffline);
+      } catch (error) {
+        debug('tenant', 'lobby tenant refresh failed; keeping last', { error: String(error) });
+      }
+    }
+    const timer = setInterval(refresh, LOBBY_TENANT_POLL_MS);
+    return () => { alive = false; clearInterval(timer); };
+  }, [started, tenantReady, lobbyConnected]);
+
   // The engine's HUD bridge: stable callbacks the running game pushes net/roster/admin state through.
   // Built lazily (not on lobby render) so nothing here forces the heavy engine into the lobby bundle.
   const makeBridge = useCallback((activeBrand: Brand): CoopBridge => ({
@@ -301,13 +327,25 @@ export function useGame() {
       // (not started) Tab is left alone so it still navigates the form.
       if (event.code === 'Tab' && started) { event.preventDefault(); setRosterOpen((open) => !open); return; }
       if (event.code === 'KeyH' && started) { event.preventDefault(); gameApiRef.current?.returnToSpawn(); return; }
+      // Backspace leaves the world (mirrors the Exit button): reload back to the lobby.
+      if (event.code === 'Backspace' && started) { event.preventDefault(); window.location.reload(); return; }
+      // Esc closes the admin/moderator panel and re-locks the canvas (the panel freed the cursor on open).
+      if (event.code === 'Escape' && started && adminOpen) { event.preventDefault(); setAdminOpen(false); return; }
       // The admin/moderator panel toggle (the player has no panel, so the key does nothing for them).
       if (event.code === 'KeyM' && started && (isAdmin || isModerator)) { event.preventDefault(); setAdminOpen((open) => !open); return; }
       if (event.code === 'Enter' || event.code === 'KeyT') { event.preventDefault(); openChat(); }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chatOpen, openChat, started, isAdmin, isModerator, setAdminOpen]);
+  }, [chatOpen, openChat, started, isAdmin, isModerator, adminOpen, setAdminOpen]);
+
+  // Opening the admin/moderator panel frees the cursor so its buttons are clickable; the engine exits
+  // pointer lock and suppresses the settings-on-lock-lost pause while the overlay is up. Closing it
+  // re-locks the canvas back to playing. Only meaningful once the engine is running.
+  useEffect(() => {
+    if (!started) return;
+    gameApiRef.current?.setCursorOverlay(adminOpen);
+  }, [adminOpen, started]);
 
   useEffect(() => {
     if (!debugOpen) return;

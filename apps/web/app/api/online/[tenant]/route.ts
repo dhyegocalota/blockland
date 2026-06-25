@@ -5,7 +5,7 @@ import { fetchOnline } from '../../../../lib/api';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CACHE_CONTROL = 'public, s-maxage=10, stale-while-revalidate=20';
+const CACHE_CONTROL = 'public, s-maxage=3, stale-while-revalidate=6';
 
 export async function GET(_req: Request, { params }: { params: { tenant: string } }) {
   const tenant = params.tenant.trim();

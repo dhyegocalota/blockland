@@ -35,6 +35,10 @@ export interface GameApi extends RoomAdminApi {
   sendChat(text: string): void;
   setInfiniteResources(on: boolean): void;
   returnToSpawn(): void;
+  // Opens/closes the in-game admin/moderator overlay from the engine's view: opening frees the cursor
+  // (exits pointer lock) and counts as a modal so a lost lock doesn't pop the settings pause; closing
+  // re-locks the canvas. Lets the React panel coordinate the cursor without owning pointer lock.
+  setCursorOverlay(open: boolean): void;
   chime(): void;
   debugSnapshot(): DebugSnapshot;
   // Assembles the pasteable plain-text diagnostics report (live connection state + the recent-events

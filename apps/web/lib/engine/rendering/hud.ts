@@ -13,6 +13,7 @@ import {
 import { renderBlockCanvas } from './textures';
 import { hotbarCountLabel } from '../inventory';
 import { readJoystick } from '../joystick';
+import { activateButtonOnTouch } from '../touch-activate';
 import { clampPitch } from '../binds';
 import { escapeKeyAction, getSettings, lookDelta, scaledGain, shouldOpenOnLockLost } from '../../settings';
 import type { StructureKind } from '../structures';
@@ -193,6 +194,15 @@ export function createHud(runtime: GameRuntime): void {
     breakBtn.addEventListener('touchend', runtime.attackUp, { signal });
     breakBtn.addEventListener('touchcancel', runtime.attackUp, { signal });
     tapBtn('btnPlace', runtime.placeBlock);
+
+    // While one finger holds the joystick, a second finger tapping a HUD button does NOT synthesize a
+    // 'click' (the browser suppresses click for the second of a multi-touch). So fire the action-row
+    // buttons on touchstart instead — preventDefault kills the ghost click so each tap acts once — and
+    // delegate so dynamically added buttons (e.g. chat) are covered. This lets the player hold the
+    // joystick and tap Fly/Build/etc at the same time.
+    el('actionRow').addEventListener('touchstart', (e) => {
+      if (activateButtonOnTouch(e.target)) e.preventDefault();
+    }, { passive: false, signal });
   };
 
   runtime.handleHotkey = function handleHotkey(e: KeyboardEvent): void {
@@ -271,6 +281,17 @@ export function createHud(runtime: GameRuntime): void {
     if (runtime.state.started && !isTouch) runtime.lockPointer();
     debug('engine', 'resumed from pause');
   };
+  // The React admin/moderator panel needs a cursor to click its buttons, so opening it frees the
+  // pointer (without pausing) and closing it re-locks back to playing. `cursorOverlay` makes the
+  // pointer-lock state machine treat it as an open modal, so the freed cursor never pops settings.
+  runtime.setCursorOverlay = function setCursorOverlay(open: boolean): void {
+    runtime.state.cursorOverlay = open;
+    if (open) {
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
+      return;
+    }
+    if (runtime.state.started && !isTouch) runtime.lockPointer();
+  };
   el('settingsBtn').addEventListener('click', (e) => { e.stopPropagation(); runtime.toggleSettings(); }, { signal });
   el('closeSettings').addEventListener('click', (e) => { e.stopPropagation(); runtime.resumeGame(); }, { signal });
   settingsEl.addEventListener('click', (e) => { if (e.target === settingsEl) runtime.resumeGame(); }, { signal });
@@ -278,7 +299,7 @@ export function createHud(runtime: GameRuntime): void {
   // The cursor-mode state machine driven by pointer lock. Esc natively drops the lock (can't be
   // preventDefault'd in an FPS), so a lock LOST while playing is the pause signal → PAUSED + open settings;
   // a lock REGAINED (clicking the world / Resume) → PLAYING (close panel + unpause).
-  const anyModalOpen = (): boolean => !controlsEl.hidden || !buildMenuEl.hidden || !settingsEl.hidden;
+  const anyModalOpen = (): boolean => !controlsEl.hidden || !buildMenuEl.hidden || !settingsEl.hidden || runtime.state.cursorOverlay;
   document.addEventListener('pointerlockchange', () => {
     if (document.pointerLockElement === canvas) {
       if (runtime.state.paused) runtime.resumeGame();

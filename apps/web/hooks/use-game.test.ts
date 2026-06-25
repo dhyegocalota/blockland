@@ -170,4 +170,57 @@ describe('useGame', () => {
     pressKey('KeyM');
     await waitFor(() => expect(result.current.adminOpen).toBe(false));
   });
+
+  it('the Backspace shortcut leaves the world (reloads to the lobby) once started', async () => {
+    await mountWithBridge();
+    const original = window.location;
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { reload } });
+    pressKey('Backspace');
+    expect(reload).toHaveBeenCalledOnce();
+    Object.defineProperty(window, 'location', { configurable: true, value: original });
+  });
+
+  it('opening the admin panel frees the cursor and closing it re-locks (engine cursor overlay)', async () => {
+    const { result, bridge } = await mountWithBridge();
+    const setCursorOverlay = vi.fn();
+    act(() => { bridge.bind({ setCursorOverlay } as unknown as Parameters<CoopBridge['bind']>[0]); });
+    act(() => { result.current.setAdminOpen(true); });
+    await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(true));
+    act(() => { result.current.setAdminOpen(false); });
+    await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(false));
+  });
+
+  it('Esc closes the admin/moderator panel when it is open (re-locking the canvas)', async () => {
+    const { result } = await mountWithBridge();
+    act(() => { result.current.setAdminOpen(true); });
+    await waitFor(() => expect(result.current.adminOpen).toBe(true));
+    pressKey('Escape');
+    await waitFor(() => expect(result.current.adminOpen).toBe(false));
+  });
+
+  // Non-admin lobby players have no live socket, so a re-enabled mode must reach them by re-resolving the
+  // tenant on an interval. Drive that poll with fake timers and prove the blocked Online button frees up.
+  it('re-resolves the tenant on the lobby so a re-enabled online mode lights its button up live', async () => {
+    const tenants = await import('../lib/tenants');
+    const resolveTenant = vi.mocked(tenants.resolveTenant);
+    const brandOf = (online: boolean) => ({
+      id: 't1', name: 'Test', image: '/i.png', playtime_limit_min: 0, playtime_window_h: 0, online_allowed: online, offline_allowed: true,
+    });
+    resolveTenant.mockResolvedValue({ tenant: brandOf(false), offline: false });
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useGame());
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(result.current.brand).not.toBeNull();
+      expect(result.current.modeGates.online.disabled).toBe(true);
+
+      resolveTenant.mockResolvedValue({ tenant: brandOf(true), offline: false });
+      await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+      expect(result.current.modeGates.online.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      resolveTenant.mockResolvedValue({ tenant: brandOf(true), offline: false });
+    }
+  });
 });

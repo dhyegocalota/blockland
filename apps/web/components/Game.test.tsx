@@ -116,19 +116,19 @@ describe('Game', () => {
     expect(document.getElementById('approvalOverlay')).toBeInTheDocument();
   });
 
-  it('shows the Online mode badge when playing online', () => {
+  it('shows the On mode badge when playing online', () => {
     useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, solo: false }));
     render(<Game />);
     const badge = document.getElementById('modeBadge');
-    expect(badge?.textContent).toContain('Online');
+    expect(badge?.textContent).toContain('On');
     expect(badge?.className).toBe('online');
   });
 
-  it('shows the Offline mode badge when playing solo', () => {
+  it('shows the Off mode badge when playing solo', () => {
     useGame.mockReturnValue(gameState({ solo: true }));
     render(<Game />);
     const badge = document.getElementById('modeBadge');
-    expect(badge?.textContent).toContain('Offline');
+    expect(badge?.textContent).toContain('Off');
     expect(badge?.className).toBe('offline');
   });
 
@@ -413,8 +413,8 @@ describe('Game', () => {
     expect(document.getElementById('chatBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('T');
     expect(document.getElementById('settingsBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('Esc');
     expect(document.getElementById('presenceToggle')!.querySelector('.hotkeyHint')!.textContent).toBe('Tab');
-    // Exit reloads the page, so it deliberately has no shortcut.
-    expect(document.getElementById('exitBtn')!.querySelector('.hotkeyHint')).toBeNull();
+    // Exit (leave) is bound to Backspace, shown as the ⌫ key-cap.
+    expect(document.getElementById('exitBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('⌫');
   });
 
   it('hides every key-cap on touch devices (no keyboard)', () => {

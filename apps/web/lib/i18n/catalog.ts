@@ -14,8 +14,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.chat': '💬 Chat',
     'hud.settings': '⚙️ Ajustes',
     'hud.exit': '🚪 Sair',
-    'hud.online': '🟢 Online',
-    'hud.offline': '🔵 Offline',
+    'hud.online': '🟢 On',
+    'hud.offline': '🔵 Off',
 
     // Controls modal
     'controls.title': '🎮 Controles',
@@ -466,8 +466,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'hud.chat': '💬 Chat',
     'hud.settings': '⚙️ Settings',
     'hud.exit': '🚪 Leave',
-    'hud.online': '🟢 Online',
-    'hud.offline': '🔵 Offline',
+    'hud.online': '🟢 On',
+    'hud.offline': '🔵 Off',
 
     // Controls modal
     'controls.title': '🎮 Controls',

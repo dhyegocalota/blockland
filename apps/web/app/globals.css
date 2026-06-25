@@ -80,17 +80,23 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 #topbar .stat.hit { animation: shake .3s; }
 
-/* Succinct online/offline mode chip pinned to the very top-left corner. */
+/* Tiny on/off mode chip wedged into the very top-left corner, clear of the topbar photo. */
 #modeBadge {
-  position: fixed; left: 12px; top: 12px; z-index: 36; pointer-events: none;
+  position: fixed; left: 6px; top: 6px; z-index: 36; pointer-events: none;
   font-size: 12px; font-weight: 900; color: #fff; background: rgba(42,26,74,.55);
   padding: 2px 8px; border-radius: 10px; border: 2px solid rgba(255,255,255,.5); white-space: nowrap;
 }
 #modeBadge.online { border-color: #4ade80; color: #4ade80; }
 #modeBadge.offline { border-color: #9ca3af; color: #d8def0; }
-/* The mobile topbar is centred (its left edge is clear), so tuck the chip up in the top-left corner —
-   above the presence/player-count toggle (top: 58px) so it never sits on the count. */
-body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 28px; left: 8px; }
+/* On touch portrait the topbar is centred, so the corner is free — pin the chip right into it (above
+   the presence/player-count toggle at top: 58px) so it never sits on the avatar photo or the count. */
+body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 4px; left: 4px; }
+/* Landscape touch left-aligns the topbar, so the corner holds the avatar photo — drop the chip just
+   below the topbar row and slide the presence toggle under it so the left column stacks cleanly. */
+@media (orientation: landscape) {
+  body.is-touch #modeBadge { top: 42px; left: 8px; }
+  body.is-touch #presence { top: 76px; }
+}
 @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }
 
 /* ---------- Buttons (touch / actions) ---------- */
@@ -692,6 +698,7 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 28px; left: 8
   pointer-events: auto; display: flex; flex-direction: column; gap: 8px; width: 100%;
   background: rgba(20,12,40,.6); border: 2px solid rgba(255,255,255,.35); border-radius: 12px;
   padding: 10px 12px; backdrop-filter: blur(6px); animation: chatIn .2s ease both;
+  max-height: calc(100vh - 120px); overflow-y: auto;
 }
 #adminPeace, #adminPvp, #adminChat, #adminApproval, #adminInfinite, #adminSuspend, #adminOnlineMode, #adminOfflineMode, #adminPlaytimeReport, #adminChatReport, #adminReportClose {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;

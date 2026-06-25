@@ -154,6 +154,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       setModes: (online, offline) => runtime.coop?.sendAdminSetModes(online, offline),
       chime: runtime.chime,
       setInfiniteResources: (on) => runtime.coop?.sendAdminSetInfinite(on),
+      setCursorOverlay: runtime.setCursorOverlay,
       returnToSpawn: () => runtime.coop?.sendRespawn(),
       debugSnapshot: runtime.debugSnapshot,
       debugReport: runtime.debugReport,

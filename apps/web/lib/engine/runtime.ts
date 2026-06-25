@@ -121,6 +121,7 @@ export interface GameRuntime {
   showSettings(): void;
   toggleSettings(): void;
   resumeGame(): void;
+  setCursorOverlay(open: boolean): void;
   toggleFly(): void;
   handleHotkey(e: KeyboardEvent): void;
   lockPointer(): void;

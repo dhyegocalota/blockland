@@ -48,6 +48,9 @@ export interface EngineState {
   // Loop bookkeeping.
   fps: number;
   paused: boolean;
+  // The React admin/moderator panel is up and the cursor is freed for it: pointer lock is released
+  // without pausing, and a lost lock must NOT pop the settings panel while this is set.
+  cursorOverlay: boolean;
   started: boolean;
   disposed: boolean;
   rafId: number;
@@ -74,6 +77,7 @@ export function createEngineState({ spawn }: { spawn: Vec3 }): EngineState {
     attackSince: 0,
     fps: 0,
     paused: false,
+    cursorOverlay: false,
     started: false,
     disposed: false,
     rafId: 0,
