@@ -4,56 +4,16 @@
 // captures pre-launch interest into the waitlist (POST /api/waitlist). Reached directly, and where
 // the admin panel used to refuse a tenant subdomain it redirects here. Visually it echoes the
 // in-game lobby (#start in globals.css): blue sky, drifting clouds, a green hill and chunky blocks.
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
-import Script from 'next/script';
+import { useState, type CSSProperties, type FormEvent } from 'react';
 import { currentLocale } from '../../../lib/i18n';
 import { PLATFORM_NAME } from '../../../lib/builtins';
+import Turnstile from '../../../components/Turnstile';
 import { COPY, isEmailValid } from './copy';
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-const TURNSTILE_SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 const DEMO_URL = 'https://demo.blockland.dhyegocalota.com.br';
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        el: HTMLElement,
-        options: { sitekey: string; callback: (token: string) => void; 'expired-callback': () => void },
-      ) => string;
-    };
-  }
-}
-
 type Status = 'idle' | 'submitting' | 'done' | 'error';
-
-// Cloudflare Turnstile widget. Renders explicitly once the script is ready and hands the verified
-// token up so the form can submit it. Only mounted when a site key is configured.
-function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (token: string) => void }) {
-  const box = useRef<HTMLDivElement>(null);
-  const mounted = useRef(false);
-
-  function renderWidget() {
-    if (mounted.current || !box.current || !window.turnstile) return;
-    mounted.current = true;
-    window.turnstile.render(box.current, {
-      sitekey: siteKey,
-      callback: onToken,
-      'expired-callback': () => onToken(''),
-    });
-  }
-
-  useEffect(() => {
-    renderWidget();
-  });
-
-  return (
-    <>
-      <Script src={TURNSTILE_SCRIPT} onLoad={renderWidget} />
-      <div ref={box} style={S.turnstile} />
-    </>
-  );
-}
 
 export default function Welcome() {
   const copy = COPY[currentLocale()];
@@ -347,7 +307,6 @@ const S: Record<string, CSSProperties> = {
     fontFamily: 'inherit', fontSize: 16, fontWeight: 700, color: '#2a1a4a', padding: '12px 14px',
     borderRadius: 14, border: '3px solid #cfe0f5', background: '#fff', outline: 'none',
   },
-  turnstile: { display: 'flex', justifyContent: 'center', minHeight: 65 },
   consent: { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', fontWeight: 700, fontSize: 13, lineHeight: 1.45, color: '#42365a' },
   consentBox: { marginTop: 3, width: 20, height: 20, flexShrink: 0, accentColor: '#ff5d2e' },
   submit: {

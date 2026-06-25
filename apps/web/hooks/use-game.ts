@@ -95,6 +95,7 @@ export function useGame() {
   const [loginCode, setLoginCode] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [lobbyAdmin, setLobbyAdmin] = useState(false);
@@ -565,11 +566,12 @@ export function useGame() {
       const res = await fetch('/api/auth/request', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tenant: brand.id, name: name.trim(), email: loginEmail.trim() }),
+        body: JSON.stringify({ tenant: brand.id, name: name.trim(), email: loginEmail.trim(), turnstileToken }),
       });
       const data = (await res.json()) as { ok: boolean; error?: string };
       if (!data.ok) {
-        setLoginError(t(data.error === 'not_owner' ? 'login.error_not_owner' : 'login.error_invalid'));
+        if (data.error === 'turnstile') setLoginError(t('login.error_turnstile'));
+        else setLoginError(t(data.error === 'not_owner' ? 'login.error_not_owner' : 'login.error_invalid'));
         return;
       }
       setLoginStep('code');
@@ -578,7 +580,7 @@ export function useGame() {
     } finally {
       setLoginBusy(false);
     }
-  }, [brand, name, loginEmail]);
+  }, [brand, name, loginEmail, turnstileToken]);
 
   const verifyCode = useCallback(async () => {
     if (!brand) return;
@@ -633,6 +635,7 @@ export function useGame() {
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData, debugCopied, copyDebugReport,
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
+    turnstileToken, setTurnstileToken,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
     settings, onSettingChange,

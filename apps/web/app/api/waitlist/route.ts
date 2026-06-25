@@ -4,6 +4,7 @@
 // HMAC token, nonce and signature never reach the browser — the response only says ok/error.
 import { isConsentGiven, isValidEmail, joinWaitlist } from '../../../lib/waitlist';
 import { verifyTurnstile } from '../../../lib/turnstile';
+import { clientIp } from '../../../lib/client-ip';
 import { sendMail } from '../../../lib/mailer';
 import { WaitlistConfirmationEmail } from '../../../emails/WaitlistConfirmationEmail';
 import { WaitlistNotificationEmail } from '../../../emails/WaitlistNotificationEmail';
@@ -64,13 +65,4 @@ async function notify(entry: { email: string; name: string | null; phone: string
   } catch (err) {
     console.error('[api:waitlist] notify failed', { email: entry.email, err });
   }
-}
-
-// First hop behind the proxy (Cloudflare / forwarded), passed to Turnstile siteverify.
-function clientIp(req: Request): string | null {
-  const cloudflare = req.headers.get('cf-connecting-ip');
-  const forwarded = cloudflare ?? req.headers.get('x-forwarded-for');
-  if (!forwarded) return null;
-  const first = forwarded.split(',')[0].trim();
-  return first.length > 0 ? first : null;
 }

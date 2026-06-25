@@ -10,6 +10,7 @@ import LobbyPresence from './LobbyPresence';
 import LobbyAdmin from './LobbyAdmin';
 import AdminLimits from './AdminLimits';
 import LocaleSwitcher from './LocaleSwitcher';
+import Turnstile from './Turnstile';
 import GameLoader from './GameLoader';
 import { loaderVisible } from '../lib/engine/loader-state';
 import { useGame } from '../hooks/use-game';
@@ -43,6 +44,7 @@ function HotkeyHint({ keyCap, isTouch }: { keyCap: string; isTouch: boolean }) {
 }
 
 const AUTHOR_URL = 'https://dhyegocalota.com.br';
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 const BANNER_KEYS: Record<NetState, string | null> = {
   connecting: 'coop.connecting',
@@ -111,6 +113,7 @@ export default function Game() {
     roster, rosterOpen, setRosterOpen,
     debugOpen, setDebugOpen, debugData, debugCopied, copyDebugReport,
     loginStep, loginEmail, setLoginEmail, loginCode, setLoginCode, loginBusy, loginError,
+    turnstileToken, setTurnstileToken,
     authToast, loggedIn, lobbyAdmin, lobbyModerator, isTouch,
     infiniteResources, setInfiniteResources,
     settings, onSettingChange,
@@ -137,6 +140,9 @@ export default function Game() {
   const showPing = netState === 'online' && !solo;
   const self = roster.find((player) => player.self);
   const myKills = self ? self.pvpKills : 0;
+  // Turnstile gates the magic-code email (anti-spam); when a site key is set, block "send code" until
+  // the widget hands back a token. The server re-verifies it regardless.
+  const needsTurnstile = Boolean(TURNSTILE_SITE_KEY) && turnstileToken.length === 0;
   // The friendly connecting/reconnecting overlay owns that status; suppress the small banner while it is
   // up so a drop reads as one clear "reconnecting…" panel over the live world, not a doubled message.
   // `served_elsewhere` (a multi-server LB sent us to a non-holding instance) rides the SAME smooth panel
@@ -410,7 +416,8 @@ export default function Game() {
                   onKeyDown={(e) => { if (e.code === 'Enter') { e.preventDefault(); requestCode(); } }}
                 />
                 {loginError && <p className="loginError">{loginError}</p>}
-                <button id="loginSend" disabled={loginBusy || !loginEmail.trim()} onClick={requestCode}>
+                {TURNSTILE_SITE_KEY && <Turnstile siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} />}
+                <button id="loginSend" disabled={loginBusy || !loginEmail.trim() || needsTurnstile} onClick={requestCode}>
                   {loginBusy ? t('login.sending') : t('login.send_code')}
                 </button>
                 <button id="loginCancel" className="ghost" onClick={playAsGuest}>{t('login.random_name')}</button>

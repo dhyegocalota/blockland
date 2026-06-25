@@ -207,6 +207,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'login.error_not_owner': 'Esse nome já é de outra pessoa. Escolha outro.',
     'login.error_invalid': 'Nome ou e-mail inválido.',
     'login.error_code': 'Código inválido ou expirado.',
+    'login.error_turnstile': 'Confirme que você não é um robô e tente de novo.',
     'login.error_generic': 'Algo deu errado. Tente de novo.',
 
     // Claim page (magic link)
@@ -680,6 +681,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'login.error_not_owner': 'That name belongs to someone else. Pick another.',
     'login.error_invalid': 'Invalid name or email.',
     'login.error_code': 'Invalid or expired code.',
+    'login.error_turnstile': "Please confirm you're not a robot and try again.",
     'login.error_generic': 'Something went wrong. Try again.',
 
     // Claim page (magic link)
