@@ -21,6 +21,8 @@ mod export {
             ("MAX_FLY_Y", sim::MAX_FLY_Y.to_string()),
             ("DIG_HITS", room::DIG_HITS.to_string()),
             ("MAX_HEARTS", room::MAX_HP.to_string()),
+            ("EYE_HEIGHT", room::PLAYER_EYE_HEIGHT.to_string()),
+            ("DEATH_FALL_MS", room::DEATH_FALL.as_millis().to_string()),
             ("HURT_COOLDOWN", seconds(room::HURT_COOLDOWN)),
             ("HEART_PICKUP_RADIUS", room::PICKUP_RADIUS.to_string()),
             ("HEART_DROP_TTL_MS", room::HEART_TTL.as_millis().to_string()),

@@ -389,6 +389,20 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.upload_needs_id': 'Defina o ID do tenant antes de enviar imagens.',
     'admin.uploading': 'Enviando imagem...',
     'admin.uploaded': 'Imagem enviada!',
+    'admin.upload_label': 'Enviar imagem (PNG, JPEG ou WebP)',
+    'admin.cancel': 'Cancelar',
+    'admin.working': 'Aguarde...',
+    'admin.live': 'Ao vivo',
+    'admin.deleted': 'Tenant "{id}" excluído',
+    'admin.delete_title': 'Excluir tenant',
+    'admin.rule_id': '2 a 32 caracteres: a-z, 0-9 e hífen.',
+    'admin.rule_name': 'O nome da marca não pode ficar vazio.',
+    'admin.rule_image': 'A URL da imagem é obrigatória.',
+    'admin.invalid_id': 'ID inválido: use a-z, 0-9 e hífen (2 a 32).',
+    'admin.invalid_id_required': 'Informe o ID do tenant.',
+    'admin.invalid_name': 'Informe o nome da marca.',
+    'admin.invalid_image': 'Informe a URL da imagem.',
+    'admin.invalid_email': 'E-mail inválido.',
 
     // Admin — moderation
     'mod.title': '🛡️ Moderação',
@@ -407,6 +421,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'mod.unban': 'Desbanir',
     'mod.ip_placeholder': 'Ex.: 1.2.3.4',
     'mod.error': 'Erro de moderação: {error}',
+    'mod.invalid_ip': 'IP inválido (IPv4 ou IPv6).',
+    'mod.banned': 'IP {ip} banido',
 
     // Admin — accounts (grant/revoke admin)
     'accounts.title': '👑 Admins do tenant',
@@ -427,6 +443,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'accounts.grant_email_label': 'Tornar admin por email',
     'accounts.grant_email_placeholder': 'email@exemplo.com',
     'accounts.grant_email_button': 'Tornar admin',
+    'accounts.granted': '{email} agora é admin',
 
     // Admin — leaderboard
     'leaderboard.title': '🏆 Placar',
@@ -844,6 +861,20 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.upload_needs_id': 'Set the tenant ID before uploading images.',
     'admin.uploading': 'Uploading image...',
     'admin.uploaded': 'Image uploaded!',
+    'admin.upload_label': 'Upload image (PNG, JPEG or WebP)',
+    'admin.cancel': 'Cancel',
+    'admin.working': 'Working...',
+    'admin.live': 'Live',
+    'admin.deleted': 'Tenant "{id}" deleted',
+    'admin.delete_title': 'Delete tenant',
+    'admin.rule_id': '2 to 32 characters: a-z, 0-9 and hyphen.',
+    'admin.rule_name': 'The brand name cannot be empty.',
+    'admin.rule_image': 'The image URL is required.',
+    'admin.invalid_id': 'Invalid ID: use a-z, 0-9 and hyphen (2 to 32).',
+    'admin.invalid_id_required': 'Enter the tenant ID.',
+    'admin.invalid_name': 'Enter the brand name.',
+    'admin.invalid_image': 'Enter the image URL.',
+    'admin.invalid_email': 'Invalid email.',
 
     // Admin — moderation
     'mod.title': '🛡️ Moderation',
@@ -862,6 +893,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'mod.unban': 'Unban',
     'mod.ip_placeholder': 'e.g. 1.2.3.4',
     'mod.error': 'Moderation error: {error}',
+    'mod.invalid_ip': 'Invalid IP (IPv4 or IPv6).',
+    'mod.banned': 'IP {ip} banned',
 
     // Admin — accounts (grant/revoke admin)
     'accounts.title': '👑 Tenant admins',
@@ -882,6 +915,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'accounts.grant_email_label': 'Make admin by email',
     'accounts.grant_email_placeholder': 'email@example.com',
     'accounts.grant_email_button': 'Make admin',
+    'accounts.granted': '{email} is now an admin',
 
     // Admin — leaderboard
     'leaderboard.title': '🏆 Leaderboard',

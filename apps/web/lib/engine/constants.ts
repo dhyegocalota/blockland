@@ -16,6 +16,7 @@ export {
   CREATURE_STOP_DISTANCE,
   DIG_HITS,
   DIRT_ID,
+  EYE_HEIGHT,
   FACE_ID,
   GOLD_ID,
   GRASS_ID,
@@ -48,7 +49,6 @@ export const WALK_SPEED = 5.4;
 export const FLY_SPEED = 9;
 export const PLAYER_RADIUS = 0.3;
 export const PLAYER_HEIGHT = 1.7;
-export const EYE_HEIGHT = 1.55;
 export const REACH = 7;
 // Cadence of hold-to-attack: while the attack button is held, primaryAction() fires this often (4/sec).
 // The Rust server enforces a matching cadence (ATTACK_MIN_INTERVAL, slightly more lenient for jitter) so a

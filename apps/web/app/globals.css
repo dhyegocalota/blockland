@@ -947,3 +947,140 @@ body.is-touch #feed { left: 14px; bottom: 324px; }
   body.is-touch #chat { bottom: 138px; }
   body.is-touch #feed { bottom: 210px; }
 }
+
+/* ---------- /admin dashboard ---------- */
+/* The /admin surface is its own friendly-but-clean admin tool: a soft purple-ink canvas, white cards,
+   rounded corners and the gold/sky accents from the game palette. Everything is scoped under .adminApp
+   so it never touches the in-game HUD. */
+.adminApp {
+  min-height: 100vh; padding: 28px 22px 60px; color: var(--ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background:
+    radial-gradient(120% 80% at 50% -10%, #efe6ff, transparent 55%),
+    linear-gradient(#f6f3ff, #eef1fb);
+  display: flex; flex-direction: column; gap: 14px; max-width: 920px; margin: 0 auto;
+}
+.adminTitle { font-weight: 900; font-size: clamp(22px, 4vw, 30px); color: var(--ink); }
+.adminTitleSpaced { margin-top: 8px; }
+.adminSubtle { color: #7a72a0; font-size: 14px; font-weight: 600; }
+
+.adminHeader { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.adminHeaderTitle { flex: 1; min-width: 160px; margin: 0; }
+.adminAvatar { border-radius: 12px; background: #ece8fa; object-fit: cover; box-shadow: 0 2px 8px #2a1a4a22; }
+
+.adminLogin {
+  max-width: 460px; margin: 12vh auto 0; background: #fff; border-radius: 22px; padding: 28px 26px;
+  box-shadow: 0 18px 50px #2a1a4a1f, 0 0 0 1px #2a1a4a0d; display: flex; flex-direction: column; gap: 12px;
+}
+.adminLoginRow { display: flex; gap: 8px; margin-top: 6px; }
+.adminLoginRow .adminInput { flex: 1; }
+
+.adminInput {
+  background: #f7f5ff; border: 2px solid #e0daf4; border-radius: 12px; color: var(--ink);
+  padding: 11px 13px; font-size: 14px; font-family: inherit; outline: none;
+  transition: border-color .14s, box-shadow .14s;
+}
+.adminInput:focus { border-color: var(--gold); box-shadow: 0 0 0 4px #ffd23f44; background: #fff; }
+.adminInput.invalid { border-color: #e2574b; box-shadow: 0 0 0 4px #e2574b22; }
+
+.adminBtn, .adminBtnGhost, .adminBtnDanger {
+  font-family: inherit; font-weight: 800; font-size: 14px; cursor: pointer; border-radius: 12px;
+  padding: 10px 16px; display: inline-flex; align-items: center; gap: 8px; justify-content: center;
+  transition: transform .08s, box-shadow .14s, background .14s; border: 2px solid transparent;
+}
+.adminBtn { background: linear-gradient(#ffe27a, var(--gold)); color: var(--ink); box-shadow: 0 4px 0 #c9a200; }
+.adminBtn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #c9a200; }
+.adminBtnGhost { background: #fff; color: #5a4a8a; border-color: #e0daf4; }
+.adminBtnGhost:hover:not(:disabled) { border-color: var(--gold); }
+.adminBtnDanger { background: linear-gradient(#ff8a6a, #ef4e3a); color: #fff; box-shadow: 0 4px 0 #b5301f; }
+.adminBtnDanger:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #b5301f; }
+.adminBtn:disabled, .adminBtnGhost:disabled, .adminBtnDanger:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+
+.adminSpinner {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid #00000022;
+  border-top-color: currentColor; animation: adminSpin .7s linear infinite;
+}
+@keyframes adminSpin { to { transform: rotate(360deg); } }
+
+.adminForm { display: grid; gap: 14px; max-width: 560px; background: #fff; border-radius: 20px; padding: 22px; box-shadow: 0 10px 34px #2a1a4a14; }
+.adminField, .adminUpload { display: grid; gap: 5px; }
+.adminFieldLabel { color: #5a4a8a; font-size: 13px; font-weight: 800; }
+.adminFieldRule { color: #9a92ba; font-size: 12px; font-weight: 600; }
+.adminFieldError { color: #d2412f; font-size: 12px; font-weight: 800; }
+.adminFile { color: #7a72a0; font-size: 13px; }
+.adminPreview { width: 84px; height: 84px; border-radius: 14px; object-fit: cover; box-shadow: 0 4px 12px #2a1a4a22; }
+.adminFormActions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+.adminCard { background: #fff; border-radius: 20px; padding: 18px 20px; box-shadow: 0 10px 30px #2a1a4a12; display: flex; flex-direction: column; gap: 10px; }
+.adminSectionHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.adminSectionTitle { flex: 1; min-width: 120px; font-weight: 900; font-size: 18px; color: var(--ink); }
+.adminLiveDot {
+  width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 0 #22c55e88; animation: adminPulseDot 1.8s ease-out infinite;
+}
+@keyframes adminPulseDot {
+  0% { box-shadow: 0 0 0 0 #22c55e88; } 70% { box-shadow: 0 0 0 7px #22c55e00; } 100% { box-shadow: 0 0 0 0 #22c55e00; }
+}
+.adminEmpty { color: #9a92ba; font-size: 14px; font-weight: 700; padding: 6px 0; }
+
+.adminInlineForm { display: flex; gap: 8px; flex-wrap: wrap; }
+.adminInlineForm .adminInput { flex: 1; min-width: 180px; }
+
+.adminTable { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 12px; }
+.adminTable th { text-align: left; color: #7a72a0; font-size: 12px; font-weight: 800; padding: 9px 11px; border-bottom: 2px solid #eee7fb; text-transform: uppercase; letter-spacing: .03em; }
+.adminTable td { color: var(--ink); font-size: 14px; font-weight: 600; padding: 9px 11px; border-bottom: 1px solid #f0ecfb; }
+.adminTable tr:last-child td { border-bottom: 0; }
+.adminTable code { font-family: ui-monospace, Menlo, monospace; }
+.adminRowActions { display: flex; gap: 6px; flex-wrap: wrap; }
+.adminRowActions .adminBtnGhost { padding: 6px 10px; font-size: 12px; }
+
+.adminBanList { display: grid; gap: 8px; }
+.adminBanRow { display: flex; align-items: center; gap: 10px; background: #f7f5ff; border: 1px solid #ece8fa; border-radius: 12px; padding: 9px 12px; }
+.adminBanRow code { flex: 1; color: var(--ink); font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+
+.adminTenantList { display: grid; gap: 10px; }
+.adminTenantRow {
+  display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid #ece8fa;
+  border-radius: 16px; padding: 12px 14px; cursor: pointer; font: inherit; text-align: left;
+  box-shadow: 0 4px 14px #2a1a4a0d; transition: transform .1s, box-shadow .14s, border-color .14s;
+}
+.adminTenantRow:hover { transform: translateY(-2px); box-shadow: 0 10px 26px #2a1a4a1c; border-color: var(--gold); }
+.adminTenantMeta { flex: 1; }
+.adminTenantId { color: #9a92ba; font-weight: 700; margin-left: 8px; font-size: 14px; }
+.adminTenantManage { color: #7a5cd0; font-weight: 800; font-size: 14px; }
+.adminPager { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+
+.adminModalBackdrop {
+  position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 12, 40, .5); backdrop-filter: blur(5px); padding: 16px;
+}
+.adminModalCard {
+  background: #fff; border-radius: 22px; padding: 26px 26px 22px; max-width: 420px; width: 100%;
+  box-shadow: 0 24px 60px #2a1a4a44; text-align: center;
+  animation: pop .3s cubic-bezier(.2,1.4,.5,1) both;
+}
+.adminModalCard h2 { color: var(--ink); font-size: 22px; font-weight: 900; margin-bottom: 8px; }
+.adminModalCard p { color: #6a608c; font-weight: 600; font-size: 15px; margin-bottom: 20px; }
+.adminModalActions { display: flex; gap: 10px; justify-content: center; }
+
+.adminToasts {
+  position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 100;
+  display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none;
+}
+.adminToast {
+  pointer-events: auto; font-family: inherit; font-weight: 800; font-size: 14px; cursor: pointer;
+  color: #fff; border: 0; border-radius: 14px; padding: 11px 18px; max-width: 92vw;
+  box-shadow: 0 10px 30px #2a1a4a33; animation: adminToastIn .25s cubic-bezier(.2,1.4,.5,1) both;
+}
+@keyframes adminToastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+.adminToast.success { background: linear-gradient(#34d27a, #1fae5e); }
+.adminToast.error { background: linear-gradient(#ff7a5e, #ef4434); }
+.adminToast.info { background: linear-gradient(#6aa8ff, #3d7dff); }
+
+.adminSkeleton { display: grid; gap: 8px; }
+.adminSkeletonRow {
+  height: 42px; border-radius: 12px;
+  background: linear-gradient(90deg, #ece8fa 25%, #f5f2ff 50%, #ece8fa 75%);
+  background-size: 200% 100%; animation: adminShimmer 1.3s ease-in-out infinite;
+}
+@keyframes adminShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }

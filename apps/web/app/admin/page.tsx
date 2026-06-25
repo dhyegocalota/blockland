@@ -1,11 +1,17 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { t } from '../../lib/i18n';
 import { tenantSubdomain } from '../../lib/tenants';
 import type { Tenant, TenantTextField } from '../../lib/builtins';
 import { DEFAULT_BRAND_COLOR } from '../../lib/engine/tenant-brand';
 import type { ScoreEntry } from '../../lib/api';
+import { AdminToastProvider, ToastKind, useAdminToast } from '../../components/AdminToast';
+import AdminConfirmModal from '../../components/AdminConfirmModal';
+import AdminSkeleton from '../../components/AdminSkeleton';
+import AdminField from '../../components/AdminField';
+import AdminButton, { AdminButtonVariant } from '../../components/AdminButton';
+import { validateEmail, validateImage, validateIp, validateName, validateTenantId } from './validation';
 
 // The /admin editor only manages id/name/image; the limit fields (play-time + modes) are admin-set
 // at runtime from the in-game / lobby panels, so they sit here as inert defaults only to satisfy the
@@ -20,15 +26,13 @@ const EMPTY: Tenant = {
   offline_allowed: true,
 };
 
-// Only the text fields are edited in this form (the limit fields are runtime admin toggles); typing
-// over them keeps the <input value> + change handlers off the number/bool tenant fields.
-const FIELDS: [TenantTextField, string][] = [
-  ['id', 'admin.field_id'],
-  ['name', 'admin.field_name'],
-  ['image', 'admin.field_image'],
-];
-
 const PAGE_SIZE = 8;
+// /admin is authenticated by the global ADMIN_KEY (x-admin-key header), NOT a per-tenant session
+// claim, so the in-game admin WebSocket (use-lobby-admin → createNet, which requires a `claim`) is
+// unusable here. Real-time is therefore a short-interval poll of the live data (online players +
+// bans) while a tenant is open; every mutation also invalidates immediately so the UI never lags.
+const LIVE_POLL_MS = 4000;
+const ADMIN_KEY_STORAGE = 'bl-admin-key';
 
 interface SaveResponse { name: string; error?: string; field?: string }
 interface UploadResponse { url: string; error?: string }
@@ -37,109 +41,146 @@ interface RoomSnapshot { tenant: string; players: OnlinePlayer[] }
 interface AdminStats { room_list: RoomSnapshot[] }
 interface Account { name: string; email: string; is_admin: boolean; is_moderator: boolean }
 
-const UPLOAD_FIELD: Partial<Record<TenantTextField, 'image'>> = {
-  image: 'image',
-};
+type Loadable = 'loading' | 'ready';
 
 const UPLOAD_ACCEPT = 'image/png,image/jpeg,image/webp';
-const TENANT_ID = /^[a-z0-9-]{2,32}$/;
 
 export default function Admin() {
+  return (
+    <AdminToastProvider>
+      <AdminApp />
+    </AdminToastProvider>
+  );
+}
+
+function AdminApp() {
+  const toast = useAdminToast();
   const [blocked, setBlocked] = useState(false);
   const [key, setKey] = useState('');
   const [authed, setAuthed] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenantsStatus, setTenantsStatus] = useState<Loadable>('loading');
   const [view, setView] = useState<'list' | 'edit'>('list');
   const [page, setPage] = useState(0);
   const [form, setForm] = useState<Tenant>(EMPTY);
-  const [msg, setMsg] = useState('');
   const [selected, setSelected] = useState<Tenant | null>(null);
   const [online, setOnline] = useState<OnlinePlayer[]>([]);
+  const [onlineStatus, setOnlineStatus] = useState<Loadable>('loading');
   const [bans, setBans] = useState<string[]>([]);
+  const [bansStatus, setBansStatus] = useState<Loadable>('loading');
   const [board, setBoard] = useState<ScoreEntry[]>([]);
+  const [boardStatus, setBoardStatus] = useState<Loadable>('loading');
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsStatus, setAccountsStatus] = useState<Loadable>('loading');
   const [grantEmail, setGrantEmail] = useState('');
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [banIp, setBanIp] = useState('');
+  const [banBusy, setBanBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [idError, setIdError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
 
-  // Let the admin page scroll (the game's global CSS pins body overflow to hidden).
+  const keyRef = useRef(key);
+  keyRef.current = key;
+
+  const error = useCallback((message: string) => toast.show({ kind: ToastKind.Error, message }), [toast]);
+  const success = useCallback((message: string) => toast.show({ kind: ToastKind.Success, message }), [toast]);
+
+  const loadTenants = useCallback(async (adminKey: string) => {
+    setTenantsStatus('loading');
+    const res = await fetch('/api/admin/tenants', { headers: { 'x-admin-key': adminKey } });
+    if (res.status === 401) { error(t('admin.invalid_key')); setAuthed(false); return false; }
+    setTenants((await res.json()) as Tenant[]);
+    setTenantsStatus('ready');
+    setAuthed(true);
+    localStorage.setItem(ADMIN_KEY_STORAGE, adminKey);
+    return true;
+  }, [error]);
+
   useEffect(() => {
-    // The admin panel lives on the app root, never on a tenant subdomain (acme.blockland...).
     if (tenantSubdomain()) {
       setBlocked(true);
       window.location.replace('/welcome');
       return;
     }
-    const saved = localStorage.getItem('bl-admin-key');
-    if (saved) { setKey(saved); load(saved); }
+    const saved = localStorage.getItem(ADMIN_KEY_STORAGE);
+    if (saved) { setKey(saved); loadTenants(saved); }
     const prev = { overflow: document.body.style.overflow, height: document.body.style.height };
     document.body.style.overflow = 'auto';
     document.body.style.height = 'auto';
     return () => { document.body.style.overflow = prev.overflow; document.body.style.height = prev.height; };
-  }, []);
+  }, [loadTenants]);
 
-  async function load(k = key) {
-    const res = await fetch('/api/admin/tenants', { headers: { 'x-admin-key': k } });
-    if (res.status === 401) { setMsg(t('admin.invalid_key')); setAuthed(false); return; }
-    setTenants((await res.json()) as Tenant[]);
-    setAuthed(true);
-    setMsg('');
-    localStorage.setItem('bl-admin-key', k);
+  async function authenticate() {
+    setAuthBusy(true);
+    await loadTenants(key);
+    setAuthBusy(false);
   }
 
   function logout() {
-    localStorage.removeItem('bl-admin-key');
+    localStorage.removeItem(ADMIN_KEY_STORAGE);
     setKey('');
     setAuthed(false);
     setTenants([]);
     setView('list');
-    setMsg('');
   }
 
-  async function loadOnline(tenant: string) {
-    const res = await fetch(`/api/admin/online?tenant=${encodeURIComponent(tenant)}`, { headers: { 'x-admin-key': key } });
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+  const loadOnline = useCallback(async (tenant: string, quiet = false) => {
+    if (!quiet) setOnlineStatus('loading');
+    const res = await fetch(`/api/admin/online?tenant=${encodeURIComponent(tenant)}`, { headers: { 'x-admin-key': keyRef.current } });
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return; }
     const stats = (await res.json()) as AdminStats;
     setOnline(stats.room_list.flatMap((room) => room.players));
-  }
+    setOnlineStatus('ready');
+  }, [error]);
 
-  async function loadBans() {
-    const res = await fetch('/api/admin/bans', { headers: { 'x-admin-key': key } });
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+  const loadBans = useCallback(async (quiet = false) => {
+    if (!quiet) setBansStatus('loading');
+    const res = await fetch('/api/admin/bans', { headers: { 'x-admin-key': keyRef.current } });
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return; }
     setBans((await res.json()) as string[]);
-  }
+    setBansStatus('ready');
+  }, [error]);
 
-  async function moderate(action: 'ban' | 'unban', ip: string) {
-    const res = await fetch(`/api/admin/${action}`, {
-      method: 'POST',
-      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
-      body: JSON.stringify({ ip }),
-    });
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
-    setBans((await res.json()) as string[]);
-  }
-
-  function promptBan() {
-    const ip = prompt(t('mod.ban_prompt'));
-    if (ip) moderate('ban', ip.trim());
-  }
-
-  async function loadBoard(tenant: string) {
+  const loadBoard = useCallback(async (tenant: string) => {
+    setBoardStatus('loading');
     const res = await fetch(`/api/leaderboard/${tenant}`);
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return; }
     setBoard((await res.json()) as ScoreEntry[]);
-  }
+    setBoardStatus('ready');
+  }, [error]);
 
-  async function loadAccounts(tenant: string) {
-    const res = await fetch(`/api/admin/accounts/${tenant}`, { headers: { 'x-admin-key': key } });
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+  const loadAccounts = useCallback(async (tenant: string) => {
+    setAccountsStatus('loading');
+    const res = await fetch(`/api/admin/accounts/${tenant}`, { headers: { 'x-admin-key': keyRef.current } });
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return; }
     setAccounts((await res.json()) as Account[]);
-  }
+    setAccountsStatus('ready');
+  }, [error]);
+
+  // Real-time-where-possible: while a tenant is open, re-poll the live data (online players + bans)
+  // on a short interval. No WebSocket — the key-authed admin has no per-tenant claim (see LIVE_POLL_MS).
+  useEffect(() => {
+    if (!selected) return;
+    const timer = setInterval(() => {
+      loadOnline(selected.id, true);
+      loadBans(true);
+    }, LIVE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [selected, loadOnline, loadBans]);
 
   function selectTenant(tenant: Tenant) {
     setSelected(tenant);
-    setMsg('');
     setOnline([]);
     setBoard([]);
     setAccounts([]);
+    setGrantEmail('');
+    setBanIp('');
     loadOnline(tenant.id);
     loadBans();
     loadAccounts(tenant.id);
@@ -149,221 +190,271 @@ export default function Admin() {
   function deselectTenant() {
     setSelected(null);
     setGrantEmail('');
-    setMsg('');
+    setBanIp('');
+  }
+
+  async function moderate(action: 'ban' | 'unban', ip: string) {
+    const res = await fetch(`/api/admin/${action}`, {
+      method: 'POST',
+      headers: { 'x-admin-key': keyRef.current, 'content-type': 'application/json' },
+      body: JSON.stringify({ ip }),
+    });
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return false; }
+    setBans((await res.json()) as string[]);
+    return true;
+  }
+
+  async function submitBan() {
+    if (validateIp(banIp) !== null) return;
+    setBanBusy(true);
+    const ok = await moderate('ban', banIp.trim());
+    setBanBusy(false);
+    if (!ok) return;
+    success(t('mod.banned', { ip: banIp.trim() }));
+    setBanIp('');
   }
 
   async function setAdmin(target: { name: string } | { email: string }, admin: boolean) {
-    if (!selected) return;
+    if (!selected) return false;
     const res = await fetch('/api/admin/set-admin', {
       method: 'POST',
-      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
+      headers: { 'x-admin-key': keyRef.current, 'content-type': 'application/json' },
       body: JSON.stringify({ tenant: selected.id, admin, ...target }),
     });
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return false; }
     setAccounts((await res.json()) as Account[]);
+    return true;
   }
 
-  async function setModerator(target: { name: string } | { email: string }, moderator: boolean) {
+  async function setModerator(target: { name: string }, moderator: boolean) {
     if (!selected) return;
     const res = await fetch('/api/admin/set-moderator', {
       method: 'POST',
-      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
+      headers: { 'x-admin-key': keyRef.current, 'content-type': 'application/json' },
       body: JSON.stringify({ tenant: selected.id, moderator, ...target }),
     });
-    if (!res.ok) { setMsg(t('mod.error', { error: String(res.status) })); return; }
+    if (!res.ok) { error(t('mod.error', { error: String(res.status) })); return; }
     setAccounts((await res.json()) as Account[]);
   }
 
   async function grantAdminByEmail() {
-    const email = grantEmail.trim();
-    if (email === '') return;
-    await setAdmin({ email }, true);
+    if (validateEmail(grantEmail) !== null) return;
+    setGrantBusy(true);
+    const ok = await setAdmin({ email: grantEmail.trim() }, true);
+    setGrantBusy(false);
+    if (!ok) return;
+    success(t('accounts.granted', { email: grantEmail.trim() }));
     setGrantEmail('');
   }
 
-  function startEdit(tenant: Tenant) { setForm(tenant); setMsg(''); setView('edit'); }
-  function startNew() { setForm(EMPTY); setMsg(''); setView('edit'); }
-  function backToList() { setForm(EMPTY); setMsg(''); setView('list'); }
+  function startEdit(tenant: Tenant) { setForm(tenant); setView('edit'); }
+  function startNew() { setForm(EMPTY); setView('edit'); }
+  function backToList() { setForm(EMPTY); setView('list'); }
 
-  async function save(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (idError || nameError || imageError) return;
+    setSaveBusy(true);
     const res = await fetch('/api/admin/tenants', {
       method: 'POST',
-      headers: { 'x-admin-key': key, 'content-type': 'application/json' },
+      headers: { 'x-admin-key': keyRef.current, 'content-type': 'application/json' },
       body: JSON.stringify(form),
     });
     const data = (await res.json()) as SaveResponse;
-    if (!res.ok) { setMsg(t('admin.error', { error: `${data.error}${data.field ? ' (' + data.field + ')' : ''}` })); return; }
-    await load();
+    setSaveBusy(false);
+    if (!res.ok) { error(t('admin.error', { error: `${data.error}${data.field ? ' (' + data.field + ')' : ''}` })); return; }
+    success(t('admin.saved', { name: data.name }));
+    await loadTenants(keyRef.current);
     backToList();
   }
 
-  async function remove(id: string) {
-    if (!confirm(t('admin.confirm_delete', { id }))) return;
-    await fetch(`/api/admin/tenants/${id}`, { method: 'DELETE', headers: { 'x-admin-key': key } });
-    await load();
+  async function confirmDelete() {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    const res = await fetch(`/api/admin/tenants/${deleting}`, { method: 'DELETE', headers: { 'x-admin-key': keyRef.current } });
+    setDeleteBusy(false);
+    setDeleting(null);
+    if (!res.ok) { error(t('admin.error', { error: String(res.status) })); return; }
+    success(t('admin.deleted', { id: deleting }));
+    await loadTenants(keyRef.current);
     backToList();
   }
 
-  const set = (field: TenantTextField) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setForm({ ...form, [field]: e.target.value });
+  const setField = (field: TenantTextField) => (value: string) => setForm((current) => ({ ...current, [field]: value }));
 
-  async function upload(field: TenantTextField, kind: 'image', file: File) {
-    if (!TENANT_ID.test(form.id)) { setMsg(t('admin.upload_needs_id')); return; }
+  async function upload(file: File) {
+    if (validateTenantId(form.id) !== null) { error(t('admin.upload_needs_id')); return; }
     const data = new FormData();
     data.set('tenantId', form.id);
-    data.set('kind', kind);
+    data.set('kind', 'image');
     data.set('file', file);
-    setMsg(t('admin.uploading'));
-    const res = await fetch('/api/admin/uploads', { method: 'POST', headers: { 'x-admin-key': key }, body: data });
+    setUploadBusy(true);
+    const res = await fetch('/api/admin/uploads', { method: 'POST', headers: { 'x-admin-key': keyRef.current }, body: data });
     const result = (await res.json()) as UploadResponse;
-    if (!res.ok) { setMsg(t('admin.error', { error: String(result.error) })); return; }
-    setForm((current) => ({ ...current, [field]: result.url }));
-    setMsg(t('admin.uploaded'));
+    setUploadBusy(false);
+    if (!res.ok) { error(t('admin.error', { error: String(result.error) })); return; }
+    setForm((current) => ({ ...current, image: result.url }));
+    success(t('admin.uploaded'));
   }
 
-  const pickFile = (field: TenantTextField, kind: 'image') => (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) upload(field, kind, file);
-    e.target.value = '';
-  };
+  function pickFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) upload(file);
+    event.target.value = '';
+  }
 
   if (blocked) return null;
 
   if (!authed) {
     return (
-      <main style={S.wrap}>
-        <h1 style={S.h1}>{t('admin.login_title')}</h1>
-        <p style={{ color: '#9aa' }}>{t('admin.login_hint')}</p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input style={S.input} type="password" placeholder={t('admin.key_placeholder')} value={key}
-            onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
-          <button style={S.btn} onClick={() => load()}>{t('admin.enter')}</button>
+      <main className="adminApp">
+        <div className="adminLogin">
+          <h1 className="adminTitle">{t('admin.login_title')}</h1>
+          <p className="adminSubtle">{t('admin.login_hint')}</p>
+          <div className="adminLoginRow">
+            <input className="adminInput" type="password" placeholder={t('admin.key_placeholder')} value={key}
+              onChange={(event) => setKey(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && authenticate()} />
+            <AdminButton onClick={authenticate} busy={authBusy} disabled={key.trim() === ''}>{t('admin.enter')}</AdminButton>
+          </div>
         </div>
-        {msg && <p style={{ color: '#ff7a7a' }}>{msg}</p>}
       </main>
     );
   }
 
   if (view === 'edit') {
     const editing = form.id !== '' && tenants.some((tenant) => tenant.id === form.id);
+    const invalid = idError !== null || nameError !== null || imageError !== null;
     return (
-      <main style={S.wrap}>
-        <button style={S.small} onClick={backToList}>{t('admin.back')}</button>
-        <h1 style={{ ...S.h1, marginTop: 14 }}>{editing ? t('admin.edit_tenant') : t('admin.new_tenant')}</h1>
-        {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
-        <form onSubmit={save} style={{ display: 'grid', gap: 10, maxWidth: 560 }}>
-          {FIELDS.map(([f, labelKey]) => (
-            <label key={f} style={{ display: 'grid', gap: 4 }}>
-              <span style={{ color: '#9aa', fontSize: 13 }}>{t(labelKey)}</span>
-              <input style={S.input} value={form[f]} onChange={set(f)} />
-              {UPLOAD_FIELD[f] && (
-                <input style={S.file} type="file" accept={UPLOAD_ACCEPT} onChange={pickFile(f, UPLOAD_FIELD[f]!)} />
-              )}
-            </label>
-          ))}
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <button style={S.btn} type="submit">{t('admin.save_tenant')}</button>
+      <main className="adminApp">
+        <button className="adminBtnGhost" onClick={backToList}>{t('admin.back')}</button>
+        <h1 className="adminTitle adminTitleSpaced">{editing ? t('admin.edit_tenant') : t('admin.new_tenant')}</h1>
+        <form onSubmit={save} className="adminForm">
+          <AdminField label={t('admin.field_id')} rule={t('admin.rule_id')} value={form.id}
+            validate={validateTenantId} onChange={setField('id')} onValidity={setIdError} />
+          <AdminField label={t('admin.field_name')} rule={t('admin.rule_name')} value={form.name}
+            validate={validateName} onChange={setField('name')} onValidity={setNameError} />
+          <AdminField label={t('admin.field_image')} rule={t('admin.rule_image')} value={form.image}
+            validate={validateImage} onChange={setField('image')} onValidity={setImageError} />
+          <label className="adminUpload">
+            <span className="adminFieldLabel">{t('admin.upload_label')}</span>
+            <input className="adminFile" type="file" accept={UPLOAD_ACCEPT} onChange={pickFile} disabled={uploadBusy} />
+            {uploadBusy && <span className="adminSubtle">{t('admin.uploading')}</span>}
+          </label>
+          {form.image !== '' && <img className="adminPreview" src={form.image} alt="" />}
+          <div className="adminFormActions">
+            <AdminButton type="submit" busy={saveBusy} disabled={invalid}>{t('admin.save_tenant')}</AdminButton>
             {editing && (
-              <button style={{ ...S.small, color: '#ff7a7a' }} type="button" onClick={() => remove(form.id)}>{t('admin.delete')}</button>
+              <AdminButton variant={AdminButtonVariant.Danger} onClick={() => setDeleting(form.id)}>{t('admin.delete')}</AdminButton>
             )}
-            <button style={S.small} type="button" onClick={backToList}>{t('admin.back')}</button>
+            <AdminButton variant={AdminButtonVariant.Ghost} onClick={backToList}>{t('admin.back')}</AdminButton>
           </div>
         </form>
+        <AdminConfirmModal open={deleting !== null} title={t('admin.delete_title')}
+          message={t('admin.confirm_delete', { id: deleting ?? '' })} confirmLabel={t('admin.delete')}
+          busy={deleteBusy} onConfirm={confirmDelete} onCancel={() => setDeleting(null)} />
       </main>
     );
   }
 
   if (selected) {
+    const banInvalid = validateIp(banIp) !== null;
+    const grantInvalid = validateEmail(grantEmail) !== null;
     return (
-      <main style={S.wrap}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button style={S.small} onClick={deselectTenant}>{t('admin.back_to_tenants')}</button>
-          <img src={selected.image} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
-          <h1 style={{ ...S.h1, flex: 1, marginBottom: 0 }}>{t('admin.managing', { name: selected.name })}</h1>
-          <button style={S.small} onClick={() => startEdit(selected)}>{t('admin.edit')}</button>
+      <main className="adminApp">
+        <div className="adminHeader">
+          <button className="adminBtnGhost" onClick={deselectTenant}>{t('admin.back_to_tenants')}</button>
+          <img className="adminAvatar" src={selected.image} alt="" width={40} height={40} />
+          <h1 className="adminTitle adminHeaderTitle">{t('admin.managing', { name: selected.name })}</h1>
+          <button className="adminBtnGhost" onClick={() => startEdit(selected)}>{t('admin.edit')}</button>
         </div>
-        {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
 
-        <h2 style={{ ...S.h1, fontSize: 18, marginTop: 24 }}>{t('mod.title')}</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <b style={{ flex: 1 }}>{t('mod.online_title')}</b>
-          <button style={S.small} onClick={() => loadOnline(selected.id)}>{t('mod.refresh')}</button>
-          <button style={{ ...S.small, color: '#ff7a7a' }} onClick={promptBan}>{t('mod.ban')}</button>
-        </div>
-        {online.length === 0
-          ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.online_empty')}</p>
-          : (
-            <table style={S.table}>
+        <section className="adminCard">
+          <div className="adminSectionHead">
+            <h2 className="adminSectionTitle">{t('mod.online_title')}</h2>
+            <span className="adminLiveDot" title={t('admin.live')} />
+            <AdminButton variant={AdminButtonVariant.Ghost} onClick={() => loadOnline(selected.id)}>{t('mod.refresh')}</AdminButton>
+          </div>
+          {onlineStatus === 'loading' && <AdminSkeleton rows={3} />}
+          {onlineStatus === 'ready' && online.length === 0 && <p className="adminEmpty">{t('mod.online_empty')}</p>}
+          {onlineStatus === 'ready' && online.length > 0 && (
+            <table className="adminTable">
               <thead><tr>
-                <th style={S.th}>{t('mod.col_name')}</th>
-                <th style={S.th}>{t('mod.col_position')}</th>
-                <th style={S.th}>{t('mod.col_ping')}</th>
+                <th>{t('mod.col_name')}</th><th>{t('mod.col_position')}</th><th>{t('mod.col_ping')}</th>
               </tr></thead>
               <tbody>
                 {online.map((player) => (
                   <tr key={player.id}>
-                    <td style={S.td}>{player.name}</td>
-                    <td style={S.td}>{Math.round(player.x)}, {Math.round(player.y)}, {Math.round(player.z)}</td>
-                    <td style={S.td}>{player.ping_ms}ms</td>
+                    <td>{player.name}</td>
+                    <td>{Math.round(player.x)}, {Math.round(player.y)}, {Math.round(player.z)}</td>
+                    <td>{player.ping_ms}ms</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+        </section>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '28px 0 4px' }}>
-          <b style={{ flex: 1 }}>{t('mod.bans_title')}</b>
-          <button style={S.small} onClick={() => loadBans()}>{t('mod.refresh')}</button>
-        </div>
-        <p style={{ color: '#789', fontSize: 13, marginBottom: 10 }}>{t('mod.bans_note')}</p>
-        {bans.length === 0
-          ? <p style={{ color: '#789', marginBottom: 28 }}>{t('mod.bans_empty')}</p>
-          : (
-            <div style={{ display: 'grid', gap: 8, marginBottom: 28 }}>
+        <section className="adminCard">
+          <div className="adminSectionHead">
+            <h2 className="adminSectionTitle">{t('mod.bans_title')}</h2>
+            <span className="adminLiveDot" title={t('admin.live')} />
+            <AdminButton variant={AdminButtonVariant.Ghost} onClick={() => loadBans()}>{t('mod.refresh')}</AdminButton>
+          </div>
+          <p className="adminSubtle">{t('mod.bans_note')}</p>
+          <div className="adminInlineForm">
+            <input className={banIp !== '' && banInvalid ? 'adminInput invalid' : 'adminInput'} placeholder={t('mod.ip_placeholder')}
+              value={banIp} onChange={(event) => setBanIp(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && submitBan()} />
+            <AdminButton variant={AdminButtonVariant.Danger} onClick={submitBan} busy={banBusy} disabled={banInvalid}>{t('mod.ban')}</AdminButton>
+          </div>
+          {banIp !== '' && banInvalid && <span className="adminFieldError">{t('mod.invalid_ip')}</span>}
+          {bansStatus === 'loading' && <AdminSkeleton rows={2} />}
+          {bansStatus === 'ready' && bans.length === 0 && <p className="adminEmpty">{t('mod.bans_empty')}</p>}
+          {bansStatus === 'ready' && bans.length > 0 && (
+            <div className="adminBanList">
               {bans.map((ip) => (
-                <div key={ip} style={S.row}>
-                  <code style={{ flex: 1, color: '#e8e8f0' }}>{ip}</code>
-                  <button style={S.small} onClick={() => moderate('unban', ip)}>{t('mod.unban')}</button>
+                <div key={ip} className="adminBanRow">
+                  <code>{ip}</code>
+                  <AdminButton variant={AdminButtonVariant.Ghost} onClick={() => moderate('unban', ip)}>{t('mod.unban')}</AdminButton>
                 </div>
               ))}
             </div>
           )}
+        </section>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px' }}>
-          <h2 style={{ ...S.h1, fontSize: 18, flex: 1, marginBottom: 0 }}>{t('accounts.title')}</h2>
-          <button style={S.small} onClick={() => loadAccounts(selected.id)}>{t('mod.refresh')}</button>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, maxWidth: 560 }}>
-          <input style={{ ...S.input, flex: 1 }} placeholder={t('accounts.grant_email_placeholder')}
-            value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && grantAdminByEmail()} />
-          <button style={S.btn} onClick={grantAdminByEmail}>{t('accounts.grant_email_button')}</button>
-        </div>
-        {accounts.length === 0
-          ? <p style={{ color: '#789', marginBottom: 28 }}>{t('accounts.empty')}</p>
-          : (
-            <table style={S.table}>
+        <section className="adminCard">
+          <div className="adminSectionHead">
+            <h2 className="adminSectionTitle">{t('accounts.title')}</h2>
+            <AdminButton variant={AdminButtonVariant.Ghost} onClick={() => loadAccounts(selected.id)}>{t('mod.refresh')}</AdminButton>
+          </div>
+          <div className="adminInlineForm">
+            <input className={grantEmail !== '' && grantInvalid ? 'adminInput invalid' : 'adminInput'} placeholder={t('accounts.grant_email_placeholder')}
+              value={grantEmail} onChange={(event) => setGrantEmail(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && grantAdminByEmail()} />
+            <AdminButton onClick={grantAdminByEmail} busy={grantBusy} disabled={grantInvalid}>{t('accounts.grant_email_button')}</AdminButton>
+          </div>
+          {grantEmail !== '' && grantInvalid && <span className="adminFieldError">{t('admin.invalid_email')}</span>}
+          {accountsStatus === 'loading' && <AdminSkeleton rows={3} />}
+          {accountsStatus === 'ready' && accounts.length === 0 && <p className="adminEmpty">{t('accounts.empty')}</p>}
+          {accountsStatus === 'ready' && accounts.length > 0 && (
+            <table className="adminTable">
               <thead><tr>
-                <th style={S.th}>{t('accounts.col_name')}</th>
-                <th style={S.th}>{t('accounts.col_email')}</th>
-                <th style={S.th}>{t('accounts.col_admin')}</th>
-                <th style={S.th}>{t('accounts.col_moderator')}</th>
-                <th style={S.th}></th>
+                <th>{t('accounts.col_name')}</th><th>{t('accounts.col_email')}</th>
+                <th>{t('accounts.col_admin')}</th><th>{t('accounts.col_moderator')}</th><th></th>
               </tr></thead>
               <tbody>
                 {accounts.map((account) => (
                   <tr key={account.email}>
-                    <td style={S.td}>{account.name}</td>
-                    <td style={S.td}>{account.email}</td>
-                    <td style={S.td}>{account.is_admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
-                    <td style={S.td}>{account.is_moderator ? t('accounts.is_moderator') : t('accounts.not_admin')}</td>
-                    <td style={S.td}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button style={S.small} onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
+                    <td>{account.name}</td>
+                    <td>{account.email}</td>
+                    <td>{account.is_admin ? t('accounts.is_admin') : t('accounts.not_admin')}</td>
+                    <td>{account.is_moderator ? t('accounts.is_moderator') : t('accounts.not_admin')}</td>
+                    <td>
+                      <div className="adminRowActions">
+                        <button className="adminBtnGhost" onClick={() => setAdmin({ name: account.name }, !account.is_admin)}>
                           {account.is_admin ? t('accounts.remove_admin') : t('accounts.make_admin')}
                         </button>
-                        <button style={S.small} onClick={() => setModerator({ name: account.name }, !account.is_moderator)}>
+                        <button className="adminBtnGhost" onClick={() => setModerator({ name: account.name }, !account.is_moderator)}>
                           {account.is_moderator ? t('accounts.remove_moderator') : t('accounts.make_moderator')}
                         </button>
                       </div>
@@ -373,31 +464,30 @@ export default function Admin() {
               </tbody>
             </table>
           )}
+        </section>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 12px' }}>
-          <h2 style={{ ...S.h1, fontSize: 18, flex: 1, marginBottom: 0 }}>{t('leaderboard.title')}</h2>
-          <button style={S.small} onClick={() => loadBoard(selected.id)}>{t('mod.refresh')}</button>
-        </div>
-        {board.length === 0
-          ? <p style={{ color: '#789' }}>{t('leaderboard.empty')}</p>
-          : (
-            <table style={S.table}>
+        <section className="adminCard">
+          <div className="adminSectionHead">
+            <h2 className="adminSectionTitle">{t('leaderboard.title')}</h2>
+            <AdminButton variant={AdminButtonVariant.Ghost} onClick={() => loadBoard(selected.id)}>{t('mod.refresh')}</AdminButton>
+          </div>
+          {boardStatus === 'loading' && <AdminSkeleton rows={3} />}
+          {boardStatus === 'ready' && board.length === 0 && <p className="adminEmpty">{t('leaderboard.empty')}</p>}
+          {boardStatus === 'ready' && board.length > 0 && (
+            <table className="adminTable">
               <thead><tr>
-                <th style={S.th}>{t('leaderboard.col_rank')}</th>
-                <th style={S.th}>{t('leaderboard.col_name')}</th>
-                <th style={S.th}>{t('leaderboard.col_score')}</th>
+                <th>{t('leaderboard.col_rank')}</th><th>{t('leaderboard.col_name')}</th><th>{t('leaderboard.col_score')}</th>
               </tr></thead>
               <tbody>
                 {board.map((entry, index) => (
                   <tr key={`${entry.name}-${index}`}>
-                    <td style={S.td}>{index + 1}</td>
-                    <td style={S.td}>{entry.name}</td>
-                    <td style={S.td}>{entry.score}</td>
+                    <td>{index + 1}</td><td>{entry.name}</td><td>{entry.score}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+        </section>
       </main>
     );
   }
@@ -407,50 +497,37 @@ export default function Admin() {
   const shown = tenants.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
   return (
-    <main style={S.wrap}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h1 style={{ ...S.h1, flex: 1, marginBottom: 0 }}>{t('admin.tenants_title')}</h1>
-        <button style={S.btn} onClick={startNew}>{t('admin.new_tenant')}</button>
-        <button style={S.small} onClick={logout}>{t('admin.logout')}</button>
+    <main className="adminApp">
+      <div className="adminHeader">
+        <h1 className="adminTitle adminHeaderTitle">{t('admin.tenants_title')}</h1>
+        <AdminButton onClick={startNew}>{t('admin.new_tenant')}</AdminButton>
+        <button className="adminBtnGhost" onClick={logout}>{t('admin.logout')}</button>
       </div>
-      <p style={{ color: '#9aa' }}>{t('admin.pick_tenant_hint')}</p>
-      {msg && <p style={{ color: '#7ad' }}>{msg}</p>}
+      <p className="adminSubtle">{t('admin.pick_tenant_hint')}</p>
 
-      <div style={{ display: 'grid', gap: 8, margin: '16px 0 10px' }}>
-        {shown.map((tenant) => (
-          <button key={tenant.id} style={S.tenantRow} onClick={() => selectTenant(tenant)}>
-            <img src={tenant.image} alt="" width={36} height={36} style={{ borderRadius: 8, background: '#222' }} />
-            <div style={{ flex: 1, textAlign: 'left' }}>
-              <b style={{ color: DEFAULT_BRAND_COLOR }}>{tenant.name}</b>
-              <span style={{ color: '#789', marginLeft: 8 }}>/{tenant.id}</span>
-            </div>
-            <span style={S.link}>{t('admin.manage')}</span>
-          </button>
-        ))}
-      </div>
+      {tenantsStatus === 'loading' && <AdminSkeleton rows={5} />}
+      {tenantsStatus === 'ready' && (
+        <div className="adminTenantList">
+          {shown.map((tenant) => (
+            <button key={tenant.id} className="adminTenantRow" onClick={() => selectTenant(tenant)}>
+              <img className="adminAvatar" src={tenant.image} alt="" width={40} height={40} />
+              <div className="adminTenantMeta">
+                <b style={{ color: DEFAULT_BRAND_COLOR }}>{tenant.name}</b>
+                <span className="adminTenantId">/{tenant.id}</span>
+              </div>
+              <span className="adminTenantManage">{t('admin.manage')}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
-      {pageCount > 1 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 30 }}>
-          <button style={S.small} disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('admin.prev')}</button>
-          <span style={{ color: '#9aa', fontSize: 13 }}>{t('admin.page_of', { page: safePage + 1, total: pageCount })}</span>
-          <button style={S.small} disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>{t('admin.next')}</button>
+      {tenantsStatus === 'ready' && pageCount > 1 && (
+        <div className="adminPager">
+          <button className="adminBtnGhost" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('admin.prev')}</button>
+          <span className="adminSubtle">{t('admin.page_of', { page: safePage + 1, total: pageCount })}</span>
+          <button className="adminBtnGhost" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>{t('admin.next')}</button>
         </div>
       )}
     </main>
   );
 }
-
-const S: Record<string, CSSProperties> = {
-  wrap: { minHeight: '100vh', background: '#0e0e16', color: '#e8e8f0', fontFamily: 'system-ui, sans-serif', padding: 28 },
-  h1: { fontWeight: 800, marginBottom: 12 },
-  input: { background: '#1a1a26', border: '1px solid #333', borderRadius: 8, color: '#fff', padding: '10px 12px', fontSize: 14 },
-  btn: { background: '#3dc6ff', color: '#06121a', border: 0, borderRadius: 8, padding: '10px 18px', fontWeight: 800, cursor: 'pointer' },
-  small: { background: 'transparent', color: '#9cf', border: '1px solid #345', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' },
-  link: { color: '#9cf', textDecoration: 'none', padding: '6px 10px', fontSize: 14 },
-  file: { color: '#9aa', fontSize: 12 },
-  row: { display: 'flex', alignItems: 'center', gap: 10, background: '#15151f', border: '1px solid #262633', borderRadius: 10, padding: 10 },
-  tenantRow: { display: 'flex', alignItems: 'center', gap: 10, background: '#15151f', border: '1px solid #262633', borderRadius: 10, padding: 10, cursor: 'pointer', color: '#e8e8f0', font: 'inherit' },
-  table: { width: '100%', maxWidth: 720, borderCollapse: 'collapse', marginBottom: 28, background: '#15151f', border: '1px solid #262633', borderRadius: 10, overflow: 'hidden' },
-  th: { textAlign: 'left', color: '#9aa', fontSize: 13, padding: '10px 12px', borderBottom: '1px solid #262633' },
-  td: { color: '#e8e8f0', fontSize: 14, padding: '8px 12px', borderBottom: '1px solid #1d1d28' },
-};

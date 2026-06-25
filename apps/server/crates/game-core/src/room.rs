@@ -84,7 +84,7 @@ const HURT_RANGE: f32 = 0.9;
 // feet of a player standing on top of a surface block must still be hit — do not regress that to a tight
 // bound, or "the monsters aren't at the right height to attack" returns.
 const HURT_VERTICAL_GAP: f32 = 1.3;
-const PLAYER_EYE_HEIGHT: f32 = 1.55;
+pub const PLAYER_EYE_HEIGHT: f32 = 1.55;
 // Taps on the same block before the server breaks it — digging takes a little effort, enforced server-side.
 // Exported to the web as DIG_HITS so an offline dig takes exactly as many taps as a co-op dig.
 pub const DIG_HITS: u8 = 2;
