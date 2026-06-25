@@ -227,6 +227,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     // Co-op connection status
     'coop.connecting': '🔌 Conectando ao mundo...',
     'coop.reconnecting': '📡 Reconectando...',
+    'coop.relocating': '🧭 Encontrando o servidor do seu mundo...',
     'coop.offline': '🚫 Sem conexão — jogando sozinho',
     'coop.banned': '⛔ Você foi banido deste mundo',
     'coop.kicked': '👋 Você foi removido da sala',
@@ -699,6 +700,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     // Co-op connection status
     'coop.connecting': '🔌 Connecting to the world...',
     'coop.reconnecting': '📡 Reconnecting...',
+    'coop.relocating': "🧭 Finding your world's server...",
     'coop.offline': '🚫 No connection — playing solo',
     'coop.banned': '⛔ You were banned from this world',
     'coop.kicked': '👋 You were removed from the room',

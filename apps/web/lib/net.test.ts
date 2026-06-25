@@ -439,6 +439,40 @@ describe('net client', () => {
     expect(states).toEqual(['connecting', 'online', 'reconnecting', 'online', 'reconnecting']);
   });
 
+  it('served_elsewhere fast-retries at a fixed interval (not the growing backoff) until a holder welcomes', () => {
+    const { client, states } = makeClient();
+    client.connect();
+    MockWebSocket.instances[0].open();
+    MockWebSocket.instances[0].receive(welcome);
+
+    // A multi-server LB routed us to an instance that does NOT hold this room.
+    MockWebSocket.instances[0].receive({ t: 'error', code: 'served_elsewhere', msg: 'busy elsewhere' });
+    expect(client.state).toBe('served_elsewhere');
+
+    // It retries on the FIXED relocate interval (600ms) — not the 500ms→1000ms reconnect backoff.
+    MockWebSocket.instances[0].serverClose();
+    expect(client.state).toBe('served_elsewhere'); // stays on the friendly relocating overlay, no flip to reconnecting
+    vi.advanceTimersByTime(599);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(2);
+
+    // Still a non-holder: the SAME fixed 600ms again (no exponential growth).
+    MockWebSocket.instances[1].open();
+    MockWebSocket.instances[1].receive({ t: 'error', code: 'served_elsewhere', msg: 'busy elsewhere' });
+    MockWebSocket.instances[1].serverClose();
+    vi.advanceTimersByTime(599);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(3);
+
+    // Landed on the holder: Welcome → online, the relocate flag is cleared.
+    MockWebSocket.instances[2].open();
+    MockWebSocket.instances[2].receive(welcome);
+    expect(client.state).toBe('online');
+    expect(states).toEqual(['connecting', 'online', 'served_elsewhere', 'online']);
+  });
+
   it('a user-initiated close does not reconnect (offline, no reopen)', () => {
     const { client, states } = makeClient();
     client.connect();

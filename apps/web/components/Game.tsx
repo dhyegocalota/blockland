@@ -55,6 +55,7 @@ const BANNER_KEYS: Record<NetState, string | null> = {
   time_up: 'coop.time_up',
   online_blocked: 'coop.online_blocked',
   needs_approval: null,
+  served_elsewhere: null,
   needs_login: 'coop.needs_login',
   rejected: 'coop.rejected',
 };
@@ -138,7 +139,11 @@ export default function Game() {
   const myKills = self ? self.pvpKills : 0;
   // The friendly connecting/reconnecting overlay owns that status; suppress the small banner while it is
   // up so a drop reads as one clear "reconnecting…" panel over the live world, not a doubled message.
-  const connectingOverlayShown = !!connectKey && !severe && netState !== 'needs_approval';
+  // `served_elsewhere` (a multi-server LB sent us to a non-holding instance) rides the SAME smooth panel
+  // with its own "finding your world" line while the fast retry walks us to the room's holder.
+  const relocating = netState === 'served_elsewhere';
+  const connectingOverlayShown = (!!connectKey || relocating) && !severe && netState !== 'needs_approval';
+  const connectingStateText = relocating ? t('coop.relocating') : connectKey ? t(connectKey) : '';
 
   if (updateRequired) {
     return (
@@ -363,7 +368,7 @@ export default function Game() {
           <div className="panel">
             <div className="connectingSpinner" aria-hidden="true">🧩</div>
             <h2>{t('coop.connect_title')}</h2>
-            <p className="connectingState">{t(connectKey)}</p>
+            <p className="connectingState">{connectingStateText}</p>
             <p>{t('coop.connect_hint')}</p>
           </div>
         </div>

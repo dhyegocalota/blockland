@@ -67,6 +67,7 @@ export type NetState =
   | 'time_up'
   | 'online_blocked'
   | 'needs_approval'
+  | 'served_elsewhere'
   | 'needs_login'
   | 'rejected';
 
@@ -219,6 +220,11 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 10_000;
 // How often a player held for approval silently retries the join while they wait on the frozen screen.
 const APPROVAL_RETRY_MS = 3_000;
+// `served_elsewhere`: a multi-server load balancer routed us to an instance that does NOT hold this
+// tenant's room (another instance does). It is purely transient, so we retry FAST on a fixed interval
+// (not the growing reconnect backoff) — each retry is a fresh socket the LB round-robins to another
+// instance, so we land on the room's holder within a few hundred ms instead of waiting out a backoff.
+const RELOCATE_RETRY_MS = 600;
 // Silent-drop detection: the server streams snapshots (~30Hz) + pings, so going this long with NO message
 // while supposedly online means the link is dead (internet dropped, half-open socket that never cleanly
 // closed). We force the socket closed so the normal reconnect path takes over. Checked on this interval.
@@ -267,6 +273,7 @@ export function createNet(opts: NetOptions): NetClient {
   // While held for admin approval we keep the player on a frozen "waiting" screen and silently re-join
   // every few seconds; the moment an admin approves, the next join returns a Welcome and they drop in.
   let waitingApproval = false;
+  let relocating = false;
 
   function setState(next: NetState): void {
     if (state === next) return;
@@ -396,6 +403,7 @@ export function createNet(opts: NetOptions): NetClient {
     if (msg.t === 'welcome') {
       attempt = 0;
       waitingApproval = false;
+      relocating = false;
       setState('online');
       startLiveness();
       debug('net', 'welcome', { you: msg.you, world: msg.world, version: msg.version });
@@ -489,8 +497,11 @@ export function createNet(opts: NetOptions): NetClient {
   function handleError(code: string, message: string): void {
     debug('net', 'error', { code, msg: message });
     opts.handlers.onError?.(code, message);
+    // Any fresh error supersedes a pending relocate so the close handler doesn't keep fast-retrying past it.
+    relocating = false;
     // Not terminal: stay on the frozen waiting screen and let the close handler re-join until approved.
     if (code === 'needs_approval') { waitingApproval = true; setState('needs_approval'); return; }
+    if (code === 'served_elsewhere') { relocating = true; setState('served_elsewhere'); return; }
     const terminal = TERMINAL_ERRORS[code];
     if (terminal) { waitingApproval = false; terminalReason = terminal; setState(terminal); }
   }
@@ -504,6 +515,10 @@ export function createNet(opts: NetOptions): NetClient {
     }
     if (waitingApproval) {
       reconnectTimer = setTimeout(open, APPROVAL_RETRY_MS);
+      return;
+    }
+    if (relocating) {
+      reconnectTimer = setTimeout(open, RELOCATE_RETRY_MS);
       return;
     }
     if (terminalReason !== null) {
