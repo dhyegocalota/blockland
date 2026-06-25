@@ -119,7 +119,7 @@ impl Persistence for NoPersistence {
 /// nothing to persist and no second admin to notify.
 pub struct WasmHost {
     next_id: AtomicU32,
-    /// The lone local player's account id, so `claim_holder` reports them as their own claim's holder
+    /// The lone local player's account id, so `claim_is_live` reports their own claim as live
     /// (kick-on-reclaim can therefore never fire offline). Empty for a guest.
     local_account_id: String,
     local_claim: String,
@@ -153,11 +153,10 @@ impl RoomHost for WasmHost {
     fn list_named_bans(&self) -> Vec<(String, String)> {
         Vec::new()
     }
-    fn claim_holder(&self, account_id: &str) -> Option<String> {
-        if !self.local_account_id.is_empty() && account_id == self.local_account_id {
-            return Some(self.local_claim.clone());
-        }
-        None
+    fn claim_is_live(&self, account_id: &str, token: &str) -> bool {
+        !self.local_account_id.is_empty()
+            && account_id == self.local_account_id
+            && token == self.local_claim
     }
     fn publish_stats(&self, _key: RoomKey, _snapshot: RoomSnapshot) {}
     fn set_tenant_peace(&self, _tenant: String, _on: bool) {}
@@ -233,16 +232,17 @@ mod tests {
         let host = WasmHost::new("acc-local".into(), "tok-local".into());
         assert!(!host.is_banned("127.0.0.1".parse().unwrap()));
         assert!(host.list_named_bans().is_empty());
-        // The local player is reported as their own claim's holder, so kick-on-reclaim never fires.
-        assert_eq!(host.claim_holder("acc-local"), Some("tok-local".into()));
-        // An unknown account has no holder.
-        assert_eq!(host.claim_holder("someone-else"), None);
+        // The local player's own claim is live, so kick-on-reclaim never fires offline.
+        assert!(host.claim_is_live("acc-local", "tok-local"));
+        // A different token or unknown account is not live.
+        assert!(!host.claim_is_live("acc-local", "other-tok"));
+        assert!(!host.claim_is_live("someone-else", "tok-local"));
     }
 
     #[test]
-    fn guest_host_has_no_claim_holder() {
+    fn guest_host_has_no_live_claim() {
         let host = WasmHost::new(String::new(), String::new());
-        assert_eq!(host.claim_holder(""), None);
+        assert!(!host.claim_is_live("", ""));
     }
 
     #[test]

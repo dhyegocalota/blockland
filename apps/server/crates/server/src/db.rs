@@ -317,10 +317,12 @@ impl Db {
             .await?;
         self.conn
             .execute(
-                "CREATE TABLE IF NOT EXISTS claims (
-                    account_id TEXT PRIMARY KEY,
+                // One row per signed-in device (keyed by token), so an account can hold several live
+                // claims at once — logging in on a new device never evicts the others.
+                "CREATE TABLE IF NOT EXISTS device_claims (
+                    token TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
                     tenant TEXT NOT NULL,
-                    token TEXT NOT NULL,
                     created_at INTEGER NOT NULL
                 )",
                 (),
@@ -1287,9 +1289,9 @@ impl Db {
     pub async fn set_claim(&self, account_id: &str, token: &str) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "INSERT INTO claims (account_id, tenant, token, created_at)
-                 SELECT a.account_id, a.tenant, ?2, ?3 FROM accounts a WHERE a.account_id = ?1
-                 ON CONFLICT(account_id) DO UPDATE SET token = excluded.token, created_at = excluded.created_at",
+                "INSERT INTO device_claims (token, account_id, tenant, created_at)
+                 SELECT ?2, a.account_id, a.tenant, ?3 FROM accounts a WHERE a.account_id = ?1
+                 ON CONFLICT(token) DO UPDATE SET created_at = excluded.created_at",
                 params![account_id, token, now_ms()],
             )
             .await?;
@@ -1305,7 +1307,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT c.account_id, a.name FROM claims c
+                "SELECT c.account_id, a.name FROM device_claims c
                  JOIN accounts a ON a.account_id = c.account_id
                  WHERE c.tenant = ?1 AND c.token = ?2",
                 params![tenant, token],
@@ -1321,7 +1323,7 @@ impl Db {
     pub async fn clear_claim(&self, account_id: &str, token: &str) -> Result<(), libsql::Error> {
         self.conn
             .execute(
-                "DELETE FROM claims WHERE account_id = ?1 AND token = ?2",
+                "DELETE FROM device_claims WHERE account_id = ?1 AND token = ?2",
                 params![account_id, token],
             )
             .await?;
@@ -1332,7 +1334,7 @@ impl Db {
     pub async fn all_claims(&self) -> Result<Vec<(String, String)>, libsql::Error> {
         let mut rows = self
             .conn
-            .query("SELECT account_id, token FROM claims", ())
+            .query("SELECT account_id, token FROM device_claims", ())
             .await?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -2444,24 +2446,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claims_replace_resolve_and_clear_by_token() {
+    async fn claims_keep_every_device_token_and_clear_one_at_a_time() {
         let db = memory_db().await;
         let ann = account(&db, "acme", "ann@x.com", "Ann").await;
         db.set_claim(&ann, "tokA").await.unwrap();
         db.set_claim(&ann, "tokB").await.unwrap();
+        // Both device tokens persist (a second device login never evicts the first).
+        let mut all = db.all_claims().await.unwrap();
+        all.sort();
         assert_eq!(
-            db.all_claims().await.unwrap(),
-            vec![(ann.clone(), "tokB".to_string())]
+            all,
+            vec![
+                (ann.clone(), "tokA".to_string()),
+                (ann.clone(), "tokB".to_string())
+            ]
         );
-        // The live token resolves to the account's current name (server-authoritative).
+        // Each token resolves to the account's current name (server-authoritative).
+        assert_eq!(
+            db.claim_to_account("acme", "tokA").await.unwrap(),
+            Some((ann.clone(), "Ann".to_string()))
+        );
         assert_eq!(
             db.claim_to_account("acme", "tokB").await.unwrap(),
             Some((ann.clone(), "Ann".to_string()))
         );
-        assert!(db.claim_to_account("acme", "tokA").await.unwrap().is_none());
-        // A stale token must not clear a re-claimed session.
+        // Logging out one device drops only that token; the other stays live.
         db.clear_claim(&ann, "tokA").await.unwrap();
-        assert_eq!(db.all_claims().await.unwrap().len(), 1);
+        assert!(db.claim_to_account("acme", "tokA").await.unwrap().is_none());
+        assert_eq!(
+            db.all_claims().await.unwrap(),
+            vec![(ann.clone(), "tokB".to_string())]
+        );
         db.clear_claim(&ann, "tokB").await.unwrap();
         assert!(db.all_claims().await.unwrap().is_empty());
     }

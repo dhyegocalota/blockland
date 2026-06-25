@@ -443,6 +443,12 @@ export function createCoop(opts: CoopOptions): CoopController {
           opts.hud.onEvent({ kind: 'kill', name: msg.name, detail: t(creatureNameKey(msg.detail)) });
           return;
         }
+        // A PvP kill carries the victim's player name verbatim (not a creature slug), so it gets its own
+        // feed line ("X took down Y") instead of the creature-kill phrasing ("beat a <creature>").
+        if (msg.kind === 'pvp_kill') {
+          opts.hud.onEvent({ kind: 'pvp_kill', name: msg.name, detail: msg.detail });
+          return;
+        }
         if (msg.kind === 'reset') {
           opts.hud.onEvent({ kind: 'reset', name: msg.name });
           opts.onWorldReset();

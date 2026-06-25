@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(verified.name, "Ann");
         assert_eq!(verified.claim.len(), TOKEN_HEX_CHARS);
         let id = account_id(&db, "acme", "Ann").await;
-        assert_eq!(claims.get(&id).as_deref(), Some(verified.claim.as_str()));
+        assert!(claims.is_live(&id, &verified.claim));
         assert_eq!(
             db.get_account_by_name("acme", "Ann")
                 .await
@@ -383,7 +383,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reclaim_replaces_the_live_claim() {
+    async fn a_second_device_login_keeps_both_claims_live() {
         let db = Db::memory().await;
         let claims = Claims::default();
         let (first, _) = ok_request(&db, "acme", "Ann", "ann@x.com").await;
@@ -401,7 +401,11 @@ mod tests {
 
         assert_ne!(first_claim, second_claim);
         let id = account_id(&db, "acme", "Ann").await;
-        assert_eq!(claims.get(&id).as_deref(), Some(second_claim.as_str()));
+        assert!(
+            claims.is_live(&id, &first_claim),
+            "logging in on a second device keeps the first signed in"
+        );
+        assert!(claims.is_live(&id, &second_claim));
     }
 
     #[tokio::test]
@@ -416,12 +420,12 @@ mod tests {
             .claim;
         let id = account_id(&db, "acme", "Ann").await;
 
-        // A stale token resolves to no account and never clears the live claim.
+        // A stale token resolves to no account and never clears a live claim.
         logout(&db, &claims, "acme", "stale-token").await.unwrap();
-        assert_eq!(claims.get(&id).as_deref(), Some(claim.as_str()));
+        assert!(claims.is_live(&id, &claim));
 
         logout(&db, &claims, "acme", &claim).await.unwrap();
-        assert!(claims.get(&id).is_none());
+        assert!(!claims.is_live(&id, &claim));
     }
 
     #[tokio::test]

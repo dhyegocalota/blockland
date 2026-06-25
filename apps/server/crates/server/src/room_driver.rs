@@ -48,8 +48,8 @@ impl RoomHost for NativeRoomHost {
         self.hub.bans.list_named()
     }
 
-    fn claim_holder(&self, account_id: &str) -> Option<String> {
-        self.hub.claims.get(account_id)
+    fn claim_is_live(&self, account_id: &str, token: &str) -> bool {
+        self.hub.claims.is_live(account_id, token)
     }
 
     fn publish_stats(&self, key: RoomKey, snapshot: RoomSnapshot) {
@@ -296,7 +296,7 @@ async fn on_join(
         let _ = reply.send(Err("claim_required".into()));
         return;
     };
-    let live = hub.claims.get(&account_id).as_deref() == Some(claim.as_str());
+    let live = hub.claims.is_live(&account_id, &claim);
     if !live {
         tracing::debug!(tenant = %room.key().0, "join rejected: claim required");
         let _ = reply.send(Err("claim_required".into()));

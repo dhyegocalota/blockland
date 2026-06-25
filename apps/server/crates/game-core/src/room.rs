@@ -1740,6 +1740,7 @@ impl Room {
             return;
         };
         let (target_x, target_y, target_z) = (target.x, target.y, target.z);
+        let target_name = target.name.clone();
         let dist = ((target_x - attacker_x).powi(2)
             + (target_y - attacker_y).powi(2)
             + (target_z - attacker_z).powi(2))
@@ -1755,7 +1756,9 @@ impl Room {
         target.hp = target.hp.saturating_sub(1);
         target.hurt_at = now;
         let died = target.hp == 0;
-        target.conn.send_one(ServerMsg::Hurt { by: attacker_name });
+        target.conn.send_one(ServerMsg::Hurt {
+            by: attacker_name.clone(),
+        });
         // The nearby players who could see the target take the hit get the same flash on it (the attacker
         // played it locally; the target is told directly via Hurt above).
         self.broadcast_near(
@@ -1773,6 +1776,13 @@ impl Room {
                 attacker.pvp_kills = attacker.pvp_kills.saturating_add(1);
                 scored = true;
             }
+            // Announce the kill in everyone's feed (attacker downed the victim). A distinct kind keeps
+            // the client from translating the name as a creature slug, unlike the creature-kill event.
+            self.broadcast(&ServerMsg::Event {
+                kind: "pvp_kill".into(),
+                name: attacker_name,
+                detail: target_name,
+            });
             self.respawn(now, target_id);
             // The bumped pvp-kill count rides the roster, so refresh it for everyone.
             if scored {
@@ -1886,14 +1896,14 @@ impl Room {
                     kicked.push(p.id);
                     continue;
                 }
-                // Kick-on-reclaim: a logged-in player whose claim is no longer the live one (someone
-                // re-claimed the account) is dropped. Guests (no account_id) are never affected.
-                let still_holds =
-                    self.host.claim_holder(&p.account_id).as_deref() == Some(p.claim.as_str());
+                // Kick-on-logout: a logged-in player whose own device token is no longer live (that
+                // device logged out) is dropped. Other devices on the same account keep their own live
+                // tokens, so signing in elsewhere never evicts this session. Guests are never affected.
+                let still_holds = self.host.claim_is_live(&p.account_id, &p.claim);
                 if !p.account_id.is_empty() && !still_holds {
                     p.conn.send_one(ServerMsg::Error {
                         code: "reclaimed".into(),
-                        msg: "Your username was taken over from another device.".into(),
+                        msg: "Your session was signed out.".into(),
                     });
                     tracing::debug!(id = %p.id, account_id = %p.account_id, "reclaimed kick");
                     kicked.push(p.id);
@@ -3144,8 +3154,8 @@ mod tests {
         fn list_named_bans(&self) -> Vec<(String, String)> {
             Vec::new()
         }
-        fn claim_holder(&self, _account_id: &str) -> Option<String> {
-            None
+        fn claim_is_live(&self, _account_id: &str, _token: &str) -> bool {
+            true
         }
         fn publish_stats(&self, _key: RoomKey, _snapshot: RoomSnapshot) {}
         fn set_tenant_peace(&self, _tenant: String, _on: bool) {}
@@ -3887,6 +3897,23 @@ mod tests {
                 .filter_map(|_| target_rx.try_recv_msg().ok())
                 .any(|m| matches!(m, ServerMsg::Respawn { hp, .. } if hp == MAX_HP)),
             "the victim is told to respawn",
+        );
+    }
+
+    #[tokio::test]
+    async fn pvp_kill_announces_to_the_feed() {
+        let mut room = test_room().await;
+        let mut killer_rx = add_player(&mut room, 1, false);
+        add_player(&mut room, 2, false);
+        room.pvp = true;
+        room.players.get_mut(&2).unwrap().hp = 1;
+        room.on_attack_player(Instant::now(), 1, 2);
+        assert!(
+            (0..50)
+                .filter_map(|_| killer_rx.try_recv_msg().ok())
+                .any(|m| matches!(m, ServerMsg::Event { kind, name, detail }
+                    if kind == "pvp_kill" && name == "p1" && detail == "p2")),
+            "a pvp kill is announced in the feed (attacker downed the victim)",
         );
     }
 

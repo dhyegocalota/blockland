@@ -74,6 +74,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
   chat: '💬',
   rename: '✏️',
   kill: '⚔️',
+  pvp_kill: '⚔️',
   reset: '🌍',
   reset_scores: '🏆',
   server_down: '⚠️',
@@ -83,6 +84,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
 
 function feedText(entry: FeedEntry): string {
   if (entry.kind === 'kill' && entry.detail) return t('feed.kill', { name: entry.name, detail: entry.detail });
+  if (entry.kind === 'pvp_kill' && entry.detail) return t('feed.pvp_kill', { name: entry.name, target: entry.detail });
   if (entry.kind === 'rename' && entry.detail) return t('feed.renamed', { old: entry.detail, name: entry.name });
   if (entry.kind === 'rename') return entry.name;
   if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });

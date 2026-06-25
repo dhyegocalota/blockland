@@ -24,24 +24,30 @@ pub use game_core::{RoomKey, RoomSnapshot};
 /// join/tick. An empty token is never a valid claim. Keyed by the stable `account_id`, never the name.
 #[derive(Default)]
 pub struct Claims {
-    active: DashMap<String, String>,
+    // token -> account_id. Many tokens per account (one per signed-in device), so logging in on a
+    // second device never evicts the first — each token stays live until that device logs out.
+    by_token: DashMap<String, String>,
 }
 
 impl Claims {
     pub fn set(&self, account_id: &str, token: &str) {
-        self.active
-            .insert(account_id.to_string(), token.to_string());
+        self.by_token
+            .insert(token.to_string(), account_id.to_string());
     }
 
-    pub fn get(&self, account_id: &str) -> Option<String> {
-        self.active.get(account_id).map(|t| t.value().clone())
+    /// Whether `token` is a live claim for `account_id` (that device is still signed in).
+    pub fn is_live(&self, account_id: &str, token: &str) -> bool {
+        self.by_token
+            .get(token)
+            .map(|acc| acc.value() == account_id)
+            .unwrap_or(false)
     }
 
-    /// Forget the claim only if `token` is the one currently held (a stale token must not evict a
-    /// re-claimed session).
+    /// Forget one device's claim (logout), only when the token belongs to `account_id` (a stale token
+    /// must never evict another account's session sharing nothing but a guessed value).
     pub fn remove(&self, account_id: &str, token: &str) {
-        self.active
-            .remove_if(account_id, |_, current| current.as_str() == token);
+        self.by_token
+            .remove_if(token, |_, acc| acc.as_str() == account_id);
     }
 }
 
@@ -445,29 +451,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn claims_set_get_and_isolate_by_account() {
+    fn claims_track_per_token_isolated_by_account() {
         let claims = Claims::default();
         claims.set("acc-a", "tokA");
-        assert_eq!(claims.get("acc-a").as_deref(), Some("tokA"));
-        assert!(claims.get("acc-b").is_none());
+        assert!(claims.is_live("acc-a", "tokA"));
+        assert!(!claims.is_live("acc-a", "tokB"));
+        assert!(!claims.is_live("acc-b", "tokA"));
     }
 
     #[test]
-    fn claims_set_replaces_previous_holder() {
+    fn claims_keep_every_device_token_live() {
         let claims = Claims::default();
         claims.set("acc-a", "tokA");
         claims.set("acc-a", "tokB");
-        assert_eq!(claims.get("acc-a").as_deref(), Some("tokB"));
+        assert!(
+            claims.is_live("acc-a", "tokA"),
+            "logging in on a second device keeps the first device's claim live"
+        );
+        assert!(claims.is_live("acc-a", "tokB"));
     }
 
     #[test]
-    fn claims_remove_only_matches_current_token() {
+    fn claims_remove_drops_only_that_device_token() {
         let claims = Claims::default();
+        claims.set("acc-a", "tokA");
         claims.set("acc-a", "tokB");
         claims.remove("acc-a", "tokA");
-        assert_eq!(claims.get("acc-a").as_deref(), Some("tokB"));
-        claims.remove("acc-a", "tokB");
-        assert!(claims.get("acc-a").is_none());
+        assert!(!claims.is_live("acc-a", "tokA"), "device A logged out");
+        assert!(
+            claims.is_live("acc-a", "tokB"),
+            "device B stays signed in after A logs out"
+        );
+        claims.remove("acc-other", "tokB");
+        assert!(
+            claims.is_live("acc-a", "tokB"),
+            "a wrong-account remove never evicts the token"
+        );
     }
 
     #[test]

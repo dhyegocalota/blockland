@@ -24,7 +24,9 @@ pub trait RoomHost: Send + Sync {
     fn ban(&self, ip: IpAddr, name: String);
     fn unban(&self, ip: IpAddr) -> bool;
     fn list_named_bans(&self) -> Vec<(String, String)>;
-    fn claim_holder(&self, account_id: &str) -> Option<String>;
+    /// Whether `token` is still a live claim for `account_id` (the device that holds it is signed in).
+    /// Many tokens can be live per account (one per device), so a stale token simply reports false.
+    fn claim_is_live(&self, account_id: &str, token: &str) -> bool;
     fn publish_stats(&self, key: RoomKey, snapshot: RoomSnapshot);
     fn set_tenant_peace(&self, tenant: String, on: bool);
     fn set_role(&self, account_id: String, role: Role);
