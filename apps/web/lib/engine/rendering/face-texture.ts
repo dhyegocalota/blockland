@@ -19,6 +19,12 @@ export function loadFaceTexture({
     if (cancelled()) return;
     faceTexture.magFilter = THREE.NearestFilter;
     faceTexture.colorSpace = THREE.SRGBColorSpace;
+    // The cube mesher maps texture-U the same way on every face, and on all four vertical faces that
+    // direction points screen-left — so the photo reads horizontally mirrored. Pre-mirror the texture
+    // (U -> 1 - U) so it lands the right way round, matching the un-mirrored HUD/lobby preview.
+    faceTexture.wrapS = THREE.RepeatWrapping;
+    faceTexture.repeat.x = -1;
+    faceTexture.offset.x = 1;
     buildMaterials({ materials, faceTexture });
     onReady();
   });
