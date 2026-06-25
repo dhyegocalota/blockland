@@ -11,6 +11,7 @@ import AdminConfirmModal from '../../components/AdminConfirmModal';
 import AdminSkeleton from '../../components/AdminSkeleton';
 import AdminField from '../../components/AdminField';
 import AdminButton, { AdminButtonVariant } from '../../components/AdminButton';
+import LocaleSwitcher from '../../components/LocaleSwitcher';
 import { validateEmail, validateImage, validateIp, validateName, validateTenantId } from './validation';
 
 // The /admin editor only manages id/name/image; the limit fields (play-time + modes) are admin-set
@@ -308,6 +309,7 @@ function AdminApp() {
   if (!authed) {
     return (
       <main className="adminApp">
+        <div className="adminLangBar"><LocaleSwitcher /></div>
         <div className="adminLogin">
           <h1 className="adminTitle">{t('admin.login_title')}</h1>
           <p className="adminSubtle">{t('admin.login_hint')}</p>
@@ -326,6 +328,7 @@ function AdminApp() {
     const invalid = idError !== null || nameError !== null || imageError !== null;
     return (
       <main className="adminApp">
+        <div className="adminLangBar"><LocaleSwitcher /></div>
         <button className="adminBtnGhost" onClick={backToList}>{t('admin.back')}</button>
         <h1 className="adminTitle adminTitleSpaced">{editing ? t('admin.edit_tenant') : t('admin.new_tenant')}</h1>
         <form onSubmit={save} className="adminForm">
@@ -361,6 +364,7 @@ function AdminApp() {
     const grantInvalid = validateEmail(grantEmail) !== null;
     return (
       <main className="adminApp">
+        <div className="adminLangBar"><LocaleSwitcher /></div>
         <div className="adminHeader">
           <button className="adminBtnGhost" onClick={deselectTenant}>{t('admin.back_to_tenants')}</button>
           <img className="adminAvatar" src={selected.image} alt="" width={40} height={40} />
@@ -498,6 +502,7 @@ function AdminApp() {
 
   return (
     <main className="adminApp">
+        <div className="adminLangBar"><LocaleSwitcher /></div>
       <div className="adminHeader">
         <h1 className="adminTitle adminHeaderTitle">{t('admin.tenants_title')}</h1>
         <AdminButton onClick={startNew}>{t('admin.new_tenant')}</AdminButton>

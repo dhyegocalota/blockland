@@ -964,6 +964,7 @@ body.is-touch #feed { left: 14px; bottom: 324px; }
 .adminTitleSpaced { margin-top: 8px; }
 .adminSubtle { color: #7a72a0; font-size: 14px; font-weight: 600; }
 
+.adminLangBar { display: flex; justify-content: flex-end; margin-bottom: 14px; }
 .adminHeader { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .adminHeaderTitle { flex: 1; min-width: 160px; margin: 0; }
 .adminAvatar { border-radius: 12px; background: #ece8fa; object-fit: cover; box-shadow: 0 2px 8px #2a1a4a22; }
