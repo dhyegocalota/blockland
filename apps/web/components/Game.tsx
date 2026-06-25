@@ -15,6 +15,7 @@ import { loaderVisible } from '../lib/engine/loader-state';
 import { useGame } from '../hooks/use-game';
 import { PVP_KILL_BADGE, pvpRanked, roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
+import { openLobbyModal } from '../lib/lobby-modal';
 import { SENSITIVITY_MAX, SENSITIVITY_MIN, VOLUME_MAX, VOLUME_MIN } from '../lib/settings';
 
 const SENSITIVITY_STEP = 0.05;
@@ -730,7 +731,7 @@ export default function Game() {
           <button
             id="startHelpBtn"
             className="ghost"
-            onClick={() => { const c = document.getElementById('controls'); if (c) c.hidden = false; }}
+            onClick={() => { const c = document.getElementById('controls'); if (c) openLobbyModal(c, document.getElementById('closeControls')); }}
           >
             {t('start.instructions')}
           </button>
