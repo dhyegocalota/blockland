@@ -100,14 +100,14 @@ describe('resolveTenant', () => {
     stubLocation({ hostname: 'acme.localhost', search: '' });
     const tenant = { id: 'acme', name: 'Acme' };
     stubFetch({ ok: true, json: () => Promise.resolve(tenant) });
-    await expect(resolveTenant()).resolves.toEqual({ tenant, offline: false });
+    await expect(resolveTenant()).resolves.toEqual({ tenant, connectivity: 'online' });
   });
 
-  it('falls back to the bundled tenant.json as offline when the API fails', async () => {
+  it('falls back to the bundled tenant.json (server_down) when the API fails but the network is up', async () => {
     stubLocation({ hostname: 'acme.localhost', search: '' });
     const tenant = { id: 'acme', name: 'Acme' };
     stubFetchByUrl({ api: { ok: false }, bundle: { ok: true, json: () => Promise.resolve(tenant) } });
-    await expect(resolveTenant()).resolves.toEqual({ tenant, offline: true });
+    await expect(resolveTenant()).resolves.toEqual({ tenant, connectivity: 'server_down' });
   });
 
   it('throws when both the API and the bundled tenant.json are missing', async () => {

@@ -413,8 +413,8 @@ describe('Game', () => {
     expect(document.getElementById('chatBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('T');
     expect(document.getElementById('settingsBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('Esc');
     expect(document.getElementById('presenceToggle')!.querySelector('.hotkeyHint')!.textContent).toBe('Tab');
-    // Exit (leave) is bound to Backspace, shown as the ⌫ key-cap.
-    expect(document.getElementById('exitBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('⌫');
+    // Exit (leave) is bound to Q.
+    expect(document.getElementById('exitBtn')!.querySelector('.hotkeyHint')!.textContent).toBe('Q');
   });
 
   it('hides every key-cap on touch devices (no keyboard)', () => {

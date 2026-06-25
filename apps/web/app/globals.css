@@ -161,6 +161,16 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 4px; left: 4p
 #lobbyBlock.paused { background: linear-gradient(rgba(42,26,74,.95), rgba(42,26,74,.85)); box-shadow: 0 12px 36px #0006, 0 0 0 4px var(--gold); }
 #lobbyBlock.time_up { background: linear-gradient(#ff8a3d, #ff5d2e); box-shadow: 0 12px 36px #ff5d2e66; }
 
+/* Lobby connectivity banner: the server is down or the player has no internet, but the lobby still
+   loaded (from the cached tenant) and solo play works. A clear, non-blocking strip at the top. */
+#connBanner {
+  z-index: 3; width: min(540px, 92vw); text-align: center; color: #fff; font-weight: 800;
+  font-size: clamp(14px, 3.4vw, 18px); line-height: 1.3; padding: 10px 18px; border-radius: 16px;
+  border: 3px solid rgba(255,255,255,.7); box-shadow: 0 8px 24px #0005; margin-bottom: 6px;
+}
+#connBanner.server_down { background: linear-gradient(#f0883e, #e0662e); }
+#connBanner.no_internet { background: linear-gradient(#7b6cc2, #5b4a9e); }
+
 .startHero { z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 12px; }
 #start .avatar {
   width: clamp(120px, 30vw, 158px); height: clamp(120px, 30vw, 158px); border-radius: 50%; border: 8px solid #fff;
@@ -625,12 +635,15 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 4px; left: 4p
 }
 #loginModal input:focus { border-color: var(--gold); box-shadow: 0 6px 0 #00000022, 0 0 0 4px #ffd23f55; }
 #loginModal button {
-  font-family: inherit; font-size: 20px; font-weight: 900; color: #fff; display: block; margin: 0 auto 10px;
+  font-family: inherit; font-size: 20px; font-weight: 900; color: #fff; display: block; margin: 0 auto 14px;
   background: linear-gradient(#ff8a3d, #ff5d2e); border: 5px solid #fff; border-radius: 18px;
   padding: 10px 32px; cursor: pointer; box-shadow: 0 6px 0 #c43d18; transition: transform .1s;
 }
 #loginModal button:active { transform: translateY(4px); box-shadow: 0 2px 0 #c43d18; }
 #loginModal button:disabled { filter: grayscale(.4); opacity: .7; cursor: not-allowed; }
+#loginModal button:last-child { margin-bottom: 0; }
+/* Set the primary action apart from the two ghost alternatives below it. */
+#loginModal button.ghost:first-of-type { margin-top: 18px; }
 #loginModal button.ghost, #logoutBtn, #startHelpBtn, #boardToggle {
   background: #fff; color: var(--ink); border: 4px solid #d6ecff; box-shadow: none; font-size: 15px; padding: 8px 22px;
 }

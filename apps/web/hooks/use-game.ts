@@ -4,7 +4,7 @@
 // It owns the lobby/login lifecycle, boots the Three.js engine via a CoopBridge, and composes the
 // smaller hooks (chat, feed, room-admin). The returned object is spread into the component.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { resolveTenant, type Brand } from '../lib/tenants';
+import { resolveTenant, loadCachedTenant, tenantIdFromLocation, type Brand, type Connectivity } from '../lib/tenants';
 import { lobbyAdminPanelActive, lobbyModeGates, shouldPushToOnline, shouldPushToSolo } from '../lib/lobby-modes';
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
@@ -29,6 +29,9 @@ const LOOK_KEYS = { skin: 'bl-skin', shirt: 'bl-shirt', hair: 'bl-hair' } as con
 // How often a non-admin lobby player re-resolves the tenant so an admin's runtime mode toggle (and
 // server reachability) reaches their start-screen buttons without a manual refresh.
 const LOBBY_TENANT_POLL_MS = 8000;
+// After the player settles on ONLINE mode on the lobby, warm the WASM core in the background so
+// pressing Play later skips the wasm compile. Long enough not to compete with the lobby's first paint.
+const WASM_PRELOAD_DELAY_MS = 2500;
 const DEFAULT_LOOK: Appearance = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
 
 const AUTH_ERROR_KEYS: Record<string, string> = {
@@ -73,6 +76,8 @@ export function useGame() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [failed, setFailed] = useState(false);
   const [offline, setOffline] = useState(false);
+  // Why the lobby is degraded when the live tenant fetch fails: server down vs the user's internet gone.
+  const [connectivity, setConnectivity] = useState<Connectivity>('online');
   const [offlineDismissed, setOfflineDismissed] = useState(false);
   const [name, setName] = useState(loadName);
   const [look, setLook] = useState<Appearance>(loadLook);
@@ -200,17 +205,23 @@ export function useGame() {
 
   useEffect(() => {
     let alive = true;
+    // Paint the lobby INSTANTLY from the last-known tenant (no network wait), then revalidate. So a
+    // return visit is fast and the lobby still works when the server is down.
+    const cached = loadCachedTenant(tenantIdFromLocation());
+    if (cached) setBrand(cached);
     resolveTenant()
-      .then(({ tenant: active, offline: isOffline }) => {
+      .then(({ tenant: active, connectivity: conn }) => {
         if (!alive) return;
-        debug('tenant', 'active tenant', { id: active.id, name: active.name, offline: isOffline });
+        debug('tenant', 'active tenant', { id: active.id, name: active.name, connectivity: conn });
         setBrand(active);
-        setOffline(isOffline);
+        setOffline(conn !== 'online');
+        setConnectivity(conn);
       })
       .catch((err) => {
         if (!alive) return;
         warn('tenant', 'failed to load tenant', { error: String(err) });
-        setFailed(true);
+        // Only surface the hard error screen when there is no cached tenant to fall back to.
+        if (!cached) setFailed(true);
       });
     return () => { alive = false; };
   }, []);
@@ -226,10 +237,11 @@ export function useGame() {
     let alive = true;
     async function refresh(): Promise<void> {
       try {
-        const { tenant: active, offline: isOffline } = await resolveTenant();
+        const { tenant: active, connectivity: conn } = await resolveTenant();
         if (!alive) return;
         setBrand(active);
-        setOffline(isOffline);
+        setOffline(conn !== 'online');
+        setConnectivity(conn);
       } catch (error) {
         debug('tenant', 'lobby tenant refresh failed; keeping last', { error: String(error) });
       }
@@ -237,6 +249,20 @@ export function useGame() {
     const timer = setInterval(refresh, LOBBY_TENANT_POLL_MS);
     return () => { alive = false; clearInterval(timer); };
   }, [started, tenantReady, lobbyConnected]);
+
+  // Warm the WASM core a few seconds after the player has settled on ONLINE mode, so pressing Play later
+  // skips the wasm compile (the engine's loadWorldgen finds it already inited). The loader is loaded by a
+  // dynamic import so three.js never enters the lobby bundle; warming is idempotent and failures are silent.
+  useEffect(() => {
+    if (started || solo || !tenantReady) return;
+    const timer = setTimeout(() => {
+      import('../lib/engine/online/wasm-core-loader')
+        .then((mod) => mod.loadWorldgen())
+        .then(() => debug('engine', 'wasm core warmed for online entry'))
+        .catch((error) => debug('engine', 'wasm warm failed', { error: String(error) }));
+    }, WASM_PRELOAD_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [started, solo, tenantReady]);
 
   // The engine's HUD bridge: stable callbacks the running game pushes net/roster/admin state through.
   // Built lazily (not on lobby render) so nothing here forces the heavy engine into the lobby bundle.
@@ -327,8 +353,8 @@ export function useGame() {
       // (not started) Tab is left alone so it still navigates the form.
       if (event.code === 'Tab' && started) { event.preventDefault(); setRosterOpen((open) => !open); return; }
       if (event.code === 'KeyH' && started) { event.preventDefault(); gameApiRef.current?.returnToSpawn(); return; }
-      // Backspace leaves the world (mirrors the Exit button): reload back to the lobby.
-      if (event.code === 'Backspace' && started) { event.preventDefault(); window.location.reload(); return; }
+      // Q leaves the world (mirrors the Exit button): reload back to the lobby.
+      if (event.code === 'KeyQ' && started) { event.preventDefault(); window.location.reload(); return; }
       // Esc closes the admin/moderator panel and re-locks the canvas (the panel freed the cursor on open).
       if (event.code === 'Escape' && started && adminOpen) { event.preventDefault(); setAdminOpen(false); return; }
       // The admin/moderator panel toggle (the player has no panel, so the key does nothing for them).
@@ -600,7 +626,7 @@ export function useGame() {
   const connectKey = connectStatusKey(readiness);
 
   return {
-    brand, failed, offline, offlineDismissed, setOfflineDismissed,
+    brand, failed, offline, connectivity, offlineDismissed, setOfflineDismissed,
     name, look, solo, setSolo, soloRef, modeGates,
     loaderState, retryStart,
     netState, ping, online, interactive, connectKey,

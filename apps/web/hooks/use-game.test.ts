@@ -6,7 +6,7 @@ import type { CoopBridge } from '../lib/engine/api';
 vi.mock('../lib/tenants', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/tenants')>();
   const brand = { id: 't1', name: 'Test', image: '/i.png', online_allowed: true, offline_allowed: true };
-  return { ...actual, resolveTenant: vi.fn().mockResolvedValue({ tenant: brand, offline: false }) };
+  return { ...actual, resolveTenant: vi.fn().mockResolvedValue({ tenant: brand, connectivity: 'online' }) };
 });
 const initGame = vi.fn();
 vi.mock('../lib/game-engine', () => ({ initGame: (...args: unknown[]) => initGame(...args) }));
@@ -171,12 +171,12 @@ describe('useGame', () => {
     await waitFor(() => expect(result.current.adminOpen).toBe(false));
   });
 
-  it('the Backspace shortcut leaves the world (reloads to the lobby) once started', async () => {
+  it('the Q shortcut leaves the world (reloads to the lobby) once started', async () => {
     await mountWithBridge();
     const original = window.location;
     const reload = vi.fn();
     Object.defineProperty(window, 'location', { configurable: true, value: { reload } });
-    pressKey('Backspace');
+    pressKey('KeyQ');
     expect(reload).toHaveBeenCalledOnce();
     Object.defineProperty(window, 'location', { configurable: true, value: original });
   });
@@ -207,7 +207,7 @@ describe('useGame', () => {
     const brandOf = (online: boolean) => ({
       id: 't1', name: 'Test', image: '/i.png', playtime_limit_min: 0, playtime_window_h: 0, online_allowed: online, offline_allowed: true,
     });
-    resolveTenant.mockResolvedValue({ tenant: brandOf(false), offline: false });
+    resolveTenant.mockResolvedValue({ tenant: brandOf(false), connectivity: 'online' });
     vi.useFakeTimers();
     try {
       const { result } = renderHook(() => useGame());
@@ -215,12 +215,12 @@ describe('useGame', () => {
       expect(result.current.brand).not.toBeNull();
       expect(result.current.modeGates.online.disabled).toBe(true);
 
-      resolveTenant.mockResolvedValue({ tenant: brandOf(true), offline: false });
+      resolveTenant.mockResolvedValue({ tenant: brandOf(true), connectivity: 'online' });
       await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
       expect(result.current.modeGates.online.disabled).toBe(false);
     } finally {
       vi.useRealTimers();
-      resolveTenant.mockResolvedValue({ tenant: brandOf(true), offline: false });
+      resolveTenant.mockResolvedValue({ tenant: brandOf(true), connectivity: 'online' });
     }
   });
 });

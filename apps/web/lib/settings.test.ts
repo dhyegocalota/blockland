@@ -112,8 +112,8 @@ describe('shouldOpenOnLockLost (Esc-to-pause decision)', () => {
   });
 });
 
-describe('escapeKeyAction (Esc closes the open modal and re-locks; controls/build take priority)', () => {
-  const playing = { started: true, isTouch: false, pointerLocked: false };
+describe('escapeKeyAction (Esc closes the open modal; controls/build take priority, never opens settings)', () => {
+  const playing = { started: true, isTouch: false };
 
   it('closes the controls modal (never opening settings), then build, by priority', () => {
     expect(escapeKeyAction({ ...playing, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('close-controls');
@@ -125,8 +125,14 @@ describe('escapeKeyAction (Esc closes the open modal and re-locks; controls/buil
     expect(escapeKeyAction({ ...playing, controlsOpen: false, buildOpen: false, settingsOpen: true })).toBe('close-settings');
   });
 
-  it('does nothing while still locked (PLAYING — pointerlockchange owns the first Esc), on touch, before start, or with nothing open', () => {
-    expect(escapeKeyAction({ ...playing, pointerLocked: true, controlsOpen: false, buildOpen: false, settingsOpen: true })).toBe('none');
+  it('still closes an open controls/build modal even mid unlock-race, so Esc never opens settings over it', () => {
+    // The old code returned 'none' when the pointer read as still locked, letting the browser's native
+    // Esc drop the lock and pop settings on top of the open modal. An open modal now always wins.
+    expect(escapeKeyAction({ ...playing, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('close-controls');
+    expect(escapeKeyAction({ ...playing, controlsOpen: false, buildOpen: true, settingsOpen: false })).toBe('close-build');
+  });
+
+  it('does nothing on touch, before start, or with nothing open', () => {
     expect(escapeKeyAction({ ...playing, isTouch: true, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('none');
     expect(escapeKeyAction({ ...playing, started: false, controlsOpen: true, buildOpen: false, settingsOpen: false })).toBe('none');
     expect(escapeKeyAction({ ...playing, controlsOpen: false, buildOpen: false, settingsOpen: false })).toBe('none');

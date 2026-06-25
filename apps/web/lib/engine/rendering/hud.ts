@@ -206,14 +206,10 @@ export function createHud(runtime: GameRuntime): void {
   };
 
   runtime.handleHotkey = function handleHotkey(e: KeyboardEvent): void {
-    // Escape for the settings panel is owned by the dedicated cursor-mode keydown handler (it must
-    // TOGGLE without re-locking); here Esc only dismisses the blocking controls/build modals, and only
-    // when one is actually open (else hideControls/hideBuildMenu would wrongly unpause + re-lock).
-    if (e.code === 'Escape') {
-      if (!controlsEl.hidden) runtime.hideControls();
-      if (!buildMenuEl.hidden) runtime.hideBuildMenu();
-      return;
-    }
+    // Escape is owned entirely by the dedicated cursor-mode keydown handler below (escapeKeyAction):
+    // it closes whichever modal is open and re-locks. Handling it here too would double-fire the close
+    // + re-lock, so this in-game hotkey path leaves Esc alone.
+    if (e.code === 'Escape') return;
     const b = BLOCKS.find((bl) => bl && bl.key === e.key);
     if (b) runtime.selectSlot(b.id);
     if (e.code === 'KeyF') runtime.toggleFly();
@@ -323,7 +319,6 @@ export function createHud(runtime: GameRuntime): void {
       settingsOpen: !settingsEl.hidden,
       started: runtime.state.started,
       isTouch,
-      pointerLocked: document.pointerLockElement === canvas,
     });
     if (action === 'close-controls') runtime.hideControls();
     else if (action === 'close-build') runtime.hideBuildMenu();

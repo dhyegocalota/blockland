@@ -22,8 +22,7 @@ const VOLUME_STEP = 0.05;
 const PERCENT = 100;
 
 // The keyboard shortcut shown succinctly on each desktop HUD button (key caps are universal, not i18n).
-// Mobile (touch) has no keyboard, so the hint is hidden there. Exit is bound to Backspace (⌫) — well
-// clear of the WASD movement keys so a page-reloading leave is never triggered by accident.
+// Mobile (touch) has no keyboard, so the hint is hidden there. Exit (leave the world) is bound to Q.
 const HUD_HOTKEYS = {
   controls: 'V',
   build: 'B',
@@ -33,7 +32,7 @@ const HUD_HOTKEYS = {
   settings: 'Esc',
   players: 'Tab',
   admin: 'M',
-  exit: '⌫',
+  exit: 'Q',
 } as const;
 
 // A small key-cap badge rendered inside a desktop HUD button; nothing on touch devices.
@@ -103,7 +102,7 @@ function feedText(entry: FeedEntry): string {
 
 export default function Game() {
   const {
-    brand, failed, offline, offlineDismissed, setOfflineDismissed,
+    brand, failed, offline, connectivity, offlineDismissed, setOfflineDismissed,
     name, look, solo, setSolo, soloRef, modeGates,
     loaderState, retryStart,
     netState, ping, online, connectKey,
@@ -639,6 +638,11 @@ export default function Game() {
         <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 2 }}>
           <LocaleSwitcher />
         </div>
+        {offline && (
+          <div id="connBanner" className={connectivity} role="status">
+            {t(connectivity === 'no_internet' ? 'lobby.no_internet_banner' : 'lobby.server_down_banner')}
+          </div>
+        )}
         <div className="startSky" aria-hidden="true">
           <span className="cloud cloud-a">☁️</span>
           <span className="cloud cloud-b">☁️</span>

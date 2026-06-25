@@ -47,7 +47,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
   const subdomain = tenantSubdomainOf(host);
   if (!subdomain) return base;
-  const tenant = await getTenant(subdomain);
+  // The data API being down must never 500 the page: fall back to the generic metadata and let the
+  // client lobby render from its cached tenant. Per-tenant title/icon are a nice-to-have, not a gate.
+  const tenant = await getTenant(subdomain).catch(() => null);
   if (!tenant) return base;
   return {
     ...base,

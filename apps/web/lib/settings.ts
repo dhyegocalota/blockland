@@ -112,15 +112,16 @@ export function shouldOpenOnLockLost(args: { started: boolean; isTouch: boolean;
   return true;
 }
 
-// What an Escape keypress (or a click-outside) targets while the pointer is UNLOCKED — i.e. a modal is
-// open: the open modal, by priority. Closing ANY modal re-locks the canvas (back to PLAYING, input focused
-// on the game), so the close paths all route through it. While the pointer is still LOCKED the browser owns
-// the first Esc (it natively drops the lock → pointerlockchange opens the settings panel).
+// What an Escape keypress (or a click-outside) targets: the open modal, by priority. An open
+// controls/build/settings modal ALWAYS closes on Esc — even mid race, before the pointer has finished
+// unlocking — so Esc over an open modal can never fall through to opening the settings panel on top of it.
+// With NO modal open, Esc targets nothing here: while PLAYING the browser's native Esc drops the pointer
+// lock and `pointerlockchange` opens settings; we don't double-handle it.
 export type EscapeTarget = 'close-controls' | 'close-build' | 'close-settings' | 'none';
 export function escapeKeyAction(args: {
-  controlsOpen: boolean; buildOpen: boolean; settingsOpen: boolean; started: boolean; isTouch: boolean; pointerLocked: boolean;
+  controlsOpen: boolean; buildOpen: boolean; settingsOpen: boolean; started: boolean; isTouch: boolean;
 }): EscapeTarget {
-  if (!args.started || args.isTouch || args.pointerLocked) return 'none';
+  if (!args.started || args.isTouch) return 'none';
   if (args.controlsOpen) return 'close-controls';
   if (args.buildOpen) return 'close-build';
   if (args.settingsOpen) return 'close-settings';
