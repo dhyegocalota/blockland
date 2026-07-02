@@ -469,6 +469,18 @@ impl Room {
         self.peace = peace;
     }
 
+    pub fn set_pvp(&mut self, pvp: bool) {
+        self.pvp = pvp;
+    }
+
+    pub fn set_chat_enabled(&mut self, chat_enabled: bool) {
+        self.chat_enabled = chat_enabled;
+    }
+
+    pub fn set_blocked_structures(&mut self, kinds: Vec<String>) {
+        self.blocked_structures = kinds.into_iter().collect();
+    }
+
     pub fn set_playtime(&mut self, limit_min: u32, window_h: u32, limit_ms: i64, window_ms: i64) {
         self.playtime_limit_min = limit_min;
         self.playtime_window_h = window_h;
@@ -1206,6 +1218,12 @@ impl Room {
                 } else {
                     self.blocked_structures.insert(kind)
                 };
+                if changed {
+                    self.host.set_tenant_blocked_structures(
+                        self.key.0.clone(),
+                        self.blocked_structures.iter().cloned().collect(),
+                    );
+                }
                 (
                     changed,
                     if allowed {
@@ -1218,11 +1236,17 @@ impl Room {
             ClientMsg::AdminSetPvp { on } => {
                 let changed = self.pvp != on;
                 self.pvp = on;
+                if changed {
+                    self.host.set_tenant_pvp(self.key.0.clone(), on);
+                }
                 (changed, if on { "pvp_on" } else { "pvp_off" })
             }
             ClientMsg::AdminSetChat { on } => {
                 let changed = self.chat_enabled != on;
                 self.chat_enabled = on;
+                if changed {
+                    self.host.set_tenant_chat(self.key.0.clone(), on);
+                }
                 (changed, if on { "chat_on" } else { "chat_off" })
             }
             _ => (false, ""),
@@ -3272,6 +3296,9 @@ mod tests {
         }
         fn publish_stats(&self, _key: RoomKey, _snapshot: RoomSnapshot) {}
         fn set_tenant_peace(&self, _tenant: String, _on: bool) {}
+        fn set_tenant_pvp(&self, _tenant: String, _on: bool) {}
+        fn set_tenant_chat(&self, _tenant: String, _on: bool) {}
+        fn set_tenant_blocked_structures(&self, _tenant: String, _kinds: Vec<String>) {}
         fn set_role(&self, _account_id: String, _role: Role) {}
         fn set_tenant_suspended(&self, _tenant: String, _on: bool) {}
         fn set_tenant_approval_required(&self, _tenant: String, _on: bool) {}

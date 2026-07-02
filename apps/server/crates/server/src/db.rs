@@ -255,6 +255,12 @@ impl Db {
             // Whether monsters are calm (peace) — persisted so the admin's choice survives a room
             // restart. Default 1 (calm) keeps new worlds kid-safe until an admin turns monsters on.
             "ALTER TABLE tenants ADD COLUMN peace INTEGER NOT NULL DEFAULT 1",
+            // Runtime admin toggles that must survive a room/server restart, like peace above: player-vs-
+            // player (default off), the room chat (default on), and the comma-joined set of prebuilt
+            // structure kinds an admin has blocked from the build menu (default none blocked).
+            "ALTER TABLE tenants ADD COLUMN pvp INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE tenants ADD COLUMN chat_enabled INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE tenants ADD COLUMN blocked_structures TEXT NOT NULL DEFAULT ''",
             // The slim branding model: one image replaces the old avatar/face_texture split. On a
             // legacy-wide db this adds the column and the backfill below seeds it from `avatar`.
             "ALTER TABLE tenants ADD COLUMN image TEXT NOT NULL DEFAULT ''",
@@ -582,6 +588,94 @@ impl Db {
             .execute(
                 "UPDATE tenants SET peace = ?2 WHERE id = ?1",
                 params![tenant, peace as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Whether player-vs-player combat is on for a tenant (default false = off for a fresh world).
+    pub async fn tenant_pvp(&self, tenant: &str) -> Result<bool, libsql::Error> {
+        let mut rows = self
+            .conn()?
+            .query("SELECT pvp FROM tenants WHERE id = ?1", params![tenant])
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(row.get::<i64>(0)? != 0),
+            None => Ok(false),
+        }
+    }
+
+    /// Persist the pvp toggle, so the admin's choice survives a room restart.
+    pub async fn set_tenant_pvp(&self, tenant: &str, pvp: bool) -> Result<(), libsql::Error> {
+        self.conn()?
+            .execute(
+                "UPDATE tenants SET pvp = ?2 WHERE id = ?1",
+                params![tenant, pvp as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Whether the room chat is on for a tenant (default true = on for a fresh world).
+    pub async fn tenant_chat_enabled(&self, tenant: &str) -> Result<bool, libsql::Error> {
+        let mut rows = self
+            .conn()?
+            .query(
+                "SELECT chat_enabled FROM tenants WHERE id = ?1",
+                params![tenant],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(row.get::<i64>(0)? != 0),
+            None => Ok(true),
+        }
+    }
+
+    /// Persist the chat toggle, so the admin's choice survives a room restart.
+    pub async fn set_tenant_chat(&self, tenant: &str, on: bool) -> Result<(), libsql::Error> {
+        self.conn()?
+            .execute(
+                "UPDATE tenants SET chat_enabled = ?2 WHERE id = ?1",
+                params![tenant, on as i64],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// The structure kinds an admin has blocked from the build menu (empty for a fresh world). Stored
+    /// comma-joined; the kinds are identifiers with no commas, so the split round-trips exactly.
+    pub async fn tenant_blocked_structures(
+        &self,
+        tenant: &str,
+    ) -> Result<Vec<String>, libsql::Error> {
+        let mut rows = self
+            .conn()?
+            .query(
+                "SELECT blocked_structures FROM tenants WHERE id = ?1",
+                params![tenant],
+            )
+            .await?;
+        let joined = match rows.next().await? {
+            Some(row) => row.get::<String>(0)?,
+            None => String::new(),
+        };
+        Ok(joined
+            .split(',')
+            .filter(|kind| !kind.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Persist the blocked-structure set, so the admin's build-menu choices survive a room restart.
+    pub async fn set_tenant_blocked_structures(
+        &self,
+        tenant: &str,
+        kinds: &[String],
+    ) -> Result<(), libsql::Error> {
+        self.conn()?
+            .execute(
+                "UPDATE tenants SET blocked_structures = ?2 WHERE id = ?1",
+                params![tenant, kinds.join(",")],
             )
             .await?;
         Ok(())
@@ -2117,6 +2211,58 @@ mod tests {
         assert!(!db.tenant_peace("acme").await.unwrap());
         db.set_tenant_peace("acme", true).await.unwrap();
         assert!(db.tenant_peace("acme").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn tenant_pvp_defaults_off_and_round_trips() {
+        let db = memory_db().await;
+        assert!(
+            !db.tenant_pvp("acme").await.unwrap(),
+            "pvp is off by default"
+        );
+        db.set_tenant_pvp("acme", true).await.unwrap();
+        assert!(
+            db.tenant_pvp("acme").await.unwrap(),
+            "the admin's pvp toggle survives"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_chat_defaults_on_and_round_trips() {
+        let db = memory_db().await;
+        assert!(
+            db.tenant_chat_enabled("acme").await.unwrap(),
+            "chat is on by default"
+        );
+        db.set_tenant_chat("acme", false).await.unwrap();
+        assert!(
+            !db.tenant_chat_enabled("acme").await.unwrap(),
+            "the admin's chat-off survives a restart"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_blocked_structures_default_empty_and_round_trip() {
+        let db = memory_db().await;
+        assert!(db
+            .tenant_blocked_structures("acme")
+            .await
+            .unwrap()
+            .is_empty());
+        db.set_tenant_blocked_structures("acme", &["trophy".into(), "ball".into()])
+            .await
+            .unwrap();
+        assert_eq!(
+            db.tenant_blocked_structures("acme").await.unwrap(),
+            vec!["trophy".to_string(), "ball".to_string()],
+            "the blocked-structure set survives a restart",
+        );
+        db.set_tenant_blocked_structures("acme", &[]).await.unwrap();
+        assert!(db
+            .tenant_blocked_structures("acme")
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

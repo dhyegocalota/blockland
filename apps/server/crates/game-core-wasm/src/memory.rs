@@ -161,6 +161,9 @@ impl RoomHost for WasmHost {
     }
     fn publish_stats(&self, _key: RoomKey, _snapshot: RoomSnapshot) {}
     fn set_tenant_peace(&self, _tenant: String, _on: bool) {}
+    fn set_tenant_pvp(&self, _tenant: String, _on: bool) {}
+    fn set_tenant_chat(&self, _tenant: String, _on: bool) {}
+    fn set_tenant_blocked_structures(&self, _tenant: String, _kinds: Vec<String>) {}
     fn set_role(&self, _account_id: String, _role: Role) {}
     fn set_tenant_suspended(&self, _tenant: String, _on: bool) {}
     fn set_tenant_approval_required(&self, _tenant: String, _on: bool) {}

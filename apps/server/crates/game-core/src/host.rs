@@ -29,6 +29,9 @@ pub trait RoomHost: Send + Sync {
     fn claim_is_live(&self, account_id: &str, token: &str) -> bool;
     fn publish_stats(&self, key: RoomKey, snapshot: RoomSnapshot);
     fn set_tenant_peace(&self, tenant: String, on: bool);
+    fn set_tenant_pvp(&self, tenant: String, on: bool);
+    fn set_tenant_chat(&self, tenant: String, on: bool);
+    fn set_tenant_blocked_structures(&self, tenant: String, kinds: Vec<String>);
     fn set_role(&self, account_id: String, role: Role);
     fn set_tenant_suspended(&self, tenant: String, on: bool);
     fn set_tenant_approval_required(&self, tenant: String, on: bool);

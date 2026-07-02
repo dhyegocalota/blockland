@@ -65,6 +65,33 @@ impl RoomHost for NativeRoomHost {
         });
     }
 
+    fn set_tenant_pvp(&self, tenant: String, on: bool) {
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.set_tenant_pvp(&tenant, on).await {
+                tracing::error!(error = %e, "set_tenant_pvp failed");
+            }
+        });
+    }
+
+    fn set_tenant_chat(&self, tenant: String, on: bool) {
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.set_tenant_chat(&tenant, on).await {
+                tracing::error!(error = %e, "set_tenant_chat failed");
+            }
+        });
+    }
+
+    fn set_tenant_blocked_structures(&self, tenant: String, kinds: Vec<String>) {
+        let db = self.hub.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db.set_tenant_blocked_structures(&tenant, &kinds).await {
+                tracing::error!(error = %e, "set_tenant_blocked_structures failed");
+            }
+        });
+    }
+
     fn set_role(&self, account_id: String, role: Role) {
         let db = self.hub.db.clone();
         tokio::spawn(async move {
@@ -465,6 +492,16 @@ async fn resolve_admission(
     // Peace (monsters calm) is persisted so an admin who turned monsters ON keeps them on across a
     // room restart, instead of silently resetting to calm and looking like "monsters deal no damage".
     room.set_peace(hub.db.tenant_peace(&tenant).await.unwrap_or(true));
+    // The other runtime admin toggles are persisted the same way, so they too survive a restart instead
+    // of snapping back to defaults (pvp off / chat on / nothing blocked) and looking like they reverted.
+    room.set_pvp(hub.db.tenant_pvp(&tenant).await.unwrap_or(false));
+    room.set_chat_enabled(hub.db.tenant_chat_enabled(&tenant).await.unwrap_or(true));
+    room.set_blocked_structures(
+        hub.db
+            .tenant_blocked_structures(&tenant)
+            .await
+            .unwrap_or_default(),
+    );
     // Online play disabled for this tenant: reject the join (offline reaches the client only, gated
     // there). Admins still get in so they can re-enable it from the in-game panel. The reject reason
     // travels as the reply code; conn.rs turns it into the user-facing message (reject_message).
