@@ -184,14 +184,19 @@ describe('useGame', () => {
     Object.defineProperty(window, 'location', { configurable: true, value: original });
   });
 
-  it('confirming a history clear pushes a private only-you feed line (never broadcast)', async () => {
-    const { result } = await mountWithBridge();
+  it('confirming a history clear wipes the local feed down to a private only-you notice', async () => {
+    const { result, bridge } = await mountWithBridge();
+    act(() => { bridge.hud.onEvent({ kind: 'kill', name: 'Bob', detail: 'Pig' }); });
+    await waitFor(() => expect(result.current.feed.length).toBeGreaterThan(0));
+
     act(() => { result.current.clearHistory(); }); // first click only arms it
     expect(result.current.feed.some((entry) => entry.kind === 'clear_history')).toBe(false);
+
     act(() => { result.current.clearHistory(); }); // second click confirms
     await waitFor(() => {
-      const line = result.current.feed.find((entry) => entry.kind === 'clear_history');
-      expect(line?.self).toBe(true);
+      expect(result.current.feed).toHaveLength(1);
+      expect(result.current.feed[0].kind).toBe('clear_history');
+      expect(result.current.feed[0].self).toBe(true);
     });
   });
 

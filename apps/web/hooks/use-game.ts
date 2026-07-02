@@ -128,12 +128,13 @@ export function useGame() {
   const suspendedRef = useRef(false);
   const seenApprovalsRef = useRef<Set<string>>(new Set());
 
-  const { entries: feed, pushFeedEntry } = useFeed();
-  // Clearing the history is intentionally silent server-side; the admin who did it gets a private,
-  // only-you feed line as confirmation (never broadcast to the other players).
+  const { entries: feed, pushFeedEntry, clearFeed } = useFeed();
+  // Clearing the history wipes the admin's OWN visible feed (not just the persisted backlog), then leaves
+  // a single private, only-you confirmation line — never broadcast, so other players' feeds are untouched.
   const notifyHistoryCleared = useCallback(() => {
+    clearFeed();
     pushFeedEntry({ kind: 'clear_history', name: '', self: true });
-  }, [pushFeedEntry]);
+  }, [clearFeed, pushFeedEntry]);
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
     resetArmed, resetWorld, resetScoresArmed, resetScores, clearHistoryArmed, clearHistory, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
@@ -546,6 +547,23 @@ export function useGame() {
     setLoginError(null);
     setLoginStep(null);
   }, []);
+
+  // A claim the server rejects on the lobby (invalid, expired, or taken over by a newer login) can't be
+  // retried: drop the session, release the name and fall back to the logged-out lobby at once.
+  const deauthenticate = useCallback(() => {
+    clearSession();
+    discardName();
+    setLoggedIn(false);
+    setLobbyAdmin(false);
+    setLobbyModerator(false);
+  }, [discardName]);
+
+  useEffect(() => {
+    if (!lobby.claimInvalid) return;
+    if (!loggedIn) return;
+    warn('coop', 'lobby claim invalid — deauthenticating and releasing the name');
+    deauthenticate();
+  }, [lobby.claimInvalid, loggedIn, deauthenticate]);
 
   const playAsGuest = useCallback(() => {
     discardName();

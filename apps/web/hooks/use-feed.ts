@@ -13,5 +13,9 @@ export function useFeed() {
     setEntries((current) => pushFeed({ entries: current, event, id, now: Date.now() }));
   }, []);
 
-  return { entries, pushFeedEntry };
+  // Wipe the visible feed (the admin "clear history" action clears the local timeline too, not just the
+  // persisted backlog). New live events repopulate it as they happen.
+  const clearFeed = useCallback(() => setEntries([]), []);
+
+  return { entries, pushFeedEntry, clearFeed };
 }

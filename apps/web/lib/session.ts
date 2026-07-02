@@ -40,6 +40,14 @@ export function clearSession(): void {
   window.localStorage.removeItem(SESSION_KEY);
 }
 
+// Server error codes that mean the stored claim is no longer valid (missing/rejected, or taken over by
+// a newer login): the session must be dropped and the name released, not retried.
+const CLAIM_INVALID_CODES = ['claim_required', 'reclaimed'] as const;
+
+export function isClaimInvalidCode(code: string): boolean {
+  return (CLAIM_INVALID_CODES as readonly string[]).includes(code);
+}
+
 // The claim that proves ownership of `name` in `tenant`, or '' when no matching session exists.
 export function resolveClaim(tenant: string, name: string): string {
   const session = loadSession();

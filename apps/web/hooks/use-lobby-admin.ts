@@ -5,7 +5,7 @@
 // room/roster updates the in-game panel uses, without joining the 3D world. Reuses useRoomAdmin for
 // the dispatch + two-step reset; the NetClient is adapted into its RoomAdminApi via lobbyAdminApi.
 import { useEffect, useRef, useState } from 'react';
-import { loadSession } from '../lib/session';
+import { isClaimInvalidCode, loadSession } from '../lib/session';
 import { createNet, type NetClient, type NetState } from '../lib/net';
 import { MAIN_WORLD, type Appearance, type RoomState, type RosterEntry } from '../lib/coop';
 import type { RoomAdminApi } from '../lib/game-engine';
@@ -28,6 +28,7 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
   const { setRoom, setIsAdmin, setIsModerator, setPendingApprovals, setBans } = admin;
   const [state, setState] = useState<NetState | null>(null);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
+  const [claimInvalid, setClaimInvalid] = useState(false);
 
   useEffect(() => {
     if (!active) return;
@@ -36,6 +37,7 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
     const session = loadSession();
     if (!session || session.tenant !== tenant) return;
     if (session.is_admin !== true && session.is_moderator !== true) return;
+    setClaimInvalid(false);
 
     let selfId: number | null = null;
     const names = new Map<number, { name: string; admin: boolean; moderator: boolean; pvpKills: number; away: boolean }>();
@@ -95,6 +97,11 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
         onBans: (msg) => {
           setBans(msg.bans.map((b) => ({ ip: b.ip, name: b.name })));
         },
+        onError: (code) => {
+          // An invalid/taken-over claim on the lobby: signal upward so the session is dropped and the
+          // name released (the admin panel connects with the stored claim, so it's the first to learn it).
+          if (isClaimInvalidCode(code)) setClaimInvalid(true);
+        },
       },
     });
     apiRef.current = lobbyAdminApi(net);
@@ -108,7 +115,7 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
     };
   }, [active, tenant, name, look.skin, look.shirt, look.hair, setRoom, setIsAdmin, setIsModerator]);
 
-  return { ...admin, state, roster };
+  return { ...admin, state, roster, claimInvalid };
 }
 
 export type LobbyRoomState = RoomState;

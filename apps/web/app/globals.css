@@ -765,13 +765,13 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 4px; left: 4p
 #adminStructures button.blocked { background: rgba(255,93,46,.4); }
 #adminPlayers button.kick { background: rgba(255,184,77,.45); border-color: var(--gold); }
 #adminPlayers button.ban, #adminPending button.ban, #feed .adminPlayerActions button.ban { background: rgba(255,46,46,.5); border-color: rgba(255,93,46,.7); }
-#adminReset, #adminResetScores {
+#adminReset, #adminResetScores, #adminClearHistory {
   font-family: inherit; font-weight: 900; font-size: 14px; color: #fff; cursor: pointer; text-align: left;
   background: rgba(255,46,46,.45); border: 2px solid rgba(255,93,46,.7); border-radius: 10px;
   padding: 6px 10px; transition: transform .08s;
 }
-#adminReset.armed, #adminResetScores.armed { background: rgba(255,46,46,.85); border-color: #fff; }
-#adminReset:active, #adminResetScores:active { transform: translateY(2px); }
+#adminReset.armed, #adminResetScores.armed, #adminClearHistory.armed { background: rgba(255,46,46,.85); border-color: #fff; }
+#adminReset:active, #adminResetScores:active, #adminClearHistory:active { transform: translateY(2px); }
 #adminLimits { display: flex; flex-direction: column; gap: 8px; }
 #adminPlaytime { display: flex; flex-direction: column; gap: 6px; }
 #adminPlaytime label {
@@ -836,8 +836,8 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 4px; left: 4p
   background: rgba(255,210,63,.12); border-radius: 4px;
 }
 .feedSelf {
-  font-style: normal; font-size: 10px; font-weight: 900; letter-spacing: .3px;
-  text-transform: uppercase; opacity: .85; color: var(--gold);
+  font-style: normal; font-size: 9px; font-weight: 800; opacity: .7; color: var(--gold);
+  background: rgba(255,210,63,.16); border-radius: 999px; padding: 1px 6px;
 }
 #feed .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
 

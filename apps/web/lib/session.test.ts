@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SESSION_KEY, clearSession, loadSession, resolveClaim, saveSession } from './session';
+import { SESSION_KEY, clearSession, isClaimInvalidCode, loadSession, resolveClaim, saveSession } from './session';
 
 const store = new Map<string, string>();
 
@@ -56,5 +56,13 @@ describe('session', () => {
 
   it('resolveClaim returns empty when no session exists', () => {
     expect(resolveClaim('acme', 'Ann')).toBe('');
+  });
+
+  it('isClaimInvalidCode matches only the codes that mean the stored claim is dead', () => {
+    expect(isClaimInvalidCode('claim_required')).toBe(true);
+    expect(isClaimInvalidCode('reclaimed')).toBe(true);
+    expect(isClaimInvalidCode('idle_timeout')).toBe(false);
+    expect(isClaimInvalidCode('banned')).toBe(false);
+    expect(isClaimInvalidCode('')).toBe(false);
   });
 });
