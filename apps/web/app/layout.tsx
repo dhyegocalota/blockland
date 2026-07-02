@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { headers } from 'next/headers';
-import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 import ServiceWorker from '../components/ServiceWorker';
+import CookieConsent from '../components/CookieConsent';
 import { getTenant } from '../lib/api';
 import { tenantSubdomainOf } from '../lib/tenants';
 import { ROBOTS_NOINDEX, robotsCanonicalFor } from '../lib/seo';
@@ -73,7 +73,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <ServiceWorker />
         {children}
-        <Analytics />
+        <CookieConsent />
       </body>
     </html>
   );

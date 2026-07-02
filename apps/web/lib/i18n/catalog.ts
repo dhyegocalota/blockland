@@ -146,6 +146,16 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.instructions': '❓ Ver instruções',
     'start.mode_multi': '👫 Com amigos',
     'start.mode_solo': '🧍 Sozinho',
+    'start.terms_agree': 'Li e concordo com os {terms} e a {privacy}. Ao jogar, você aceita esses termos.',
+    'start.terms_link': 'Termos de Uso',
+    'start.privacy_link': 'Política de Privacidade',
+    'start.terms_supervision': '⚠️ Crianças só podem jogar com a supervisão de um adulto responsável.',
+
+    // Cookie consent (LGPD)
+    'cookie.message': '🍪 Usamos cookies e armazenamento para o jogo funcionar e, com a sua permissão, para análise de uso. Saiba mais na {privacy}.',
+    'cookie.privacy_link': 'Política de Privacidade',
+    'cookie.accept': 'Aceitar todos',
+    'cookie.essential': 'Só os essenciais',
 
     // Lobby presence + footer
     'lobby.online': '👥 {count} online agora',
@@ -460,6 +470,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'meta.title': 'Blockland',
     'meta.description': 'Mundos de blocos 3D pra crianças: construa, cace, lute contra monstros e junte estrelas.',
     'meta.og_title': 'Blockland — mundos de blocos 3D pra crianças',
+    'meta.keywords': 'jogo para crianças, mundo de blocos 3D, voxel infantil, jogo seguro para crianças, mundo privado, multiplayer infantil, construir e explorar, blockland',
+    'meta.og_image_alt': 'Blockland — mundos de blocos 3D privados e seguros pra crianças',
     'debug.aria': 'Depurar',
 
     // Connecting / loading overlay (online world becoming interactive)
@@ -620,6 +632,16 @@ export const messages: Record<Locale, Record<string, string>> = {
     'start.instructions': '❓ Instructions',
     'start.mode_multi': '👫 With friends',
     'start.mode_solo': '🧍 Solo',
+    'start.terms_agree': 'I have read and agree to the {terms} and the {privacy}. By playing, you accept these terms.',
+    'start.terms_link': 'Terms of Use',
+    'start.privacy_link': 'Privacy Policy',
+    'start.terms_supervision': '⚠️ Children may only play with the supervision of a responsible adult.',
+
+    // Cookie consent (LGPD)
+    'cookie.message': '🍪 We use cookies and storage to run the game and, with your permission, for usage analytics. Learn more in the {privacy}.',
+    'cookie.privacy_link': 'Privacy Policy',
+    'cookie.accept': 'Accept all',
+    'cookie.essential': 'Essential only',
 
     // Lobby presence + footer
     'lobby.online': '👥 {count} online now',
@@ -934,6 +956,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'meta.title': 'Blockland',
     'meta.description': '3D block worlds for kids: build, hunt, fight monsters and collect stars.',
     'meta.og_title': 'Blockland — 3D block worlds for kids',
+    'meta.keywords': 'game for kids, 3D block world, kids voxel game, safe game for children, private world, kids multiplayer, build and explore, blockland',
+    'meta.og_image_alt': 'Blockland — private, safe 3D block worlds for kids',
     'debug.aria': 'Debug',
 
     // Connecting / loading overlay (online world becoming interactive)

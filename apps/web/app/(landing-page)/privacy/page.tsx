@@ -21,7 +21,7 @@ const COPY = {
   'pt-BR': {
     back: '← Voltar',
     title: 'Política de Privacidade',
-    updated: 'Atualizado em junho de 2026',
+    updated: 'Atualizado em julho de 2026',
     intro:
       `Esta Política descreve como o ${PLATFORM_NAME} trata dados pessoais, em conformidade com a Lei ` +
       'Geral de Proteção de Dados (LGPD). Tratamos apenas os dados necessários para operar o serviço.',
@@ -61,11 +61,14 @@ const COPY = {
         ],
       },
       {
-        title: '5. Análise e monitoramento de erros',
+        title: '5. Cookies, análise e monitoramento de erros',
         body: [
-          'Usamos análise de uso básica (Vercel Analytics) e monitoramento de erros (Sentry) para ' +
-            'entender o uso agregado e corrigir falhas. Não utilizamos esses dados para vender ou ' +
-            'perfilar pessoas, e não há outros rastreadores além desses.',
+          'Usamos apenas o armazenamento necessário para o serviço funcionar (preferências de idioma, ' +
+            'sessão de login e progresso do jogo) e, mediante a sua permissão, análise de uso básica ' +
+            '(Vercel Analytics). Um aviso de cookies pede essa permissão: escolhendo "Só os essenciais", ' +
+            'a análise de uso não é carregada. O monitoramento de erros (Sentry) é usado para corrigir ' +
+            'falhas. Não utilizamos esses dados para vender ou perfilar pessoas, e não há outros ' +
+            'rastreadores além desses.',
         ],
       },
       {
@@ -112,7 +115,7 @@ const COPY = {
   'en-US': {
     back: '← Back',
     title: 'Privacy Policy',
-    updated: 'Updated June 2026',
+    updated: 'Updated July 2026',
     intro:
       `This Policy describes how ${PLATFORM_NAME} handles personal data, in line with the Brazilian ` +
       'General Data Protection Law (LGPD). We process only the data needed to run the service.',
@@ -151,11 +154,13 @@ const COPY = {
         ],
       },
       {
-        title: '5. Analytics and error monitoring',
+        title: '5. Cookies, analytics and error monitoring',
         body: [
-          'We use basic usage analytics (Vercel Analytics) and error monitoring (Sentry) to ' +
-            'understand aggregate usage and fix faults. We do not use this data to sell or profile ' +
-            'people, and there are no other trackers beyond these.',
+          'We use only the storage the service needs to work (language preference, login session and ' +
+            'game progress) and, with your permission, basic usage analytics (Vercel Analytics). A ' +
+            'cookie notice asks for that permission: if you choose "Essential only", usage analytics is ' +
+            'not loaded. Error monitoring (Sentry) is used to fix faults. We do not use this data to ' +
+            'sell or profile people, and there are no other trackers beyond these.',
         ],
       },
       {

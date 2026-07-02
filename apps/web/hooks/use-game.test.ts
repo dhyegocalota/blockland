@@ -171,14 +171,46 @@ describe('useGame', () => {
     await waitFor(() => expect(result.current.adminOpen).toBe(false));
   });
 
-  it('the Q shortcut leaves the world (reloads to the lobby) once started', async () => {
+  it('the Q shortcut disconnects (runs engine cleanup) then reloads to the lobby once started', async () => {
+    const cleanup = vi.fn();
+    initGame.mockResolvedValueOnce(cleanup);
     await mountWithBridge();
     const original = window.location;
     const reload = vi.fn();
     Object.defineProperty(window, 'location', { configurable: true, value: { reload } });
     pressKey('KeyQ');
+    expect(cleanup).toHaveBeenCalledOnce();
     expect(reload).toHaveBeenCalledOnce();
     Object.defineProperty(window, 'location', { configurable: true, value: original });
+  });
+
+  it('leaveWorld disconnects before reloading (Exit button / back-to-lobby)', async () => {
+    const cleanup = vi.fn();
+    initGame.mockResolvedValueOnce(cleanup);
+    const { result } = await mountWithBridge();
+    const original = window.location;
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { reload } });
+    act(() => { result.current.leaveWorld(); });
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(reload).toHaveBeenCalledOnce();
+    Object.defineProperty(window, 'location', { configurable: true, value: original });
+  });
+
+  it('gates Play on terms acceptance and remembers the choice', async () => {
+    const { result } = renderHook(() => useGame());
+    await waitFor(() => expect(result.current.brand).not.toBeNull());
+    expect(result.current.termsAccepted).toBe(false);
+    act(() => { result.current.acceptTerms(true); });
+    await waitFor(() => expect(result.current.termsAccepted).toBe(true));
+    expect(window.localStorage.getItem('bl-consent')).toBe('true');
+  });
+
+  it('starts with terms pre-accepted when a previous acceptance is stored', async () => {
+    window.localStorage.setItem('bl-consent', 'true');
+    const { result } = renderHook(() => useGame());
+    await waitFor(() => expect(result.current.brand).not.toBeNull());
+    expect(result.current.termsAccepted).toBe(true);
   });
 
   it('opening the admin panel frees the cursor and closing it re-locks (engine cursor overlay)', async () => {

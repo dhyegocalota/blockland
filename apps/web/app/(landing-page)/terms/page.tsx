@@ -21,11 +21,14 @@ const COPY = {
   'pt-BR': {
     back: '← Voltar',
     title: 'Termos de Uso',
-    updated: 'Atualizado em junho de 2026',
+    updated: 'Atualizado em julho de 2026',
     intro:
       `Estes Termos de Uso regem o acesso e o uso do ${PLATFORM_NAME}, uma plataforma de mundos 3D ` +
       'de blocos, privados e multiplayer, voltados a crianças. Ao contratar, acessar ou permitir o ' +
-      'acesso ao serviço, você concorda com estes Termos. Se não concordar, não utilize a plataforma.',
+      'acesso ao serviço, você concorda com estes Termos. Se não concordar, não utilize a plataforma. ' +
+      'Antes de jogar é preciso marcar a caixa de concordância na tela inicial; ao marcá-la e jogar, ' +
+      'você confirma que leu e aceita estes Termos e a Política de Privacidade. Crianças só podem jogar ' +
+      'com a supervisão de um adulto responsável.',
     clauses: [
       {
         title: '1. O que é o serviço',
@@ -107,11 +110,14 @@ const COPY = {
   'en-US': {
     back: '← Back',
     title: 'Terms of Use',
-    updated: 'Updated June 2026',
+    updated: 'Updated July 2026',
     intro:
       `These Terms of Use govern access to and use of ${PLATFORM_NAME}, a platform of private, ` +
       'multiplayer 3D voxel worlds made for kids. By contracting, accessing or allowing access to the ' +
-      'service, you agree to these Terms. If you do not agree, do not use the platform.',
+      'service, you agree to these Terms. If you do not agree, do not use the platform. Before playing ' +
+      'you must tick the agreement box on the start screen; by ticking it and playing, you confirm you ' +
+      'have read and accept these Terms and the Privacy Policy. Children may only play with the ' +
+      'supervision of a responsible adult.',
     clauses: [
       {
         title: '1. What the service is',

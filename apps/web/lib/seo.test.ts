@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { robotsCanonicalFor, rootHomeUrl, welcomeRedirectTarget } from './seo';
+import { COMPANY_LEGAL_NAME, landingJsonLd, robotsCanonicalFor, rootHomeUrl, welcomeRedirectTarget } from './seo';
 
 const PROD_ROOT = 'blockland.dhyegocalota.com.br';
 
@@ -70,5 +70,27 @@ describe('robotsCanonicalFor', () => {
       noindex: true,
       canonical: 'http://localhost/',
     });
+  });
+});
+
+describe('landingJsonLd', () => {
+  const rootUrl = `https://${PROD_ROOT}/`;
+  const graph = landingJsonLd({ rootUrl, description: 'Voxel worlds for kids.' })['@graph'];
+
+  it('describes the operator, the site and the product', () => {
+    expect(graph.map((node) => node['@type'])).toEqual(['Organization', 'WebSite', 'SoftwareApplication']);
+  });
+
+  it('points the organization at the platform logo and legal name', () => {
+    const organization = graph[0];
+    expect(organization.legalName).toBe(COMPANY_LEGAL_NAME);
+    expect(organization.logo).toBe(`${rootUrl}icons/icon-512.png`);
+  });
+
+  it('marks the product as a browser game for young children', () => {
+    const application = graph[2];
+    expect(application.applicationCategory).toBe('GameApplication');
+    expect(application.audience).toEqual({ '@type': 'PeopleAudience', suggestedMinAge: 4 });
+    expect(application.description).toBe('Voxel worlds for kids.');
   });
 });

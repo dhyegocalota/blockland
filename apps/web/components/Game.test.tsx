@@ -35,6 +35,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     bans: [], unban: () => {}, setLimits: () => {}, toggleOnlineAllowed: () => {}, toggleOfflineAllowed: () => {}, updateRequired: false,
     chatLines: [], chatOpen: false, chatDraft: '', setChatDraft: () => {}, chatInputRef: { current: null }, openChat: () => {}, sendChat: () => {}, closeChat: () => {},
     onNameChange: () => {}, onLookChange: () => {}, requestCode: () => {}, verifyCode: () => {}, logout: () => {}, playAsGuest: () => {}, playOffline: () => {}, discardName: () => {},
+    termsAccepted: true, acceptTerms: () => {}, leaveWorld: () => {},
     ...overrides,
   };
 }
@@ -436,5 +437,33 @@ describe('Game', () => {
     useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null }));
     render(<Game />);
     expect(document.getElementById('adminToggle')).toBeNull();
+  });
+
+  it('gates Play behind the terms checkbox and shows the adult-supervision warning', () => {
+    useGame.mockReturnValue(gameState({ termsAccepted: false }));
+    render(<Game />);
+    expect((document.getElementById('playBtn') as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById('termsSupervision')).toBeInTheDocument();
+    expect((within(document.getElementById('termsField')!).getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('enables Play once the terms are accepted, with links to the terms and privacy pages', () => {
+    const acceptTerms = vi.fn();
+    useGame.mockReturnValue(gameState({ termsAccepted: true, acceptTerms }));
+    render(<Game />);
+    expect((document.getElementById('playBtn') as HTMLButtonElement).disabled).toBe(false);
+    const termsField = document.getElementById('termsField')!;
+    expect(within(termsField).getByRole('link', { name: 'Termos de Uso' })).toHaveAttribute('href', '/terms');
+    expect(within(termsField).getByRole('link', { name: 'Política de Privacidade' })).toHaveAttribute('href', '/privacy');
+    fireEvent.click(within(termsField).getByRole('checkbox'));
+    expect(acceptTerms).toHaveBeenCalledWith(false);
+  });
+
+  it('leaves the world (disconnect + reload) from the Exit button', () => {
+    const leaveWorld = vi.fn();
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, leaveWorld }));
+    render(<Game />);
+    fireEvent.click(document.getElementById('exitBtn')!);
+    expect(leaveWorld).toHaveBeenCalledOnce();
   });
 });

@@ -6,6 +6,7 @@
 import { type CSSProperties } from 'react';
 import { currentLocale } from '../lib/i18n';
 import { LOCALE_COOKIE, LOCALES, localePrefix, splitLocalePrefix, type Locale } from '../lib/i18n/locale';
+import { writeCookie } from '../lib/cookie';
 
 const FLAGS: Record<Locale, string> = {
   'pt-BR': '🇧🇷',
@@ -16,8 +17,6 @@ const LABELS: Record<Locale, string> = {
   'pt-BR': 'PT',
   'en-US': 'EN',
 };
-
-const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 function pathUnderLocale(locale: Locale): string {
   const { pathname, search } = window.location;
@@ -32,7 +31,7 @@ export default function LocaleSwitcher() {
 
   function switchTo(locale: Locale) {
     if (locale === active) return;
-    document.cookie = `${LOCALE_COOKIE}=${locale}; path=/; max-age=${ONE_YEAR_SECONDS}; samesite=lax`;
+    writeCookie(LOCALE_COOKIE, locale);
     window.location.assign(pathUnderLocale(locale));
   }
 

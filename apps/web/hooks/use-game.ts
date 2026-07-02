@@ -9,6 +9,7 @@ import { lobbyAdminPanelActive, lobbyModeGates, shouldPushToOnline, shouldPushTo
 import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
+import { loadConsent, saveConsent } from '../lib/consent';
 import { type Settings, loadSettings, updateSettings } from '../lib/settings';
 import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
 import { IDLE_STATE, LoaderPhase, LoaderStage, loaderReducer } from '../lib/engine/loader-state';
@@ -81,6 +82,7 @@ export function useGame() {
   const [offlineDismissed, setOfflineDismissed] = useState(false);
   const [name, setName] = useState(loadName);
   const [look, setLook] = useState<Appearance>(loadLook);
+  const [termsAccepted, setTermsAccepted] = useState(loadConsent);
   const [solo, setSolo] = useState(false);
   const [netState, setNetState] = useState<NetState | null>(null);
   const [ping, setPing] = useState(0);
@@ -344,6 +346,15 @@ export function useGame() {
   // Tear the running engine down on unmount (the engine itself owns its in-session cleanup).
   useEffect(() => () => { engineCleanupRef.current?.(); }, []);
 
+  // Leaving the world (Exit button, Q, "back to lobby"): close the coop socket cleanly BEFORE reloading
+  // so the server drops the avatar immediately, instead of relying on the reload racing the pagehide
+  // close. Runs the engine's own cleanup (which calls coop.close()), then reloads back to the lobby.
+  const leaveWorld = useCallback((): void => {
+    engineCleanupRef.current?.();
+    engineCleanupRef.current = undefined;
+    window.location.reload();
+  }, []);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.code === 'F3') { event.preventDefault(); setDebugOpen((open) => !open); return; }
@@ -354,8 +365,8 @@ export function useGame() {
       // (not started) Tab is left alone so it still navigates the form.
       if (event.code === 'Tab' && started) { event.preventDefault(); setRosterOpen((open) => !open); return; }
       if (event.code === 'KeyH' && started) { event.preventDefault(); gameApiRef.current?.returnToSpawn(); return; }
-      // Q leaves the world (mirrors the Exit button): reload back to the lobby.
-      if (event.code === 'KeyQ' && started) { event.preventDefault(); window.location.reload(); return; }
+      // Q leaves the world (mirrors the Exit button): disconnect and reload back to the lobby.
+      if (event.code === 'KeyQ' && started) { event.preventDefault(); leaveWorld(); return; }
       // Esc closes the admin/moderator panel and re-locks the canvas (the panel freed the cursor on open).
       if (event.code === 'Escape' && started && adminOpen) { event.preventDefault(); setAdminOpen(false); return; }
       // The admin/moderator panel toggle (the player has no panel, so the key does nothing for them).
@@ -364,7 +375,7 @@ export function useGame() {
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chatOpen, openChat, started, isAdmin, isModerator, adminOpen, setAdminOpen]);
+  }, [chatOpen, openChat, started, isAdmin, isModerator, adminOpen, setAdminOpen, leaveWorld]);
 
   // Opening the admin/moderator panel frees the cursor so its buttons are clickable; the engine exits
   // pointer lock and suppresses the settings-on-lock-lost pause while the overlay is up. Closing it
@@ -423,6 +434,13 @@ export function useGame() {
   const onLookChange = useCallback((part: keyof Appearance, value: string): void => {
     setLook((current) => ({ ...current, [part]: value }));
     if (typeof window !== 'undefined') window.localStorage.setItem(LOOK_KEYS[part], value);
+  }, []);
+
+  // Ticking "I agree to the Terms and Privacy Policy" unlocks Play; the choice is remembered per device
+  // so a returning player is not asked again.
+  const acceptTerms = useCallback((accepted: boolean): void => {
+    setTermsAccepted(accepted);
+    saveConsent(accepted);
   }, []);
 
   // A settings slider/toggle change persists to the live store (the engine reads it next frame/cue) and
@@ -647,5 +665,6 @@ export function useGame() {
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, playOffline, discardName,
+    termsAccepted, acceptTerms, leaveWorld,
   };
 }

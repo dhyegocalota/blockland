@@ -125,10 +125,13 @@ export default function Game() {
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
     chatLines, chatOpen, chatDraft, setChatDraft, chatInputRef, openChat, sendChat, closeChat,
     onNameChange, onLookChange, requestCode, verifyCode, logout, playAsGuest, playOffline, discardName,
+    termsAccepted, acceptTerms, leaveWorld,
   } = useGame();
 
   if (failed) return <div id="loadError">{t('error.connect')}</div>;
   if (!brand) return null;
+
+  const termsAgreeParts = t('start.terms_agree').split(/(\{terms\}|\{privacy\})/);
 
   const bannerKey = netState ? BANNER_KEYS[netState] : null;
   const severe = netState ? SEVERE_STATES.includes(netState) : false;
@@ -189,7 +192,7 @@ export default function Game() {
           <button className="btn" id="spawnBtn" onClick={() => gameApiRef.current?.returnToSpawn()}>{t('hud.spawn')}<HotkeyHint keyCap={HUD_HOTKEYS.spawn} isTouch={isTouch} /></button>
           {room.chatEnabled && <button className="btn" id="chatBtn" onClick={openChat}>{t('hud.chat')}<HotkeyHint keyCap={HUD_HOTKEYS.chat} isTouch={isTouch} /></button>}
           <button className="btn" id="settingsBtn">{t('hud.settings')}<HotkeyHint keyCap={HUD_HOTKEYS.settings} isTouch={isTouch} /></button>
-          <button className="btn" id="exitBtn" onClick={() => window.location.reload()}>{t('hud.exit')}<HotkeyHint keyCap={HUD_HOTKEYS.exit} isTouch={isTouch} /></button>
+          <button className="btn" id="exitBtn" onClick={leaveWorld}>{t('hud.exit')}<HotkeyHint keyCap={HUD_HOTKEYS.exit} isTouch={isTouch} /></button>
         </div>
       </div>
 
@@ -364,7 +367,7 @@ export default function Game() {
         <div id="kickOverlay" role="alertdialog" aria-modal="true">
           <div className="panel">
             <h2>{t(bannerKey)}</h2>
-            <button onClick={() => window.location.reload()}>{t('coop.back_to_lobby')}</button>
+            <button onClick={leaveWorld}>{t('coop.back_to_lobby')}</button>
           </div>
         </div>
       )}
@@ -386,7 +389,7 @@ export default function Game() {
             <div className="approvalSpinner" aria-hidden="true">⏳</div>
             <h2>{t('coop.waiting_approval_title')}</h2>
             <p>{t('coop.waiting_approval_hint')}</p>
-            <button onClick={() => window.location.reload()}>{t('coop.back_to_lobby')}</button>
+            <button onClick={leaveWorld}>{t('coop.back_to_lobby')}</button>
           </div>
         </div>
       )}
@@ -738,7 +741,19 @@ export default function Game() {
             )}
           </div>
 
-          <button id="playBtn">{t('start.play')}</button>
+          <label id="termsField">
+            <input type="checkbox" checked={termsAccepted} onChange={(e) => acceptTerms(e.target.checked)} />
+            <span>
+              {termsAgreeParts.map((part, index) => {
+                if (part === '{terms}') return <a key="terms" href="/terms" target="_blank" rel="noopener noreferrer">{t('start.terms_link')}</a>;
+                if (part === '{privacy}') return <a key="privacy" href="/privacy" target="_blank" rel="noopener noreferrer">{t('start.privacy_link')}</a>;
+                return <span key={index}>{part}</span>;
+              })}
+            </span>
+          </label>
+          <p id="termsSupervision">{t('start.terms_supervision')}</p>
+
+          <button id="playBtn" disabled={!termsAccepted}>{t('start.play')}</button>
 
           <button
             id="startHelpBtn"
