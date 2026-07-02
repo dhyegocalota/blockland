@@ -81,6 +81,7 @@ const FEED_ICONS: Record<FeedEventKind, string> = {
   pvp_kill: '⚔️',
   reset: '🌍',
   reset_scores: '🏆',
+  clear_history: '🧹',
   server_down: '⚠️',
   admin: '🛡️',
   approval: '🙋',
@@ -93,6 +94,7 @@ function feedText(entry: FeedEntry): string {
   if (entry.kind === 'rename') return entry.name;
   if (entry.kind === 'reset') return t('feed.reset', { name: entry.name });
   if (entry.kind === 'reset_scores') return t('feed.reset_scores', { name: entry.name });
+  if (entry.kind === 'clear_history') return t('feed.clear_history');
   if (entry.kind === 'server_down') return t('feed.server_down');
   if (entry.kind === 'approval') return t('feed.approval', { name: entry.name });
   if (entry.kind === 'admin') {
@@ -120,7 +122,7 @@ export default function Game() {
     settings, onSettingChange,
     lobby,
     gameApiRef,
-    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
+    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores, clearHistoryArmed, clearHistory,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,
@@ -351,6 +353,11 @@ export default function Game() {
                 </button>
               )}
               {isAdmin && !solo && (
+                <button id="adminClearHistory" className={clearHistoryArmed ? 'armed' : undefined} onClick={clearHistory}>
+                  {clearHistoryArmed ? t('game_admin.clear_history_confirm') : t('game_admin.clear_history')}
+                </button>
+              )}
+              {isAdmin && !solo && (
                 <button id="adminSuspend" className={room.suspended ? 'on' : undefined} onClick={suspendRoom}>
                   {room.suspended ? t('game_admin.resume') : t('game_admin.suspend')}
                 </button>
@@ -467,9 +474,10 @@ export default function Game() {
 
       <div id="feed">
         {feed.map((entry) => (
-          <div className={entry.kind === 'rename' || entry.kind === 'kill' ? 'feedLine system' : 'feedLine'} key={entry.id}>
+          <div className={entry.self ? 'feedLine self' : entry.kind === 'rename' || entry.kind === 'kill' ? 'feedLine system' : 'feedLine'} key={entry.id}>
             <span className="feedIcon">{FEED_ICONS[entry.kind]}</span>
             {feedText(entry)}
+            {entry.self && <span className="feedSelf">{t('feed.only_you')}</span>}
             {isAdmin && entry.kind === 'approval' && entry.detail && pendingApprovals.some((pending) => pending.accountId === entry.detail) && (
               <span className="adminPlayerActions">
                 <button className="role" onClick={() => approvePlayer(entry.detail!)}>{t('game_admin.approve')}</button>

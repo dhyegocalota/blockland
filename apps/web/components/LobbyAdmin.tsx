@@ -15,7 +15,7 @@ import type { useLobbyAdmin } from '../hooks/use-lobby-admin';
 export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobbyAdmin> }) {
   const reportViewer = useLobbyReports();
   const {
-    state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, suspendRoom,
+    state, roster, room, isAdmin, isModerator, resetArmed, resetWorld, resetScoresArmed, resetScores, clearHistoryArmed, clearHistory, suspendRoom,
     toggleRoomPeace, toggleRoomPvp, toggleRoomChat, toggleStructure, kickPlayer, banPlayer, setRole,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending, bans, unban,
     setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
@@ -144,6 +144,11 @@ export default function LobbyAdmin({ lobby }: { lobby: ReturnType<typeof useLobb
         {isAdmin && (
           <button id="adminResetScores" className={resetScoresArmed ? 'armed' : undefined} onClick={resetScores}>
             {resetScoresArmed ? t('game_admin.reset_scores_confirm') : t('game_admin.reset_scores')}
+          </button>
+        )}
+        {isAdmin && (
+          <button id="adminClearHistory" className={clearHistoryArmed ? 'armed' : undefined} onClick={clearHistory}>
+            {clearHistoryArmed ? t('game_admin.clear_history_confirm') : t('game_admin.clear_history')}
           </button>
         )}
         {isAdmin && (

@@ -51,6 +51,7 @@ pub const TAG_ADMIN_SET_LIMITS: u8 = 24;
 pub const TAG_ADMIN_SET_MODES: u8 = 25;
 pub const TAG_RESPAWN: u8 = 26;
 pub const TAG_DIG: u8 = 27;
+pub const TAG_ADMIN_CLEAR_HISTORY: u8 = 28;
 
 /// EditOp on the wire (its declaration order in `crate::EditOp`).
 const EDIT_OP_PLACE: u8 = 0;
@@ -256,6 +257,9 @@ pub fn encode_client_msg(msg: &ClientMsg) -> Vec<u8> {
         ClientMsg::AdminResetScores => {
             w.u8(TAG_ADMIN_RESET_SCORES);
         }
+        ClientMsg::AdminClearHistory => {
+            w.u8(TAG_ADMIN_CLEAR_HISTORY);
+        }
         ClientMsg::AdminSuspend { on } => {
             w.u8(TAG_ADMIN_SUSPEND);
             w.bool(*on);
@@ -455,6 +459,7 @@ pub fn decode_client_msg(bytes: &[u8]) -> Result<ClientMsg, ClientDecodeError> {
         TAG_ATTACK_PLAYER => ClientMsg::AttackPlayer { id: r.u32()? },
         TAG_ADMIN_RESET_WORLD => ClientMsg::AdminResetWorld,
         TAG_ADMIN_RESET_SCORES => ClientMsg::AdminResetScores,
+        TAG_ADMIN_CLEAR_HISTORY => ClientMsg::AdminClearHistory,
         TAG_ADMIN_SUSPEND => ClientMsg::AdminSuspend { on: r.bool()? },
         TAG_ADMIN_SET_ROLE => ClientMsg::AdminSetRole {
             id: r.u32()?,
@@ -560,6 +565,7 @@ mod tests {
             ClientMsg::AttackPlayer { id: 5 },
             ClientMsg::AdminResetWorld,
             ClientMsg::AdminResetScores,
+            ClientMsg::AdminClearHistory,
             ClientMsg::AdminSuspend { on: true },
             ClientMsg::AdminSetRole {
                 id: 9,

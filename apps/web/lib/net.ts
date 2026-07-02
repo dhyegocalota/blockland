@@ -22,6 +22,7 @@ import {
   adminKick,
   adminResetWorld,
   adminResetScores,
+  adminClearHistory,
   adminSuspend,
   adminSetApproval,
   adminSetChat,
@@ -206,6 +207,7 @@ export interface NetClient {
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
+  sendAdminClearHistory(): void;
   sendAdminSuspend(on: boolean): void;
   sendAdminSetRole(id: number, role: Role): void;
   sendAdminSetInfinite(on: boolean): void;
@@ -675,6 +677,9 @@ export function createNet(opts: NetOptions): NetClient {
     },
     sendAdminResetScores(): void {
       rawSend(adminResetScores());
+    },
+    sendAdminClearHistory(): void {
+      rawSend(adminClearHistory());
     },
     sendAdminSuspend(on): void {
       rawSend(adminSuspend(on));

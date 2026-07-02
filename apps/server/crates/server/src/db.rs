@@ -1013,6 +1013,17 @@ impl Db {
         Ok(())
     }
 
+    /// Wipe the tenant's activity history: the chat log and the event timeline (the join backlog). Both
+    /// tables are per-tenant, so this only ever touches the calling admin's own world.
+    pub async fn clear_history(&self, tenant: &str) -> Result<(), libsql::Error> {
+        let conn = self.conn()?;
+        conn.execute("DELETE FROM chat_log WHERE tenant = ?1", params![tenant])
+            .await?;
+        conn.execute("DELETE FROM events WHERE tenant = ?1", params![tenant])
+            .await?;
+        Ok(())
+    }
+
     // ---------- Identity: accounts, magic links, claims, events ----------
 
     pub async fn get_account_by_email(
@@ -2364,6 +2375,48 @@ mod tests {
                 .len(),
             1,
             "another tenant's leaderboard is untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_history_wipes_only_its_own_tenant_chat_and_events() {
+        let db = memory_db().await;
+        db.record_chat("acme", "Ann", "hi").await.unwrap();
+        db.record_chat("demo", "Zoe", "yo").await.unwrap();
+        db.record_event("acme", "acc-a", "rename", "Ann", "Annie")
+            .await
+            .unwrap();
+        db.record_event("demo", "acc-z", "rename", "Zoe", "Zo")
+            .await
+            .unwrap();
+
+        db.clear_history("acme").await.unwrap();
+
+        assert!(db
+            .recent_chat("acme", default_chat_backlog())
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(db
+            .recent_events("acme", default_event_backlog())
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.recent_chat("demo", default_chat_backlog())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "another tenant's chat log is untouched"
+        );
+        assert_eq!(
+            db.recent_events("demo", default_event_backlog())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "another tenant's timeline is untouched"
         );
     }
 

@@ -217,6 +217,7 @@ export interface CoopController {
   sendAttackPlayer(id: number): void;
   sendAdminResetWorld(): void;
   sendAdminResetScores(): void;
+  sendAdminClearHistory(): void;
   sendAdminSuspend(on: boolean): void;
   sendAdminSetRole(id: number, role: Role): void;
   sendAdminSetInfinite(on: boolean): void;
@@ -605,6 +606,9 @@ export function createCoop(opts: CoopOptions): CoopController {
     },
     sendAdminResetScores(): void {
       net.sendAdminResetScores();
+    },
+    sendAdminClearHistory(): void {
+      net.sendAdminClearHistory();
     },
     sendAdminSuspend(on): void {
       net.sendAdminSuspend(on);

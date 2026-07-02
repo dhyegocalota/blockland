@@ -29,7 +29,7 @@ function gameState(overrides: Record<string, unknown> = {}) {
     lobby: { roster: [], room: { suspended: false, playtimeLimitMin: 0, playtimeWindowH: 0 } },
     gameApiRef: { current: null },
     feed: [], room: { peace: true, blockedStructures: [], pvp: false, chatEnabled: false, suspended: false, approvalRequired: false, playtimeLimitMin: 0, playtimeWindowH: 0, onlineAllowed: true, offlineAllowed: true },
-    isAdmin: false, isModerator: false, adminOpen: false, setAdminOpen: () => {}, resetArmed: false, resetWorld: () => {}, resetScoresArmed: false, resetScores: () => {},
+    isAdmin: false, isModerator: false, adminOpen: false, setAdminOpen: () => {}, resetArmed: false, resetWorld: () => {}, resetScoresArmed: false, resetScores: () => {}, clearHistoryArmed: false, clearHistory: () => {},
     toggleRoomPeace: () => {}, toggleStructure: () => {}, toggleRoomPvp: () => {}, toggleRoomChat: () => {}, kickPlayer: () => {}, banPlayer: () => {}, reportPlayer: () => {}, setRole: () => {}, suspendRoom: () => {},
     pendingApprovals: [], toggleApprovalRequired: () => {}, approvePlayer: () => {}, rejectPlayer: () => {}, banPending: () => {},
     bans: [], unban: () => {}, setLimits: () => {}, toggleOnlineAllowed: () => {}, toggleOfflineAllowed: () => {}, updateRequired: false,
@@ -457,6 +457,25 @@ describe('Game', () => {
     expect(within(termsField).getByRole('link', { name: 'Política de Privacidade' })).toHaveAttribute('href', '/privacy');
     fireEvent.click(within(termsField).getByRole('checkbox'));
     expect(acceptTerms).toHaveBeenCalledWith(false);
+  });
+
+  it('shows the admin clear-history button in the open in-game panel (admin only)', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, isAdmin: true, adminOpen: true }));
+    render(<Game />);
+    expect(document.getElementById('adminClearHistory')).toBeInTheDocument();
+    cleanup();
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, isAdmin: false, adminOpen: true }));
+    render(<Game />);
+    expect(document.getElementById('adminClearHistory')).toBeNull();
+  });
+
+  it('renders a history-clear feed line as a private only-you notice', () => {
+    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, feed: [{ id: 1, at: 0, kind: 'clear_history', name: '', self: true }] }));
+    render(<Game />);
+    const line = document.querySelector('.feedLine.self');
+    expect(line).toBeInTheDocument();
+    expect(line).toHaveTextContent('Histórico limpo');
+    expect(line).toHaveTextContent('só você');
   });
 
   it('leaves the world (disconnect + reload) from the Exit button', () => {

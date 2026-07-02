@@ -16,6 +16,7 @@ export interface RoomAdminApi {
   banPlayer(id: number): void;
   resetWorld(): void;
   resetScores(): void;
+  clearHistory(): void;
   suspendRoom(on: boolean): void;
   setRole(id: number, role: Role): void;
   setApprovalRequired(on: boolean): void;

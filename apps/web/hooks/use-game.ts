@@ -129,13 +129,18 @@ export function useGame() {
   const seenApprovalsRef = useRef<Set<string>>(new Set());
 
   const { entries: feed, pushFeedEntry } = useFeed();
+  // Clearing the history is intentionally silent server-side; the admin who did it gets a private,
+  // only-you feed line as confirmation (never broadcast to the other players).
+  const notifyHistoryCleared = useCallback(() => {
+    pushFeedEntry({ kind: 'clear_history', name: '', self: true });
+  }, [pushFeedEntry]);
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
-    resetArmed, resetWorld, resetScoresArmed, resetScores, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
+    resetArmed, resetWorld, resetScoresArmed, resetScores, clearHistoryArmed, clearHistory, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, setRole, suspendRoom,
     pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, setBans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
-  } = useRoomAdmin(gameApiRef);
+  } = useRoomAdmin(gameApiRef, notifyHistoryCleared);
   const updateRequired = useUpdateCheck();
   // The lobby-admin connection stays live for an admin/moderator until the game starts (the panel must
   // keep working after they disable a mode), and never when the server is unreachable (it couldn't
@@ -666,7 +671,7 @@ export function useGame() {
     settings, onSettingChange,
     lobby,
     gameApiRef,
-    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores,
+    feed, room, isAdmin, isModerator, adminOpen, setAdminOpen, resetArmed, resetWorld, resetScoresArmed, resetScores, clearHistoryArmed, clearHistory,
     toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat, kickPlayer, banPlayer, setRole, suspendRoom,
     pendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed, updateRequired,

@@ -790,6 +790,10 @@ impl Room {
             self.on_admin_reset_scores(now, id);
             return;
         }
+        if let ClientMsg::AdminClearHistory = msg {
+            self.on_admin_clear_history(now, id);
+            return;
+        }
         if let ClientMsg::AdminSuspend { on } = msg {
             self.on_admin_suspend(id, on);
             return;
@@ -1070,6 +1074,7 @@ impl Room {
             | ClientMsg::AdminBan { .. }
             | ClientMsg::AdminResetWorld
             | ClientMsg::AdminResetScores
+            | ClientMsg::AdminClearHistory
             | ClientMsg::AdminSuspend { .. }
             | ClientMsg::AdminSetRole { .. }
             | ClientMsg::AdminSetApproval { .. }
@@ -1363,6 +1368,23 @@ impl Room {
             detail: String::new(),
         });
         tracing::info!(tenant = %self.key.0, %id, "scores reset by admin");
+    }
+
+    /// Clear the world's activity history — the persisted chat log and event timeline (the backlog
+    /// replayed to joiners). Admin-only. Deliberately NOT announced in the feed: it would be absurd to
+    /// print "cleared the history" the instant the history is cleared. Live in-memory state (positions,
+    /// scores) is untouched; the next join simply replays nothing.
+    fn on_admin_clear_history(&mut self, now: Instant, id: PlayerId) {
+        let Some(admin) = self.players.get_mut(&id) else {
+            return;
+        };
+        admin.last_seen = now;
+        if !admin.is_admin {
+            tracing::debug!(%id, "clear history ignored: not an admin");
+            return;
+        }
+        self.persistence.clear_history(&self.key.0);
+        tracing::info!(tenant = %self.key.0, %id, "history cleared by admin");
     }
 
     /// Zero every live player's score and clear the tenant's persisted leaderboard. Shared by the
@@ -3200,6 +3222,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingPersistence {
         chats: Mutex<Vec<(String, String, String)>>,
+        cleared_history: Mutex<Vec<String>>,
     }
 
     impl Persistence for RecordingPersistence {
@@ -3213,6 +3236,12 @@ mod tests {
         }
         fn submit_score(&self, _: &str, _: i64) {}
         fn reset_scores(&self, _: &str) {}
+        fn clear_history(&self, tenant: &str) {
+            self.cleared_history
+                .lock()
+                .unwrap()
+                .push(tenant.to_string());
+        }
         fn flush_world(&self, _: &str, _: Vec<u8>) {}
     }
 
@@ -4543,6 +4572,41 @@ mod tests {
         room.players.get_mut(&2).unwrap().score = 7;
         room.on_admin_reset_scores(Instant::now(), 2);
         assert_eq!(room.players.get(&2).unwrap().score, 7);
+    }
+
+    #[tokio::test]
+    async fn admin_clear_history_wipes_persistence_without_a_feed_line() {
+        let mut room = test_room().await;
+        let recorder = Arc::new(RecordingPersistence::default());
+        room.persistence = recorder.clone();
+        let mut admin_rx = add_player(&mut room, 1, true);
+
+        room.on_admin_clear_history(Instant::now(), 1);
+
+        assert_eq!(
+            recorder.cleared_history.lock().unwrap().clone(),
+            vec!["acme".to_string()],
+            "the history is cleared through the persistence seam for this tenant",
+        );
+        assert!(
+            !(0..50)
+                .filter_map(|_| admin_rx.try_recv_msg().ok())
+                .any(|m| matches!(m, ServerMsg::Event { .. })),
+            "clearing the history is silent — it prints no ironic 'cleared the history' feed line",
+        );
+    }
+
+    #[tokio::test]
+    async fn non_admin_clear_history_is_ignored() {
+        let mut room = test_room().await;
+        let recorder = Arc::new(RecordingPersistence::default());
+        room.persistence = recorder.clone();
+        add_player(&mut room, 2, false);
+        room.on_admin_clear_history(Instant::now(), 2);
+        assert!(
+            recorder.cleared_history.lock().unwrap().is_empty(),
+            "a non-admin cannot clear the history",
+        );
     }
 
     #[tokio::test]

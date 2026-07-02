@@ -184,6 +184,17 @@ describe('useGame', () => {
     Object.defineProperty(window, 'location', { configurable: true, value: original });
   });
 
+  it('confirming a history clear pushes a private only-you feed line (never broadcast)', async () => {
+    const { result } = await mountWithBridge();
+    act(() => { result.current.clearHistory(); }); // first click only arms it
+    expect(result.current.feed.some((entry) => entry.kind === 'clear_history')).toBe(false);
+    act(() => { result.current.clearHistory(); }); // second click confirms
+    await waitFor(() => {
+      const line = result.current.feed.find((entry) => entry.kind === 'clear_history');
+      expect(line?.self).toBe(true);
+    });
+  });
+
   it('leaveWorld disconnects before reloading (Exit button / back-to-lobby)', async () => {
     const cleanup = vi.fn();
     initGame.mockResolvedValueOnce(cleanup);

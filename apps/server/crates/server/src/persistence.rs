@@ -68,6 +68,16 @@ impl Persistence for DbPersistence {
         });
     }
 
+    fn clear_history(&self, tenant: &str) {
+        let db = self.db.clone();
+        let tenant = tenant.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = db.clear_history(&tenant).await {
+                tracing::error!(error = %e, "clear_history failed");
+            }
+        });
+    }
+
     fn flush_world(&self, tenant: &str, encoded_edits: Vec<u8>) {
         let db = self.db.clone();
         let tenant = tenant.to_string();

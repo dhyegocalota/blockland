@@ -11,7 +11,7 @@ const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false
 
 // Owns the room settings + admin authority the engine reports (setRoom/setIsAdmin feed the bridge),
 // the admin panel open state, and the admin command dispatch incl. the two-step world reset.
-export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
+export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>, onHistoryCleared?: () => void) {
   const [room, setRoom] = useState<RoomState>(DEFAULT_ROOM);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isModerator, setIsModerator] = useState(false);
@@ -20,6 +20,8 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const resetArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [resetScoresArmed, setResetScoresArmed] = useState(false);
   const resetScoresArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [clearHistoryArmed, setClearHistoryArmed] = useState(false);
+  const clearHistoryArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [bans, setBans] = useState<Banned[]>([]);
 
@@ -84,6 +86,19 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     gameApi.current?.resetScores();
   }, [gameApi, resetScoresArmed]);
 
+  const clearHistory = useCallback(() => {
+    if (!clearHistoryArmed) {
+      setClearHistoryArmed(true);
+      if (clearHistoryArmTimer.current) clearTimeout(clearHistoryArmTimer.current);
+      clearHistoryArmTimer.current = setTimeout(() => setClearHistoryArmed(false), RESET_ARM_MS);
+      return;
+    }
+    if (clearHistoryArmTimer.current) clearTimeout(clearHistoryArmTimer.current);
+    setClearHistoryArmed(false);
+    gameApi.current?.clearHistory();
+    onHistoryCleared?.();
+  }, [gameApi, clearHistoryArmed, onHistoryCleared]);
+
   return {
     room,
     setRoom,
@@ -97,6 +112,8 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
     resetWorld,
     resetScoresArmed,
     resetScores,
+    clearHistoryArmed,
+    clearHistory,
     toggleRoomPeace,
     toggleStructure,
     toggleRoomPvp,

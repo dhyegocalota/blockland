@@ -97,6 +97,9 @@ pub enum ClientMsg {
     AdminResetWorld,
     /// Admin-only: wipe every player's score + the leaderboard for this world. Ignored from non-admins.
     AdminResetScores,
+    /// Admin-only: clear the world's activity history — the chat log and the event timeline (the backlog
+    /// replayed to joiners). Ignored from non-admins.
+    AdminClearHistory,
     /// Admin-only: suspend (or resume) the world. While suspended everyone is disconnected to the lobby
     /// and no one can join, until an admin resumes it. Ignored from non-admins.
     AdminSuspend {

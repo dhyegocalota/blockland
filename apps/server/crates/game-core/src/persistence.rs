@@ -15,6 +15,9 @@ pub trait Persistence: Send + Sync {
     fn submit_score(&self, account_id: &str, score: i64);
     /// Clear the tenant's persisted leaderboard.
     fn reset_scores(&self, tenant: &str);
+    /// Clear the tenant's persisted activity history: the chat log and the event timeline (the backlog
+    /// replayed to joiners). Live in-memory state is untouched; new joiners simply replay nothing.
+    fn clear_history(&self, tenant: &str);
     /// Persist the tenant's encoded world diff.
     fn flush_world(&self, tenant: &str, encoded_edits: Vec<u8>);
 }

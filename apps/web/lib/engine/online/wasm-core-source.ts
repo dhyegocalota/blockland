@@ -14,7 +14,7 @@ import { debug, warn } from '../../log';
 import { decodeSnapshot } from './wasm-snapshot-decoder';
 import type { NetClient, NetHandlers, NetState } from '../../net';
 import {
-  adminApprove, adminBan, adminBanPending, adminKick, adminReject, adminResetScores, adminResetWorld,
+  adminApprove, adminBan, adminBanPending, adminKick, adminReject, adminResetScores, adminClearHistory, adminResetWorld,
   adminSetApproval, adminSetChat, adminSetInfinite, adminSetLimits, adminSetModes, adminSetPeace,
   adminSetPvp, adminSetRole, adminSetStructure, adminSuspend, adminUnban, attackPlayer, chat, dig, edit,
   editBatch, encodeClientMsg, hit, move, respawn, type ClientMsg, type EditCell, type EditOp, type Role,
@@ -249,6 +249,7 @@ export function createWasmCoreNet(opts: WasmCoreSourceOptions): NetClient {
     sendAttackPlayer(id): void { feed(attackPlayer(id)); },
     sendAdminResetWorld(): void { feed(adminResetWorld()); },
     sendAdminResetScores(): void { feed(adminResetScores()); },
+    sendAdminClearHistory(): void { feed(adminClearHistory()); },
     sendAdminSuspend(on): void { feed(adminSuspend(on)); },
     sendAdminSetRole(id, role: Role): void { feed(adminSetRole(id, role)); },
     sendAdminSetInfinite(on): void { feed(adminSetInfinite(on)); },

@@ -109,6 +109,7 @@ impl Persistence for NoPersistence {
     fn record_chat(&self, _: &str, _: &str, _: &str) {}
     fn submit_score(&self, _: &str, _: i64) {}
     fn reset_scores(&self, _: &str) {}
+    fn clear_history(&self, _: &str) {}
     fn flush_world(&self, _: &str, _: Vec<u8>) {}
 }
 

@@ -73,6 +73,8 @@ export const adminResetWorld = (): ClientMsg => ({ t: 'admin_reset_world' });
 
 export const adminResetScores = (): ClientMsg => ({ t: 'admin_reset_scores' });
 
+export const adminClearHistory = (): ClientMsg => ({ t: 'admin_clear_history' });
+
 export const adminSuspend = (on: boolean): ClientMsg => ({ t: 'admin_suspend', on });
 
 export const adminSetRole = (id: number, role: Role): ClientMsg => ({ t: 'admin_set_role', id, role });

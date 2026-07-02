@@ -26,6 +26,7 @@ function recordingNet() {
     sendAttackPlayer: record('sendAttackPlayer'),
     sendAdminResetWorld: record('sendAdminResetWorld'),
     sendAdminResetScores: record('sendAdminResetScores'),
+    sendAdminClearHistory: record('sendAdminClearHistory'),
     sendAdminSuspend: record('sendAdminSuspend'),
     sendAdminSetApproval: record('sendAdminSetApproval'),
     sendAdminApprove: record('sendAdminApprove'),
@@ -55,6 +56,7 @@ describe('lobbyAdminApi', () => {
     api.setRole(3, 'moderator' as Role);
     api.resetWorld();
     api.resetScores();
+    api.clearHistory();
     api.suspendRoom(true);
     api.setApprovalRequired(true);
     api.approvePlayer('acc1');
@@ -74,6 +76,7 @@ describe('lobbyAdminApi', () => {
       ['sendAdminSetRole', 3, 'moderator'],
       ['sendAdminResetWorld'],
       ['sendAdminResetScores'],
+      ['sendAdminClearHistory'],
       ['sendAdminSuspend', true],
       ['sendAdminSetApproval', true],
       ['sendAdminApprove', 'acc1'],

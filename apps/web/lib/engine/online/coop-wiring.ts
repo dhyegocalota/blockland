@@ -143,6 +143,7 @@ export function createCoopWiring(runtime: GameRuntime): void {
       banPlayer: (id) => runtime.coop?.sendAdminBan(id),
       resetWorld: () => runtime.coop?.sendAdminResetWorld(),
       resetScores: () => runtime.coop?.sendAdminResetScores(),
+      clearHistory: () => runtime.coop?.sendAdminClearHistory(),
       suspendRoom: (on) => runtime.coop?.sendAdminSuspend(on),
       setRole: (id, role) => runtime.coop?.sendAdminSetRole(id, role),
       setApprovalRequired: (on) => runtime.coop?.sendAdminSetApproval(on),
