@@ -79,8 +79,10 @@ const COPY = {
             'momentos e assume integralmente a responsabilidade pelos dados e pela atividade das ' +
             'crianças sob sua responsabilidade — essa responsabilidade é dele, não da plataforma.',
           'Para apoiar essa supervisão, o chat possui filtro automático (bloqueia links e palavrões) e ' +
-            'o adulto-administrador pode reportar um jogador pelo painel de moderação. Esses registros ' +
-            'de moderação são mantidos por no máximo 30 dias.',
+            'o adulto-administrador conta com um painel de moderação: pode exigir aprovação de quem ' +
+            'entra no mundo, expulsar (kick) ou banir jogadores, ligar ou desligar o chat, pausar o ' +
+            'mundo e definir limites de tempo de jogo, entre outros controles. Os registros de ' +
+            'atividade e moderação são mantidos por no máximo 30 dias.',
           'O adulto dá consentimento afirmativo (marcando uma caixa específica) antes de fornecer ' +
             'qualquer dado, e pode revogá-lo a qualquer momento solicitando a exclusão.',
         ],
@@ -171,8 +173,10 @@ const COPY = {
             'and takes full responsibility for the data and activity of the children under their care — ' +
             'that responsibility is theirs, not the platform’s.',
           'To support that supervision, chat has an automatic filter (it blocks links and profanity) ' +
-            'and the administering adult can report a player from the moderation panel. These ' +
-            'moderation records are kept for at most 30 days.',
+            'and the administering adult has a moderation panel: they can require approval for who ' +
+            'joins the world, kick or ban players, turn the chat on or off, pause the world and set ' +
+            'play-time limits, among other controls. Activity and moderation records are kept for at ' +
+            'most 30 days.',
           'The adult gives affirmative consent (by checking a dedicated box) before providing any ' +
             'data, and may withdraw it at any time by requesting deletion.',
         ],

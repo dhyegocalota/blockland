@@ -41,8 +41,8 @@ describe('COPY parent-inclusive and offer changes', () => {
   });
 
   it('addresses parents, not only moms', () => {
-    expect(COPY['pt-BR'].faqTitle).toBe('Perguntas dos pais');
-    expect(COPY['en-US'].faqTitle).toBe('Parents ask');
+    expect(COPY['pt-BR'].faqTitle).toBe('Perguntas frequentes dos pais');
+    expect(COPY['en-US'].faqTitle).toBe('Frequently asked by parents');
   });
 
   it('exposes a demo call to action in both locales', () => {

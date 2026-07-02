@@ -83,7 +83,7 @@ export const COPY = {
     success:
       'Pronto, sua vaga está reservada! 🎉 Você está na frente da fila. Assim que abrirmos pra sua família, te chamamos primeiro — com a condição de membro fundador garantida. Fica de olho no email e no WhatsApp.',
     errorMsg: 'Ops, não consegui salvar agora. Confira o email e tente de novo.',
-    faqTitle: 'Perguntas dos pais',
+    faqTitle: 'Perguntas frequentes dos pais',
     faq: [
       { q: 'Precisa baixar alguma coisa?', a: 'Não. Abre direto no navegador do celular, tablet ou computador. Se quiser, dá pra instalar o atalho na tela inicial em um toque.' },
       { q: 'Meu filho vai falar com estranhos?', a: 'O mundo é privado e seu. Você pode exigir aprovação pra cada novo jogador e expulsar ou banir quando quiser — e não existe chat com gente desconhecida.' },
@@ -160,7 +160,7 @@ export const COPY = {
     success:
       'Done, your spot is reserved! 🎉 You are at the front of the line. As soon as we open for your family, we call you first — with the founder deal locked in. Keep an eye on your email and WhatsApp.',
     errorMsg: 'Oops, I could not save it just now. Check the email and try again.',
-    faqTitle: 'Parents ask',
+    faqTitle: 'Frequently asked by parents',
     faq: [
       { q: 'Do I need to download anything?', a: 'No. It opens right in the browser on phone, tablet or computer. If you want, you can add the shortcut to the home screen in one tap.' },
       { q: 'Will my kid talk to strangers?', a: 'The world is private and yours. You can require approval for each new player and kick or ban anytime — and there is no chat with unknown people.' },

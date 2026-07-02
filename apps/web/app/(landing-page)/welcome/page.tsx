@@ -301,7 +301,7 @@ const S: Record<string, CSSProperties> = {
     padding: '18px 22px', fontWeight: 800, fontSize: 'clamp(15px, 3.4vw, 18px)', lineHeight: 1.45,
     border: '5px solid #fff', boxShadow: '0 8px 0 #d9a400',
   },
-  formSection: { ...block, textAlign: 'center', border: '6px solid #ff5d2e', boxShadow: '0 8px 0 #c43d18' },
+  formSection: { ...block, textAlign: 'center', border: '6px solid #5bd86a', boxShadow: '0 8px 0 #3fae3f' },
   formTitle: { fontSize: 'clamp(20px, 4.6vw, 28px)', fontWeight: 900, margin: 0 },
   formLead: { fontSize: 15, fontWeight: 700, color: '#42365a', marginTop: 12, lineHeight: 1.5 },
   form: { display: 'grid', gap: 14, marginTop: 18, textAlign: 'left' },
