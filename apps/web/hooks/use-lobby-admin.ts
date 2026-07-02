@@ -49,6 +49,9 @@ export function useLobbyAdmin({ tenant, name, look, active }: LobbyAdminParams) 
       hair: look.hair,
       claim: session.claim,
       reconnect: false,
+      // A monitor connection: the server keeps this admin out of the roster/snapshot, so opening the
+      // lobby panel never shows other players a phantom "joined the game".
+      observer: true,
       handlers: {
         onState: (next) => setState(next),
         onWelcome: (msg) => {

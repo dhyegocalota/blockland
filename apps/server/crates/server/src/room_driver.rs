@@ -253,10 +253,16 @@ async fn handle(room: &mut Room, hub: &Hub, now: Instant, cmd: RoomCmd) {
             claim,
             look,
             ip,
+            observer,
             conn,
             ping,
             reply,
-        } => on_join(room, hub, now, name, claim, look, ip, conn, ping, reply).await,
+        } => {
+            on_join(
+                room, hub, now, name, claim, look, ip, observer, conn, ping, reply,
+            )
+            .await
+        }
         RoomCmd::Input { id, msg } => room.on_input(now, id, msg),
         RoomCmd::Leave { id, conn, clean } => room.on_leave(now, id, &conn, clean),
         RoomCmd::Rename {
@@ -277,6 +283,7 @@ async fn on_join(
     claim: String,
     look: Appearance,
     ip: IpAddr,
+    observer: bool,
     conn: Conn,
     ping: Arc<AtomicU32>,
     reply: oneshot::Sender<Result<PlayerId, String>>,
@@ -303,6 +310,7 @@ async fn on_join(
             claim,
             look,
             ip,
+            observer,
             conn,
             ping,
             reply,
@@ -342,6 +350,7 @@ async fn on_join(
         claim,
         look,
         ip,
+        observer,
         conn,
         ping,
         reply,
@@ -364,6 +373,7 @@ async fn admit(
     claim: String,
     look: Appearance,
     ip: IpAddr,
+    observer: bool,
     conn: Conn,
     ping: Arc<AtomicU32>,
     reply: oneshot::Sender<Result<PlayerId, String>>,
@@ -376,7 +386,7 @@ async fn admit(
         let _ = reply.send(Ok(id));
         return;
     }
-    let admission = match resolve_admission(
+    let mut admission = match resolve_admission(
         room,
         hub,
         account_id,
@@ -395,6 +405,7 @@ async fn admit(
             return;
         }
     };
+    admission.observer = observer;
     let id = room.add_player(now, admission, conn);
     let _ = reply.send(Ok(id));
 }
@@ -561,6 +572,8 @@ async fn resolve_admission(
         claim,
         look,
         ip,
+        // The policy phase is identity-only; the caller (`admit`) sets this from the Join flag.
+        observer: false,
         ping,
         playtime_key,
         playtime_baseline_ms: playtime_baseline,
@@ -893,6 +906,7 @@ mod tests {
             String::new(),
             look,
             "127.0.0.1".parse().unwrap(),
+            false,
             conn,
             Arc::new(AtomicU32::new(0)),
             reply,
@@ -932,6 +946,7 @@ mod tests {
             "claim".into(),
             look,
             "127.0.0.1".parse().unwrap(),
+            false,
             conn,
             Arc::new(AtomicU32::new(0)),
             reply,
@@ -1149,6 +1164,7 @@ mod tests {
             String::new(),
             look,
             banned_ip,
+            false,
             conn,
             Arc::new(AtomicU32::new(0)),
             reply,
@@ -1260,6 +1276,7 @@ mod tests {
             "claim".into(),
             look,
             ip.parse().unwrap(),
+            false,
             conn,
             Arc::new(AtomicU32::new(0)),
             reply,

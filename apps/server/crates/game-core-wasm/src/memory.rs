@@ -302,6 +302,7 @@ mod tests {
                     hair: "#3a2a1a".into(),
                 },
                 ip,
+                observer: false,
                 ping: Arc::new(AtomicU32::new(0)),
                 playtime_key: playtime_key("offline:demo", ip),
                 playtime_baseline_ms: 0,

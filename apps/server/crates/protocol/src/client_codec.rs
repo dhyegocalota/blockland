@@ -164,6 +164,7 @@ pub fn encode_client_msg(msg: &ClientMsg) -> Vec<u8> {
             shirt,
             hair,
             claim,
+            observer,
         } => {
             w.u8(TAG_JOIN);
             w.string(tenant);
@@ -173,6 +174,7 @@ pub fn encode_client_msg(msg: &ClientMsg) -> Vec<u8> {
             w.string(shirt);
             w.string(hair);
             w.string(claim);
+            w.bool(*observer);
         }
         ClientMsg::Move {
             x,
@@ -418,6 +420,9 @@ pub fn decode_client_msg(bytes: &[u8]) -> Result<ClientMsg, ClientDecodeError> {
             shirt: r.string()?,
             hair: r.string()?,
             claim: r.string()?,
+            // Trailing flag: absent from a pre-observer client's frame, which decodes as a normal
+            // playing join (false) so an in-flight old client is never rejected during a rollout.
+            observer: r.bool().unwrap_or(false),
         },
         TAG_MOVE => ClientMsg::Move {
             x: r.f32()?,
@@ -505,6 +510,7 @@ mod tests {
                 shirt: "#ff5d2e".into(),
                 hair: "#3a2a1a".into(),
                 claim: "tok".into(),
+                observer: false,
             },
             ClientMsg::Move {
                 x: 1.5,
@@ -663,6 +669,7 @@ mod tests {
             shirt: "#ff5d2e".into(),
             hair: "#3a2a1a".into(),
             claim: "tok".into(),
+            observer: false,
         };
         assert_eq!(to_hex(&encode_client_msg(&join_msg)), JOIN_FIXTURE_HEX);
 
@@ -680,9 +687,10 @@ mod tests {
     const MOVE_FIXTURE_HEX: &str = "010000c03f00001040000000c152b89e3ecdcc4cbd";
     /// EDIT: tag 02, EditOp place 00, i32 le x=10, y=-3, z=7, id=04.
     const EDIT_FIXTURE_HEX: &str = "02000a000000fdffffff0700000004";
-    /// JOIN: tag 00, then 7 length-prefixed strings (tenant/world/name/skin/shirt/hair/claim).
+    /// JOIN: tag 00, then 7 length-prefixed strings (tenant/world/name/skin/shirt/hair/claim), then the
+    /// observer bool (00 = a normal playing join).
     const JOIN_FIXTURE_HEX: &str =
-        "00040061636d6504006d61696e0200426f0700236632633138620700236666356432650700233361326131610300746f6b";
+        "00040061636d6504006d61696e0200426f0700236632633138620700236666356432650700233361326131610300746f6b00";
     /// CHAT: tag 04, u16 len 8, "hi there".
     const CHAT_FIXTURE_HEX: &str = "0408006869207468657265";
     /// PONG: tag 03, u32 le nonce 42.

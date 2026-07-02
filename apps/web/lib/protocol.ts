@@ -16,6 +16,7 @@ export const join = (params: {
   shirt: string;
   hair: string;
   claim: string;
+  observer: boolean;
 }): ClientMsg => ({ t: 'join', ...params });
 
 export const move = (x: number, y: number, z: number, yaw: number, pitch: number): ClientMsg => ({

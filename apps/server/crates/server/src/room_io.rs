@@ -16,6 +16,9 @@ pub enum RoomCmd {
         claim: String,
         look: Appearance,
         ip: IpAddr,
+        /// A headless monitor connection (the lobby admin panel): admitted so it receives room state and
+        /// can send admin commands, but kept out of the roster + snapshot so it never reads as "joined".
+        observer: bool,
         conn: Conn,
         /// The connection task's already-measured latency. The room reads it straight into the snapshot;
         /// ping is owned by the socket round-trip (see `conn.rs`), never the room's tick load.

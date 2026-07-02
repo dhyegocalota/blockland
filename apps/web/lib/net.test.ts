@@ -159,7 +159,7 @@ describe('net client', () => {
     const socket = MockWebSocket.instances[0];
     await flushWasm();
     socket.open();
-    expect(socket.sent[0]).toEqual(frameOf({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok' }));
+    expect(socket.sent[0]).toEqual(frameOf({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'claim-tok', observer: false }));
 
     socket.receive(welcome);
     expect(client.state).toBe('online');

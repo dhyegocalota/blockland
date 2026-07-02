@@ -147,6 +147,10 @@ export interface NetOptions {
   shirt: string;
   hair: string;
   claim: string;
+  // A headless monitor connection (the lobby admin panel): the server admits it for room state + admin
+  // commands but keeps it out of the roster/snapshot, so it never shows as "joined" to other players.
+  // Omitted for a real playing join (defaults to false).
+  observer?: boolean;
   handlers: NetHandlers;
   socketFactory?: (url: string) => WebSocketLike;
   // Builds the stateful binary snapshot decoder (the wasm `SnapshotDecoder` over the Rust codec). Default:
@@ -238,6 +242,7 @@ const defaultSocketFactory = (url: string): WebSocketLike =>
   new WebSocket(url) as unknown as WebSocketLike;
 
 export function createNet(opts: NetOptions): NetClient {
+  const observer = opts.observer ?? false;
   const socketFactory = opts.socketFactory ?? defaultSocketFactory;
   const decoderFactory = opts.decoderFactory ?? createSnapshotDecoder;
   const encoderFactory = opts.encoderFactory ?? createClientEncoder;
@@ -569,6 +574,7 @@ export function createNet(opts: NetOptions): NetClient {
         shirt: opts.shirt,
         hair: opts.hair,
         claim: opts.claim,
+        observer,
       }));
     };
     next.onmessage = (event) => handleData(event.data);

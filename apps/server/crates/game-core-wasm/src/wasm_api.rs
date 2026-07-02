@@ -178,6 +178,8 @@ impl WasmCore {
                 hair: look.hair,
             },
             ip: self.local_ip,
+            // Offline single-player is the local player, never a headless monitor.
+            observer: false,
             ping: Arc::new(AtomicU32::new(0)),
             playtime_key: playtime_key(&self.local_account_id, self.local_ip),
             playtime_baseline_ms: 0,

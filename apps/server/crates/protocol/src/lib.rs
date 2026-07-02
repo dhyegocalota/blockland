@@ -27,6 +27,10 @@ pub enum ClientMsg {
         shirt: String,
         hair: String,
         claim: String,
+        /// A headless monitor connection (the lobby admin panel): admitted like a player so it gets
+        /// Welcome/roster/room-state and can send admin commands, but kept OUT of the roster + snapshot
+        /// so it never shows as "joined" to other players. A real playing join sends `false`.
+        observer: bool,
     },
     Move {
         x: f32,

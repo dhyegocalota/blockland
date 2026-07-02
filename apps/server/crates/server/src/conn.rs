@@ -91,6 +91,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
         shirt,
         hair,
         claim,
+        observer,
     }) = join
     else {
         tracing::debug!(reason = "expected_join", "handshake rejected");
@@ -134,6 +135,7 @@ async fn run(socket: WebSocket, hub: &Arc<Hub>, ip: IpAddr) {
             claim,
             look: Appearance { skin, shirt, hair },
             ip,
+            observer,
             conn,
             ping: ping_ms.clone(),
             reply: reply_tx,

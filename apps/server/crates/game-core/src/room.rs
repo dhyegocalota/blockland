@@ -134,6 +134,10 @@ struct Player {
     account_id: String,
     is_admin: bool,
     is_moderator: bool,
+    // A headless monitor connection (the lobby admin panel): admitted like a player so it receives
+    // Welcome/roster/room-state and can send admin commands, but excluded from the roster, the snapshot,
+    // play-time accrual and creature targeting, so it is fully invisible to everyone else.
+    observer: bool,
     claim: String,
     skin: String,
     shirt: String,
@@ -212,6 +216,8 @@ pub struct Admission {
     pub claim: String,
     pub look: Appearance,
     pub ip: IpAddr,
+    // Headless monitor (lobby admin panel): see `Player::observer`. Set by `admit` after the policy phase.
+    pub observer: bool,
     pub ping: Arc<AtomicU32>,
     pub playtime_key: String,
     pub playtime_baseline_ms: i64,
@@ -440,9 +446,10 @@ impl Room {
         self.tick(now, dt)
     }
 
-    /// Whether the room is at its player cap; the server driver refuses a join up front when full.
+    /// Whether the room is at its player cap; the server driver refuses a join up front when full. Monitor
+    /// connections (lobby admin) don't count — a full room must never block an admin from watching it.
     pub fn is_full(&self) -> bool {
-        self.players.len() >= self.max_players
+        self.players.values().filter(|p| !p.observer).count() >= self.max_players
     }
 
     /// The clearance-to-join cached per-tenant moderation flags + allowed modes the async policy phase
@@ -513,6 +520,7 @@ impl Room {
             claim,
             look,
             ip,
+            observer,
             ping,
             playtime_key,
             playtime_baseline_ms,
@@ -534,6 +542,7 @@ impl Room {
             account_id,
             is_admin: role.is_admin(),
             is_moderator: role.is_moderator(),
+            observer,
             claim,
             skin: sanitize_color(&look.skin, "#f2c18b"),
             shirt: sanitize_color(&look.shirt, "#ff5d2e"),
@@ -634,6 +643,14 @@ impl Room {
             return;
         }
         if player.disconnected_at.is_some() {
+            return;
+        }
+        // A monitor connection has no world state to preserve and is invisible to others, so it is removed
+        // at once on any drop — never frozen for reconnect (which a later real Play could resume into).
+        if player.observer {
+            self.players.remove(&id);
+            self.dying.remove(&id);
+            tracing::debug!(tenant = %self.key.0, %id, "observer left, removed immediately");
             return;
         }
         // A clean close (page reload / leaving the tab) removes the player at once, so their avatar
@@ -1842,6 +1859,7 @@ impl Room {
             players: self
                 .players
                 .values()
+                .filter(|p| !p.observer)
                 .map(|p| PlayerMeta {
                     id: p.id,
                     name: p.name.clone(),
@@ -1978,6 +1996,10 @@ impl Room {
                 let persistence = self.persistence.clone();
                 let mut time_up: Vec<PlayerId> = Vec::new();
                 for p in self.players.values_mut() {
+                    // A monitor connection isn't playing — it never accrues time or gets sent to the lobby.
+                    if p.observer {
+                        continue;
+                    }
                     let session = now_ms - p.joined_at_ms as i64;
                     let delta = session - p.playtime_persisted_ms;
                     if delta > 0 {
@@ -2033,6 +2055,7 @@ impl Room {
         let states: Vec<PlayerState> = self
             .players
             .values()
+            .filter(|p| !p.observer)
             .map(|p| {
                 PlayerState(
                     p.id,
@@ -2290,7 +2313,7 @@ impl Room {
         let player_xz: Vec<[f32; 2]> = self
             .players
             .values()
-            .filter(|p| p.disconnected_at.is_none())
+            .filter(|p| p.disconnected_at.is_none() && !p.observer)
             .map(|p| [p.x, p.z])
             .collect();
         if player_xz.is_empty() {
@@ -2681,6 +2704,7 @@ impl Room {
         let players = self
             .players
             .values()
+            .filter(|p| !p.observer)
             .map(|p| PlayerInfo {
                 id: p.id,
                 name: p.name.clone(),
@@ -2722,6 +2746,7 @@ impl Room {
             account_id: format!("acc{id}"),
             is_admin,
             is_moderator: false,
+            observer: false,
             claim: format!("tok{id}"),
             skin: "#000000".into(),
             shirt: "#000000".into(),
@@ -3358,6 +3383,7 @@ mod tests {
             account_id: format!("acc{id}"),
             is_admin,
             is_moderator: false,
+            observer: false,
             claim: format!("tok{id}"),
             skin: "#000000".into(),
             shirt: "#000000".into(),
@@ -4388,6 +4414,47 @@ mod tests {
         // The role rides along so the lobby/admin UI can badge admins without a separate query.
         assert!(!alice.admin);
         assert!(players.iter().find(|p| p.id == 2).unwrap().admin);
+    }
+
+    /// The lobby admin panel opens a headless monitor connection (`observer`). It must be invisible to
+    /// everyone else — off the roster AND out of the per-tick snapshot — so opening it never makes other
+    /// players see a phantom "joined the game" (each client prints that the first time a new id appears).
+    #[tokio::test]
+    async fn a_monitor_observer_is_invisible_in_the_roster_and_the_snapshot() {
+        let mut room = test_room().await;
+        let mut rx_player = add_player(&mut room, 1, false); // a real player
+        add_player(&mut room, 2, true); // an admin ...
+        room.players.get_mut(&2).unwrap().observer = true; // ... watching from the lobby panel
+
+        let ServerMsg::Roster { players } = room.roster_msg() else {
+            panic!("expected a roster message");
+        };
+        assert_eq!(
+            players.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![1],
+            "only the real player rides the roster; the monitor is invisible",
+        );
+
+        room.tick_at(Instant::now(), 0.05);
+        let snapshot_ids = loop {
+            match rx_player.try_recv() {
+                Ok(Outbound::Binary(bytes)) => {
+                    let protocol::snapshot_codec::Frame::Keyframe(full) =
+                        protocol::snapshot_codec::decode_frame(&bytes).unwrap()
+                    else {
+                        panic!("a fresh connection's first snapshot is a keyframe");
+                    };
+                    break full.players.iter().map(|p| p.0).collect::<Vec<_>>();
+                }
+                Ok(_) => continue,
+                Err(_) => panic!("the real player must receive a snapshot"),
+            }
+        };
+        assert_eq!(
+            snapshot_ids,
+            vec![1],
+            "the snapshot omits the monitor, so no client ever sees it join"
+        );
     }
 
     #[tokio::test]
@@ -5696,6 +5763,7 @@ mod tests {
                 hair: "#fff".into(),
             },
             ip: "127.0.0.1".parse().unwrap(),
+            observer: false,
             ping: Arc::new(AtomicU32::new(0)),
             playtime_key: "acc-x".into(),
             playtime_baseline_ms: 0,

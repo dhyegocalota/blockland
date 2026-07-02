@@ -8,7 +8,7 @@ import { createTestClientEncoder } from './engine/online/wasm-test-loader';
 const MOVE_FIXTURE_HEX = '010000c03f00001040000000c152b89e3ecdcc4cbd';
 const EDIT_FIXTURE_HEX = '02000a000000fdffffff0700000004';
 const JOIN_FIXTURE_HEX =
-  '00040061636d6504006d61696e0200426f0700236632633138620700236666356432650700233361326131610300746f6b';
+  '00040061636d6504006d61696e0200426f0700236632633138620700236666356432650700233361326131610300746f6b00';
 const CHAT_FIXTURE_HEX = '0408006869207468657265';
 const PONG_FIXTURE_HEX = '032a000000';
 
@@ -23,7 +23,7 @@ function encodeHex(encode: EncodeClientMsg, msg: ClientMsg): string {
 describe('protocol factories', () => {
   it('builds a join message', () => {
     const look = { skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a' };
-    expect(join({ tenant: 'acme', world: 'main', name: 'Bot', claim: 'tok', ...look })).toEqual({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', claim: 'tok', ...look });
+    expect(join({ tenant: 'acme', world: 'main', name: 'Bot', claim: 'tok', observer: false, ...look })).toEqual({ t: 'join', tenant: 'acme', world: 'main', name: 'Bot', claim: 'tok', observer: false, ...look });
   });
 
   it('builds a move message', () => {
@@ -104,7 +104,7 @@ describe('binary client codec (shared Rust codec via wasm)', () => {
 
   it('encodes a Join (length-prefixed strings) to the exact Rust fixture bytes', async () => {
     const encode = await createTestClientEncoder();
-    const msg = join({ tenant: 'acme', world: 'main', name: 'Bo', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'tok' });
+    const msg = join({ tenant: 'acme', world: 'main', name: 'Bo', skin: '#f2c18b', shirt: '#ff5d2e', hair: '#3a2a1a', claim: 'tok', observer: false });
     expect(encodeHex(encode, msg)).toBe(JOIN_FIXTURE_HEX);
   });
 
@@ -117,7 +117,7 @@ describe('binary client codec (shared Rust codec via wasm)', () => {
   it('encodes every variant to a non-empty frame whose tag byte is distinct', async () => {
     const encode = await createTestClientEncoder();
     const everyVariant: ClientMsg[] = [
-      join({ tenant: 'acme', world: 'main', name: 'Bo', skin: 's', shirt: 'h', hair: 'r', claim: 'c' }),
+      join({ tenant: 'acme', world: 'main', name: 'Bo', skin: 's', shirt: 'h', hair: 'r', claim: 'c', observer: false }),
       move(1, 2, 3, 0.5, -0.2),
       edit('place', 10, -3, 7, 4),
       pong(42),
