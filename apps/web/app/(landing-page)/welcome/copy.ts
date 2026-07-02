@@ -93,8 +93,8 @@ export const COPY = {
     founderTitle: 'Quem está por trás disso',
     founderStory: [
       'Oi, eu sou o Dhyego. Sou desenvolvedor — e, antes de tudo, marido e pai.',
-      'Esse joguinho nasceu de uma vontade simples: deixar meu filho construir, explorar e brincar online com os amigos sem que eu ficasse com o coração na mão. Procurei um lugar assim e não encontrei. Então resolvi construir um — do jeito que eu, como pai, gostaria de achar.',
-      'Cada detalhe aqui passou por uma pergunta: "eu deixaria meu filho nesse mundo?". Quando a resposta era não, não entrava.',
+      'Esse joguinho nasceu de uma vontade simples: dar às crianças um lugar pra construir, explorar e brincar online com os amigos — e dar aos pais a tranquilidade de saber exatamente quem está do outro lado. Procurei um lugar assim e não encontrei. Então resolvi construir um, do jeito que todo pai ou mãe preocupado gostaria de achar.',
+      'Cada detalhe aqui passou por uma pergunta: "eu deixaria uma criança nesse mundo?". Quando a resposta era não, não entrava.',
     ],
     founderSign: '— Dhyego Calota, pai e criador do Blockland',
     terms: 'Termos de Uso',
@@ -170,8 +170,8 @@ export const COPY = {
     founderTitle: 'Who is behind this',
     founderStory: [
       'Hi, I am Dhyego. I am a developer — and, above all, a husband and a dad.',
-      'This little game came from a simple wish: to let my son build, explore and play online with his friends without me holding my breath the whole time. I looked for a place like that and could not find one. So I built it — the way I, as a dad, would want to find it.',
-      'Every detail here went through one question: "would I let my own kid into this world?" When the answer was no, it did not make it in.',
+      'This little game came from a simple wish: to give kids a place to build, explore and play online with their friends — and to give parents the peace of mind of knowing exactly who is on the other side. I looked for a place like that and could not find one. So I built it, the way any worried parent would want to find it.',
+      'Every detail here went through one question: "would I let a child into this world?" When the answer was no, it did not make it in.',
     ],
     founderSign: '— Dhyego Calota, dad and creator of Blockland',
     terms: 'Terms of Use',
