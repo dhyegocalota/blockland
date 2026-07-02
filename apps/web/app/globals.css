@@ -830,15 +830,6 @@ body.is-touch #modeBadge { font-size: 11px; padding: 2px 6px; top: 4px; left: 4p
 }
 .feedIcon { font-style: normal; opacity: .85; }
 .feedLine.system { color: var(--gold); font-style: normal; }
-.feedLine.self {
-  color: var(--gold); font-style: normal;
-  border-left: 3px dashed var(--gold); padding-left: 7px;
-  background: rgba(255,210,63,.12); border-radius: 4px;
-}
-.feedSelf {
-  font-style: normal; font-size: 9px; font-weight: 800; opacity: .7; color: var(--gold);
-  background: rgba(255,210,63,.16); border-radius: 999px; padding: 1px 6px;
-}
 #feed .adminPlayerActions { display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
 
 /* ---------- Start-screen leaderboard (compact, collapsible) ---------- */

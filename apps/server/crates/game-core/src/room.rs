@@ -1395,9 +1395,9 @@ impl Room {
     }
 
     /// Clear the world's activity history — the persisted chat log and event timeline (the backlog
-    /// replayed to joiners). Admin-only. Deliberately NOT announced in the feed: it would be absurd to
-    /// print "cleared the history" the instant the history is cleared. Live in-memory state (positions,
-    /// scores) is untouched; the next join simply replays nothing.
+    /// replayed to joiners) — AND wipe every live client's on-screen feed. Admin-only. The broadcast
+    /// `clear_history` event is a "clear your feed" signal, not a feed line, so nothing is printed; it
+    /// just empties the timeline for everyone. Live in-memory state (positions, scores) is untouched.
     fn on_admin_clear_history(&mut self, now: Instant, id: PlayerId) {
         let Some(admin) = self.players.get_mut(&id) else {
             return;
@@ -1407,7 +1407,13 @@ impl Room {
             tracing::debug!(%id, "clear history ignored: not an admin");
             return;
         }
+        let admin_name = admin.name.clone();
         self.persistence.clear_history(&self.key.0);
+        self.broadcast(&ServerMsg::Event {
+            kind: "clear_history".into(),
+            name: admin_name,
+            detail: String::new(),
+        });
         tracing::info!(tenant = %self.key.0, %id, "history cleared by admin");
     }
 
@@ -4602,11 +4608,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_clear_history_wipes_persistence_without_a_feed_line() {
+    async fn admin_clear_history_wipes_persistence_and_broadcasts_a_clear_to_everyone() {
         let mut room = test_room().await;
         let recorder = Arc::new(RecordingPersistence::default());
         room.persistence = recorder.clone();
-        let mut admin_rx = add_player(&mut room, 1, true);
+        let _admin_rx = add_player(&mut room, 1, true);
+        let mut player_rx = add_player(&mut room, 2, false);
 
         room.on_admin_clear_history(Instant::now(), 1);
 
@@ -4616,10 +4623,10 @@ mod tests {
             "the history is cleared through the persistence seam for this tenant",
         );
         assert!(
-            !(0..50)
-                .filter_map(|_| admin_rx.try_recv_msg().ok())
-                .any(|m| matches!(m, ServerMsg::Event { .. })),
-            "clearing the history is silent — it prints no ironic 'cleared the history' feed line",
+            (0..50)
+                .filter_map(|_| player_rx.try_recv_msg().ok())
+                .any(|m| matches!(m, ServerMsg::Event { kind, .. } if kind == "clear_history")),
+            "every client (not just the admin) gets the clear-feed signal",
         );
     }
 

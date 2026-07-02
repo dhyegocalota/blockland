@@ -129,19 +129,13 @@ export function useGame() {
   const seenApprovalsRef = useRef<Set<string>>(new Set());
 
   const { entries: feed, pushFeedEntry, clearFeed } = useFeed();
-  // Clearing the history wipes the admin's OWN visible feed (not just the persisted backlog), then leaves
-  // a single private, only-you confirmation line — never broadcast, so other players' feeds are untouched.
-  const notifyHistoryCleared = useCallback(() => {
-    clearFeed();
-    pushFeedEntry({ kind: 'clear_history', name: '', self: true });
-  }, [clearFeed, pushFeedEntry]);
   const {
     room, setRoom, isAdmin, setIsAdmin, isModerator, setIsModerator, adminOpen, setAdminOpen,
     resetArmed, resetWorld, resetScoresArmed, resetScores, clearHistoryArmed, clearHistory, toggleRoomPeace, toggleStructure, toggleRoomPvp, toggleRoomChat,
     kickPlayer, banPlayer, setRole, suspendRoom,
     pendingApprovals, setPendingApprovals, toggleApprovalRequired, approvePlayer, rejectPlayer, banPending,
     bans, setBans, unban, setLimits, toggleOnlineAllowed, toggleOfflineAllowed,
-  } = useRoomAdmin(gameApiRef, notifyHistoryCleared);
+  } = useRoomAdmin(gameApiRef);
   const updateRequired = useUpdateCheck();
   // The lobby-admin connection stays live for an admin/moderator until the game starts (the panel must
   // keep working after they disable a mode), and never when the server is unreachable (it couldn't
@@ -296,6 +290,7 @@ export function useGame() {
         if (event.kind === 'reset_scores') gameApiRef.current?.chime();
         pushFeedEntry(event);
       },
+      onClearFeed: () => clearFeed(),
       // Score is authoritative from the snapshot; the engine paints the topbar star/record DOM.
       onScore: () => undefined,
       onRole: (role) => { setIsAdmin(role.admin); setIsModerator(role.moderator); },
@@ -319,7 +314,7 @@ export function useGame() {
       },
     },
     bind: (api) => { gameApiRef.current = api; },
-  }), [pushChatLine, pushFeedEntry, setIsAdmin, setIsModerator, setRoom, setPendingApprovals, setBans]);
+  }), [pushChatLine, pushFeedEntry, clearFeed, setIsAdmin, setIsModerator, setRoom, setPendingApprovals, setBans]);
 
   // Pressing Play dynamically imports the code-split engine (stage 'engine'), builds it — which inits
   // the wasm core + generates the world (stage 'world') — then re-clicks Play so the engine's own start
@@ -390,13 +385,6 @@ export function useGame() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [chatOpen, openChat, started, isAdmin, isModerator, adminOpen, setAdminOpen, leaveWorld]);
 
-  // Opening the admin/moderator panel frees the cursor so its buttons are clickable; the engine exits
-  // pointer lock and suppresses the settings-on-lock-lost pause while the overlay is up. Closing it
-  // re-locks the canvas back to playing. Only meaningful once the engine is running.
-  useEffect(() => {
-    if (!started) return;
-    gameApiRef.current?.setCursorOverlay(adminOpen);
-  }, [adminOpen, started]);
 
   useEffect(() => {
     if (!debugOpen) return;
@@ -674,6 +662,15 @@ export function useGame() {
   const readiness = { offline: solo || offline, started, netState, welcomed, firstSnapshot };
   const interactive = isInteractive(readiness);
   const connectKey = connectStatusKey(readiness);
+
+  // Free the cursor whenever a panel or a blocking modal sits over the live game — the admin panel, or
+  // any connecting / reconnecting / waiting-for-approval / time-up overlay (all of which make the game
+  // non-interactive). The engine exits pointer lock so the modal is usable and suppresses the settings-
+  // on-lock-lost pause; once nothing blocks it (interactive again, panel closed), it re-locks the canvas.
+  useEffect(() => {
+    if (!started) return;
+    gameApiRef.current?.setCursorOverlay(adminOpen || !interactive);
+  }, [adminOpen, interactive, started]);
 
   return {
     brand, failed, offline, connectivity, offlineDismissed, setOfflineDismissed,

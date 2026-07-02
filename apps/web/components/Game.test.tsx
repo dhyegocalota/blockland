@@ -469,15 +469,6 @@ describe('Game', () => {
     expect(document.getElementById('adminClearHistory')).toBeNull();
   });
 
-  it('renders a history-clear feed line as a private only-you notice', () => {
-    useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, feed: [{ id: 1, at: 0, kind: 'clear_history', name: '', self: true }] }));
-    render(<Game />);
-    const line = document.querySelector('.feedLine.self');
-    expect(line).toBeInTheDocument();
-    expect(line).toHaveTextContent('Histórico limpo');
-    expect(line).toHaveTextContent('só você');
-  });
-
   it('leaves the world (disconnect + reload) from the Exit button', () => {
     const leaveWorld = vi.fn();
     useGame.mockReturnValue(gameState({ netState: 'online', connectKey: null, leaveWorld }));

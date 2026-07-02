@@ -11,7 +11,7 @@ const DEFAULT_ROOM: RoomState = { peace: true, blockedStructures: [], pvp: false
 
 // Owns the room settings + admin authority the engine reports (setRoom/setIsAdmin feed the bridge),
 // the admin panel open state, and the admin command dispatch incl. the two-step world reset.
-export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>, onHistoryCleared?: () => void) {
+export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>) {
   const [room, setRoom] = useState<RoomState>(DEFAULT_ROOM);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isModerator, setIsModerator] = useState(false);
@@ -96,8 +96,7 @@ export function useRoomAdmin(gameApi: MutableRefObject<RoomAdminApi | null>, onH
     if (clearHistoryArmTimer.current) clearTimeout(clearHistoryArmTimer.current);
     setClearHistoryArmed(false);
     gameApi.current?.clearHistory();
-    onHistoryCleared?.();
-  }, [gameApi, clearHistoryArmed, onHistoryCleared]);
+  }, [gameApi, clearHistoryArmed]);
 
   return {
     room,

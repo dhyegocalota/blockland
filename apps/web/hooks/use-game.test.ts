@@ -184,20 +184,14 @@ describe('useGame', () => {
     Object.defineProperty(window, 'location', { configurable: true, value: original });
   });
 
-  it('confirming a history clear wipes the local feed down to a private only-you notice', async () => {
+  it('a history-clear broadcast wipes the whole client feed (clears for everyone)', async () => {
     const { result, bridge } = await mountWithBridge();
     act(() => { bridge.hud.onEvent({ kind: 'kill', name: 'Bob', detail: 'Pig' }); });
+    act(() => { bridge.hud.onEvent({ kind: 'join', name: 'Zoe' }); });
     await waitFor(() => expect(result.current.feed.length).toBeGreaterThan(0));
 
-    act(() => { result.current.clearHistory(); }); // first click only arms it
-    expect(result.current.feed.some((entry) => entry.kind === 'clear_history')).toBe(false);
-
-    act(() => { result.current.clearHistory(); }); // second click confirms
-    await waitFor(() => {
-      expect(result.current.feed).toHaveLength(1);
-      expect(result.current.feed[0].kind).toBe('clear_history');
-      expect(result.current.feed[0].self).toBe(true);
-    });
+    act(() => { bridge.hud.onClearFeed(); });
+    expect(result.current.feed).toHaveLength(0);
   });
 
   it('leaveWorld disconnects before reloading (Exit button / back-to-lobby)', async () => {
@@ -233,9 +227,24 @@ describe('useGame', () => {
     const { result, bridge } = await mountWithBridge();
     const setCursorOverlay = vi.fn();
     act(() => { bridge.bind({ setCursorOverlay } as unknown as Parameters<CoopBridge['bind']>[0]); });
+    // Make the game interactive (Welcome + first snapshot) so a closed panel actually re-locks.
+    act(() => { bridge.hud.onState('online'); bridge.hud.onCount(1); });
+    await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(false));
     act(() => { result.current.setAdminOpen(true); });
     await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(true));
     act(() => { result.current.setAdminOpen(false); });
+    await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(false));
+  });
+
+  it('frees the cursor while a blocking overlay is up (reconnecting) and re-locks when it clears', async () => {
+    const { bridge } = await mountWithBridge();
+    const setCursorOverlay = vi.fn();
+    act(() => { bridge.bind({ setCursorOverlay } as unknown as Parameters<CoopBridge['bind']>[0]); });
+    act(() => { bridge.hud.onState('online'); bridge.hud.onCount(1); });
+    await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(false));
+    act(() => { bridge.hud.onState('reconnecting'); });
+    await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(true));
+    act(() => { bridge.hud.onState('online'); });
     await waitFor(() => expect(setCursorOverlay).toHaveBeenLastCalledWith(false));
   });
 

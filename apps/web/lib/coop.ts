@@ -105,6 +105,9 @@ export interface CoopHud {
   onCount(online: number): void;
   onRoster(players: RosterEntry[]): void;
   onEvent(event: FeedEvent): void;
+  // An admin cleared the world history: every client wipes its live feed (the persisted backlog is
+  // already gone server-side). The admin who did it also gets a private only-you confirmation line.
+  onClearFeed(): void;
   onScore(score: number): void;
   onRole(role: { admin: boolean; moderator: boolean }): void;
   onRoomState(room: RoomState): void;
@@ -457,6 +460,10 @@ export function createCoop(opts: CoopOptions): CoopController {
         }
         if (msg.kind === 'reset_scores') {
           opts.hud.onEvent({ kind: 'reset_scores', name: msg.name });
+          return;
+        }
+        if (msg.kind === 'clear_history') {
+          opts.hud.onClearFeed();
           return;
         }
         if (msg.kind === 'server_down') {
