@@ -9,6 +9,7 @@ import { currentLocale } from '../../../lib/i18n';
 import { PLATFORM_NAME } from '../../../lib/builtins';
 import Turnstile from '../../../components/Turnstile';
 import { COPY, isEmailValid } from './copy';
+import { COOKIE_SETTINGS_EVENT } from '../../../lib/cookie-consent';
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 const DEMO_URL = 'https://demo.blockland.dhyegocalota.com.br';
@@ -190,6 +191,8 @@ export default function Welcome() {
             <a style={S.legalLink} href="/terms">{copy.terms}</a>
             <span style={S.legalDot}>·</span>
             <a style={S.legalLink} href="/privacy">{copy.privacy}</a>
+            <span style={S.legalDot}>·</span>
+            <button style={S.legalButton} type="button" onClick={() => window.dispatchEvent(new Event(COOKIE_SETTINGS_EVENT))}>{copy.cookies}</button>
           </div>
           <a style={S.credit} href="https://dhyegocalota.com.br" target="_blank" rel="noopener noreferrer">
             {copy.credit}
@@ -339,6 +342,7 @@ const S: Record<string, CSSProperties> = {
   footer: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 6 },
   legalLinks: { display: 'flex', gap: 8, alignItems: 'center' },
   legalLink: { color: '#15315c', fontWeight: 900, textDecoration: 'none', fontSize: 14 },
+  legalButton: { color: '#15315c', fontWeight: 900, fontSize: 14, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' },
   legalDot: { color: '#15315c88' },
   credit: { color: '#15315ccc', fontWeight: 800, fontSize: 13, textDecoration: 'none' },
   company: { color: '#15315caa', fontWeight: 700, fontSize: 12, textAlign: 'center', margin: 0, lineHeight: 1.4 },

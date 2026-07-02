@@ -16,6 +16,7 @@ import { loaderVisible } from '../lib/engine/loader-state';
 import { useGame } from '../hooks/use-game';
 import { PVP_KILL_BADGE, pvpRanked, roleBadge } from '../lib/roster-roles';
 import { rootHomeUrl } from '../lib/seo';
+import { COOKIE_SETTINGS_EVENT } from '../lib/cookie-consent';
 import { openLobbyModal } from '../lib/lobby-modal';
 import { SENSITIVITY_MAX, SENSITIVITY_MIN, VOLUME_MAX, VOLUME_MIN } from '../lib/settings';
 
@@ -768,6 +769,7 @@ export default function Game() {
 
         <footer id="startFooter">
           <a className="wantGame" href={rootHomeUrl(window.location.hostname)}>{t('lobby.want_game')}</a>
+          <button className="cookieLink" onClick={() => window.dispatchEvent(new Event(COOKIE_SETTINGS_EVENT))}>{t('cookie.manage')}</button>
           <a className="credit" href={AUTHOR_URL} target="_blank" rel="noopener noreferrer">{t('lobby.credit')}</a>
         </footer>
       </div>

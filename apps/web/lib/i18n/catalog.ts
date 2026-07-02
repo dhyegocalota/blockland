@@ -156,6 +156,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'cookie.privacy_link': 'Política de Privacidade',
     'cookie.accept': 'Aceitar todos',
     'cookie.essential': 'Só os essenciais',
+    'cookie.manage': '🍪 Cookies',
 
     // Lobby presence + footer
     'lobby.online': '👥 {count} online agora',
@@ -642,6 +643,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'cookie.privacy_link': 'Privacy Policy',
     'cookie.accept': 'Accept all',
     'cookie.essential': 'Essential only',
+    'cookie.manage': '🍪 Cookies',
 
     // Lobby presence + footer
     'lobby.online': '👥 {count} online now',

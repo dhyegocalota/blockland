@@ -7,20 +7,25 @@
 import { type CSSProperties, useEffect, useState } from 'react';
 import { Analytics } from '@vercel/analytics/next';
 import { t } from '../lib/i18n';
-import { CookieConsentChoice, loadCookieConsent, saveCookieConsent } from '../lib/cookie-consent';
+import { COOKIE_SETTINGS_EVENT, CookieConsentChoice, loadCookieConsent, saveCookieConsent } from '../lib/cookie-consent';
 
 export default function CookieConsent() {
   const [choice, setChoice] = useState<CookieConsentChoice | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [reopened, setReopened] = useState(false);
 
   useEffect(() => {
     setChoice(loadCookieConsent());
     setMounted(true);
+    const reopen = (): void => setReopened(true);
+    window.addEventListener(COOKIE_SETTINGS_EVENT, reopen);
+    return () => window.removeEventListener(COOKIE_SETTINGS_EVENT, reopen);
   }, []);
 
   function decide(next: CookieConsentChoice): void {
     saveCookieConsent(next);
     setChoice(next);
+    setReopened(false);
   }
 
   const [beforeLink, afterLink] = t('cookie.message').split('{privacy}');
@@ -28,7 +33,7 @@ export default function CookieConsent() {
   return (
     <>
       {choice === CookieConsentChoice.Accepted && <Analytics />}
-      {mounted && choice === null && (
+      {mounted && (choice === null || reopened) && (
         <div style={STYLES.bar} role="region" aria-label="Cookie consent">
           <p style={STYLES.text}>
             {beforeLink}

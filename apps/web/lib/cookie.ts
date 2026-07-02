@@ -10,7 +10,8 @@ export function readCookie(name: string): string | null {
   return decodeURIComponent(match[1]);
 }
 
-export function writeCookie(name: string, value: string): void {
+export function writeCookie(name: string, value: string, options: { domain?: string } = {}): void {
   if (typeof document === 'undefined') return;
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${ONE_YEAR_SECONDS}; samesite=lax`;
+  const domain = options.domain ? `; domain=${options.domain}` : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${ONE_YEAR_SECONDS}; samesite=lax${domain}`;
 }
