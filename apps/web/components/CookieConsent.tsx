@@ -7,19 +7,25 @@
 import { type CSSProperties, useEffect, useState } from 'react';
 import { Analytics } from '@vercel/analytics/next';
 import { t } from '../lib/i18n';
-import { COOKIE_SETTINGS_EVENT, CookieConsentChoice, loadCookieConsent, saveCookieConsent } from '../lib/cookie-consent';
+import { COOKIE_SETTINGS_EVENT, CookieConsentChoice, GAME_ACTIVE_EVENT, loadCookieConsent, saveCookieConsent } from '../lib/cookie-consent';
 
 export default function CookieConsent() {
   const [choice, setChoice] = useState<CookieConsentChoice | null>(null);
   const [mounted, setMounted] = useState(false);
   const [reopened, setReopened] = useState(false);
+  const [gameActive, setGameActive] = useState(false);
 
   useEffect(() => {
     setChoice(loadCookieConsent());
     setMounted(true);
     const reopen = (): void => setReopened(true);
+    const onGameActive = (event: Event): void => setGameActive((event as CustomEvent<boolean>).detail === true);
     window.addEventListener(COOKIE_SETTINGS_EVENT, reopen);
-    return () => window.removeEventListener(COOKIE_SETTINGS_EVENT, reopen);
+    window.addEventListener(GAME_ACTIVE_EVENT, onGameActive);
+    return () => {
+      window.removeEventListener(COOKIE_SETTINGS_EVENT, reopen);
+      window.removeEventListener(GAME_ACTIVE_EVENT, onGameActive);
+    };
   }, []);
 
   function decide(next: CookieConsentChoice): void {
@@ -33,7 +39,7 @@ export default function CookieConsent() {
   return (
     <>
       {choice === CookieConsentChoice.Accepted && <Analytics />}
-      {mounted && (choice === null || reopened) && (
+      {mounted && (choice === null || reopened) && !gameActive && (
         <div style={STYLES.bar} role="region" aria-label="Cookie consent">
           <p style={STYLES.text}>
             {beforeLink}

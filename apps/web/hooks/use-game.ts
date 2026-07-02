@@ -10,6 +10,7 @@ import { t } from '../lib/i18n';
 import { debug, warn } from '../lib/log';
 import { clearSession, loadSession, resolveClaim, saveSession } from '../lib/session';
 import { loadConsent, saveConsent } from '../lib/consent';
+import { GAME_ACTIVE_EVENT } from '../lib/cookie-consent';
 import { type Settings, loadSettings, updateSettings } from '../lib/settings';
 import { type CoopBridge, type DebugSnapshot, type GameApi } from '../lib/game-engine';
 import { IDLE_STATE, LoaderPhase, LoaderStage, loaderReducer } from '../lib/engine/loader-state';
@@ -345,6 +346,12 @@ export function useGame() {
 
   // Tear the running engine down on unmount (the engine itself owns its in-session cleanup).
   useEffect(() => () => { engineCleanupRef.current?.(); }, []);
+
+  // Tell the site-wide cookie banner when play starts so an undecided banner hides during the game
+  // instead of covering the HUD (leaving the world reloads back to the lobby, where it shows again).
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(GAME_ACTIVE_EVENT, { detail: started }));
+  }, [started]);
 
   // Leaving the world (Exit button, Q, "back to lobby"): close the coop socket cleanly BEFORE reloading
   // so the server drops the avatar immediately, instead of relying on the reload racing the pagehide

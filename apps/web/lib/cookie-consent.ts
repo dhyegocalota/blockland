@@ -10,6 +10,10 @@ export const COOKIE_CONSENT_KEY = 'bl-cookie-consent';
 // at any time (LGPD: revoking must be as easy as giving). CookieConsent listens; the links dispatch it.
 export const COOKIE_SETTINGS_EVENT = 'bl-cookie-settings';
 
+// Fired (detail: boolean) when the player enters/leaves the live world, so the still-undecided banner
+// hides during play instead of covering the game HUD. CookieConsent listens; use-game dispatches it.
+export const GAME_ACTIVE_EVENT = 'bl-game-active';
+
 export enum CookieConsentChoice {
   Accepted = 'accepted',
   Essential = 'essential',

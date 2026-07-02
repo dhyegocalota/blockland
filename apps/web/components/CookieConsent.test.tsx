@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@vercel/analytics/next', () => ({ Analytics: () => <div data-testid="analytics" /> }));
 
 import CookieConsent from './CookieConsent';
-import { COOKIE_CONSENT_KEY, COOKIE_SETTINGS_EVENT } from '../lib/cookie-consent';
+import { COOKIE_CONSENT_KEY, COOKIE_SETTINGS_EVENT, GAME_ACTIVE_EVENT } from '../lib/cookie-consent';
 
 afterEach(() => { cleanup(); document.cookie = `${COOKIE_CONSENT_KEY}=; path=/; max-age=0`; });
 
@@ -42,6 +42,15 @@ describe('CookieConsent', () => {
     render(<CookieConsent />);
     expect(banner()).toBeNull();
     expect(screen.getByTestId('analytics')).toBeInTheDocument();
+  });
+
+  it('hides the undecided banner during play and shows it again back in the lobby', () => {
+    render(<CookieConsent />);
+    expect(banner()).toBeInTheDocument();
+    act(() => { window.dispatchEvent(new CustomEvent(GAME_ACTIVE_EVENT, { detail: true })); });
+    expect(banner()).toBeNull();
+    act(() => { window.dispatchEvent(new CustomEvent(GAME_ACTIVE_EVENT, { detail: false })); });
+    expect(banner()).toBeInTheDocument();
   });
 
   it('reopens on the manage-cookies event so consent can be changed or withdrawn', () => {
