@@ -8,16 +8,16 @@ import { useState, type CSSProperties, type FormEvent } from 'react';
 import { currentLocale } from '../../../lib/i18n';
 import { PLATFORM_NAME } from '../../../lib/builtins';
 import Turnstile from '../../../components/Turnstile';
-import { COPY, isEmailValid } from './copy';
+import { COPY, demoUrl, isEmailValid } from './copy';
 import { COOKIE_SETTINGS_EVENT } from '../../../lib/cookie-consent';
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-const DEMO_URL = 'https://demo.blockland.dhyegocalota.com.br';
 
 type Status = 'idle' | 'submitting' | 'done' | 'error';
 
 export default function Welcome() {
-  const copy = COPY[currentLocale()];
+  const locale = currentLocale();
+  const copy = COPY[locale];
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -62,7 +62,7 @@ export default function Welcome() {
           <p style={S.subhead}>{copy.subhead}</p>
           <div style={S.heroCtas}>
             <a style={S.heroCta} href="#waitlist">{copy.heroCta} →</a>
-            <a style={S.demoCta} href={DEMO_URL} target="_blank" rel="noopener noreferrer">{copy.demoCta}</a>
+            <a style={S.demoCta} href={demoUrl(locale)} target="_blank" rel="noopener noreferrer">{copy.demoCta}</a>
           </div>
           <p style={S.demoNote}>{copy.demoNote}</p>
         </section>

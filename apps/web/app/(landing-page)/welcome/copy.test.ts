@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { COPY, isEmailValid } from './copy';
+import { COPY, DEMO_URL, demoUrl, isEmailValid } from './copy';
+
+describe('demoUrl', () => {
+  it('carries the current locale in the demo URL so it opens in the same language', () => {
+    expect(demoUrl('pt-BR')).toBe(`${DEMO_URL}/pt-br`);
+    expect(demoUrl('en-US')).toBe(`${DEMO_URL}/en-us`);
+  });
+});
 
 describe('isEmailValid', () => {
   it('rejects empty and malformed addresses that should keep the submit button disabled', () => {

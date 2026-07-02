@@ -1,6 +1,15 @@
 // Localized copy and the pure form-gating helper for the waitlist landing page. Kept out of
 // page.tsx because Next.js only allows the default component and reserved fields to be exported
 // from a page module.
+import { localePrefix, type Locale } from '../../../lib/i18n/locale';
+
+// The demo runs on its own subdomain; carry the current locale in the URL so it opens in the same
+// language the parent is reading (the locale cookie is host-only and won't cross the subdomain).
+export const DEMO_URL = 'https://demo.blockland.dhyegocalota.com.br';
+
+export function demoUrl(locale: Locale): string {
+  return `${DEMO_URL}/${localePrefix(locale)}`;
+}
 
 interface Benefit {
   emoji: string;
