@@ -21,6 +21,7 @@ only **prediction and rendering** — never gameplay logic (see [the unification
 
 ## Table of contents
 
+- [Screenshots](#screenshots)
 - [What the game does](#what-the-game-does)
 - [Architecture at a glance](#architecture-at-a-glance)
 - [The game-core / WASM unification](#the-game-core--wasm-unification)
@@ -36,6 +37,21 @@ only **prediction and rendering** — never gameplay logic (see [the unification
 - [Running it](#running-it)
 - [Environment variables](#environment-variables)
 - [Build, test, deploy & CI](#build-test-deploy--ci)
+
+---
+
+## Screenshots
+
+Captured on the sample tenant, with two guests playing online in the same world.
+
+| | |
+|---|---|
+| ![Two players online: the other player's avatar and name tag are visible in the world](docs/screenshots/multiplayer-two-players.webp) | ![Wandering creatures seen from above, with the block hotbar and HUD](docs/screenshots/world-creatures.webp) |
+| **Multiplayer** — each player sees the other's avatar and name tag in real time. | **World & creatures** — slimes and critters roaming the block world, with the hotbar and HUD. |
+| ![Magic Structures build menu](docs/screenshots/build-menu.webp) | ![Lobby with character builder and live online roster](docs/screenshots/lobby.webp) |
+| **Build menu** — one-click magic structures placed in front of the player. | **Lobby** — character builder, Solo / With friends toggle and the live online roster. |
+
+![Landing page](docs/screenshots/landing-page.webp)
 
 ---
 
