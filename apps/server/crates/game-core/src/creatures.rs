@@ -7,7 +7,7 @@
 //! when peace is off; otherwise everything wanders. The hp/reward/speed table mirrors the web
 //! `CREATURE_DEFS` so client prediction and server truth agree.
 
-use std::f32::consts::PI;
+use std::f32::consts::{GOLDEN_RATIO, PI};
 
 /// Horizontal distance within which a hostile creature homes in on a player (when not at peace). Must
 /// cover `SPAWN_RADIUS` (28) so the hostiles spawned around a player actually chase + bite them rather
@@ -263,7 +263,7 @@ fn orbit_yaw(player: [f32; 2], pos: [f32; 3], id: u32, tick: u64) -> f32 {
 /// A wander heading derived purely from (id, tick): smooth, reproducible, and seedless. The id offsets
 /// each creature's phase so they don't all turn in lockstep.
 fn wander_yaw(id: u32, tick: u64) -> f32 {
-    let phase = (id as f32) * 1.61803;
+    let phase = (id as f32) * GOLDEN_RATIO;
     let slow = (tick as f32) * 0.03;
     (slow + phase).sin() * PI
 }
