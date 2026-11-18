@@ -753,7 +753,8 @@ over** the room once A's lease passes the 30 s stale window.
 **CI (`.github/workflows/ci.yml`, three jobs on push-to-main + every PR):**
 
 - **web** — `npm ci && npm test && npm run build` (Node 20; `next build` covers typecheck).
-- **rust** — `cargo fmt --all --check && cargo clippy --all-targets -D warnings && cargo test`.
+- **rust** — `cargo fmt --all --check && cargo clippy --all-targets -D warnings && cargo test`, on the
+  toolchain pinned in `apps/server/rust-toolchain.toml`.
 - **security** — a checksum-pinned [gitleaks](https://github.com/gitleaks/gitleaks) scans every commit
   and the checked-out tree for secrets (`.gitleaks.toml` allowlists only the shipped dev placeholders).
 
