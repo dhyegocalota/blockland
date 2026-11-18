@@ -1,0 +1,11 @@
+title = "blockland"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "The exact local-development placeholder secrets the repository ships on purpose, each anchored to the whole secret"
+regexes = [
+  '''^dev-admin-secret$''',
+  '''^bl-internal-test-secret$''',
+]

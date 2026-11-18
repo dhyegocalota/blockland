@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   web:
     runs-on: ubuntu-latest
@@ -23,3 +26,23 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cd apps/server && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
+
+  security:
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks at a pinned version, verified by checksum
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --output gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar --extract --gzip --file gitleaks.tar.gz gitleaks
+      - name: Every commit on every branch and tag is free of secrets
+        run: ./gitleaks git --no-banner --redact --exit-code 1 .
+      - name: The checked-out tree is free of secrets
+        run: ./gitleaks dir --no-banner --redact --exit-code 1 .

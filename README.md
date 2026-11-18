@@ -37,6 +37,8 @@ only **prediction and rendering** — never gameplay logic (see [the unification
 - [Running it](#running-it)
 - [Environment variables](#environment-variables)
 - [Build, test, deploy & CI](#build-test-deploy--ci)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -748,12 +750,26 @@ lock); A joining `acme` gets `welcome` and holds the lease while B joining the s
 `served_elsewhere` (even after several 5 s renews — no stream expiry); and when A is killed, B **takes
 over** the room once A's lease passes the 30 s stale window.
 
-**CI (`.github/workflows/ci.yml`, two jobs on push-to-main + every PR):**
+**CI (`.github/workflows/ci.yml`, three jobs on push-to-main + every PR):**
 
 - **web** — `npm ci && npm test && npm run build` (Node 20; `next build` covers typecheck).
 - **rust** — `cargo fmt --all --check && cargo clippy --all-targets -D warnings && cargo test`.
+- **security** — a checksum-pinned [gitleaks](https://github.com/gitleaks/gitleaks) scans every commit
+  and the checked-out tree for secrets (`.gitleaks.toml` allowlists only the shipped dev placeholders).
 
-CI must stay green on both.
+CI must stay green on all three.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](.github/CONTRIBUTING.md) first; the
+project rules live in [CLAUDE.md](CLAUDE.md). Report vulnerabilities privately as described in
+[SECURITY.md](.github/SECURITY.md), and follow the [code of conduct](.github/CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE) © Logic Bit AI Software Boutique Ltda
 
 ---
 

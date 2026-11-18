@@ -1,0 +1,21 @@
+name: ✨ Feature request
+description: Propose a change. Describe the problem first.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you or the kids are trying to do and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: How Blockland could solve it. Alternatives you considered are welcome.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Your tenant, your setup, anything else that helps.

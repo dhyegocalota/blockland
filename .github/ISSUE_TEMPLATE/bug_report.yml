@@ -1,0 +1,41 @@
+name: 🐛 Bug report
+description: Something in the game, the admin panel or the server does not work.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest set of steps that shows the problem.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - Game, offline (single-player)
+        - Game, online (multiplayer)
+        - Lobby or landing page
+        - Admin panel
+        - Multiplayer server
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and device
+      description: For example Chrome 131 on macOS, Safari on iPad.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Browser console with `?debug=1`, or server logs. Remove emails, tokens and player names before you paste.

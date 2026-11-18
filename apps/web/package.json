@@ -2,6 +2,7 @@
   "name": "blockland",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "build:wasm": "../server/crates/game-core-wasm/build-wasm.sh",
     "dev": "next dev",
